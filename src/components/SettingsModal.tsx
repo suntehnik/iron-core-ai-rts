@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Cpu, ListRestart, PlugZap, X } from 'lucide-react';
+import { GAME_BALANCE } from '../config/balance';
 import { LLM_PROVIDERS, LLMProviderId, PROVIDER_ORDER } from '../config/llmProviders';
 import { listModels } from '../ai/llm/LLMClient';
 import { GameController } from '../game/GameController';
@@ -161,7 +162,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
 
           <div className="border-t border-white/10 pt-3 grid grid-cols-1 gap-2">
             <Toggle checked={s.enemyUsesLLM} onChange={v => setS({ ...s, enemyUsesLLM: v })} label="AI-противник тоже думает облачным LLM" hint="иначе — классический игровой AI на правилах" />
-            <Toggle checked={s.autonomousTactics} onChange={v => setS({ ...s, autonomousTactics: v })} label="Автономные пересмотры тактики по значимым событиям" hint="не чаще одного раза в 25 с — одинаково для обоих участников" />
+            <Toggle checked={s.autonomousTactics} onChange={v => setS({ ...s, autonomousTactics: v })} label="Автономные пересмотры тактики по значимым событиям" hint={`сразу по событию боя, но не чаще раза в ${GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC} с — одинаково для обоих участников`} />
             <Toggle checked={s.chargeEnemyToPlayer} onChange={v => setS({ ...s, chargeEnemyToPlayer: v })} label="Включить AI-противника в мой тариф" hint="открытое решение брифа: по умолчанию не списывается" />
             <Toggle checked={s.autoSpeakResponse} onChange={v => setS({ ...s, autoSpeakResponse: v })} label="Озвучивать ответы агентов (TTS)" />
             <div className="flex items-center gap-2">

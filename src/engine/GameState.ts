@@ -744,6 +744,7 @@ export class GameState {
     }
 
     this.updateWaves();
+    const raider: Record<Team, CombatUnit | null> = { player: this.baseRaider('player'), enemy: this.baseRaider('enemy') };
 
     // Alternate the processing order every tick: whoever acts first in a tick gets the first
     // shot, so a fixed order (player units are older) would quietly favour one side.
@@ -827,7 +828,10 @@ export class GameState {
         }
         engaging = d <= range && !u.isOverheated;
       } else {
-        goal = this.stanceGoal(u, plan.stance, ownHQ, enemyHQ, front[u.team], dir);
+        // Reflex, no LLM: machines near home go for a raider at the base while the commander re-plans
+        const r = raider[u.team];
+        const home = r && ownHQ && dist(u.pos, ownHQ.pos) <= GAME_BALANCE.BASE_DEFENSE_RECALL_RADIUS;
+        goal = home ? { x: r.pos.x, y: r.pos.y } : this.stanceGoal(u, plan.stance, ownHQ, enemyHQ, front[u.team], dir);
       }
 
       // Artillery holds behind the front line (needs cover)
@@ -870,6 +874,14 @@ export class GameState {
     }
 
     this.applySeparation(dt);
+  }
+
+  /** The enemy machine nearest to our HQ while our buildings are under fire, if one is close to the base. */
+  private baseRaider(team: Team): CombatUnit | null {
+    const hq = this.getHQ(team);
+    if (!hq) return null;
+    const underFire = this.buildings.some(b => b.team === team && this.gameTime - b.lastDamagedAt < GAME_BALANCE.BASE_ALERT_SEC);
+    return underFire ? this.nearestEnemyCombat(team, hq.pos, GAME_BALANCE.BASE_THREAT_RADIUS) : null;
   }
 
   public rallyPoint(team: Team): Vector2D {

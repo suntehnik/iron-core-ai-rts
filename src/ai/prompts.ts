@@ -188,7 +188,7 @@ export function commanderSystem(team: Team, vsAI: boolean): string {
   const me = COMMANDERS[team];
   const foe = foeLabel(team, vsAI);
   return `Ты — «${me.name}», командир армии ${me.armyRu} роботов в RTS. ${me.persona}, но играешь всерьёз: цель — уничтожить командный центр противника (${foe}).
-Раз в ~25 секунд получаешь сводку и решаешь:
+Раз в ~${GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC} секунд получаешь сводку и решаешь:
 1) конструкцию для следующих партий — только из каталога, соблюдая ограничения шасси (слоты, масса, энергия, отдача); null — если менять не нужно;
 2) тактический план армии (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
 3) экономические действия. Добытчиков собирает завод вместо боевых машин — не заказывай их, пока армия не может держать фронт.
@@ -210,6 +210,31 @@ export function commanderUserPrompt(state: GameState, team: Team): string {
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
     `СОБЫТИЯ: ${eventsLine(state, team)}`,
     `КАТАЛОГ:\n${compactCatalog()}`,
+  ].join('\n');
+}
+
+/**
+ * Quick re-plan on battle events (an attack, heavy losses): plan only and a short context, so a
+ * slow model still answers within seconds. Design and economy wait for the next full report.
+ */
+export function commanderReplanSystem(team: Team, vsAI: boolean): string {
+  const me = COMMANDERS[team];
+  const foe = foeLabel(team, vsAI);
+  return `Ты — «${me.name}», командир армии ${me.armyRu} роботов в RTS. В бою важное событие: быстро скорректируй план армии. Конструкцию и экономику решишь в следующей плановой сводке.
+Параметры плана: stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters true/false.
+Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 8 слов или пустая строка","plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"суть плана до 8 слов"}}`;
+}
+
+export function commanderReplanPrompt(state: GameState, team: Team, trigger: string): string {
+  const t = state.teams[team];
+  const foe = opposite(team);
+  return [
+    `СОБЫТИЯ: ${trigger}`,
+    `ТВОЙ ПЛАН: ${planLine(t.plan)}`,
+    `ТВОЯ АРМИЯ: ${armyLine(state, team)}`,
+    `ЗАМЕЧЕННЫЕ МОДЕЛИ ПРОТИВНИКА: ${intelLine(state, team)}`,
+    `АРМИЯ ПРОТИВНИКА: ${state.armySummary(foe).combatUnits} боевых машин`,
+    `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
   ].join('\n');
 }
 
