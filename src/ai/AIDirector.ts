@@ -11,6 +11,7 @@ import { localCommanderDecision, localEngineer, localTactician } from './fallbac
 import { LLMConnection, LLMError, LLMResponse, chatJSON, cloudReady } from './llm/LLMClient';
 import { asString, describeAction, normalizeActions, normalizePlan } from './parsing';
 import {
+  COMMANDER_INSTRUCTIONS_MAX,
   commanderReplanPrompt,
   commanderReplanSystem,
   commanderSystem,
@@ -74,6 +75,8 @@ export class AIDirector {
   public pendingProposal: ProductionProposal | null = null;
   public lastTactical: TacticalDecision | null = null;
   public standingOrders: string[] = [];
+  /** Custom instructions per AI commander (the teal one in AI-vs-AI), added to its system prompts */
+  public commanderInstructions: Record<Team, string> = { player: '', enemy: '' };
 
   private settings: LLMSettings;
   /** AI commanders' full strategic decisions, keyed by commander */
@@ -209,6 +212,11 @@ export class AIDirector {
 
   setMode(mode: GameMode) {
     this.mode = mode;
+    this.events.changed();
+  }
+
+  setCommanderInstructions(team: Team, text: string) {
+    this.commanderInstructions[team] = text.trim().slice(0, COMMANDER_INSTRUCTIONS_MAX);
     this.events.changed();
   }
 
@@ -573,8 +581,8 @@ export class AIDirector {
         participant,
         'tactical',
         BUDGET.enemy,
-        commanderSystem(team, vsAI),
-        commanderUserPrompt(state, team),
+        commanderSystem(team, vsAI, this.commanderInstructions[team]),
+        commanderUserPrompt(state, team, this.commanderInstructions[team]),
         COMMANDER_TIMEOUT_MS,
       );
       if (gen !== this.generation) return;
@@ -625,8 +633,8 @@ export class AIDirector {
       participant,
       'tactical',
       BUDGET.replan,
-      commanderReplanSystem(team, this.mode === 'spectator'),
-      commanderReplanPrompt(state, team, trigger),
+      commanderReplanSystem(team, this.mode === 'spectator', this.commanderInstructions[team]),
+      commanderReplanPrompt(state, team, trigger, this.commanderInstructions[team]),
       REPLAN_TIMEOUT_MS,
     );
     if (gen !== this.generation) return;

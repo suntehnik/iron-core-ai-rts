@@ -35,6 +35,7 @@ const CommanderColumn: React.FC<{ ctrl: GameController; team: Team }> = ({ ctrl,
   const call = ctrl.director.lastCall[key];
   const busy = ctrl.director.busy[key];
   const lastTaunt = ctrl.intercepts.find(i => i.team === team);
+  const instructions = ctrl.director.commanderInstructions[team];
   const army = s.combatCount(team);
   const harvesters = s.harvesterCount(team);
   const hq = s.baseHpPct(team);
@@ -69,6 +70,12 @@ const CommanderColumn: React.FC<{ ctrl: GameController; team: Team }> = ({ ctrl,
       <div className="min-h-[30px] rounded-lg bg-slate-800/70 px-2 py-1 text-slate-100 leading-snug">
         {lastTaunt ? `«${lastTaunt.text}»` : <span className="text-slate-500">эфир молчит</span>}
       </div>
+      {instructions && (
+        <div className="text-[10px] text-teal-200/90 leading-snug line-clamp-2" title={instructions}>
+          <span className="text-slate-400">Указания штаба: </span>
+          {instructions}
+        </div>
+      )}
 
       <div className="leading-snug">
         <span className="text-slate-400">Серия: </span>

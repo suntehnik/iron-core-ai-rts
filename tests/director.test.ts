@@ -3,6 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { AIDirector } from '../src/ai/AIDirector';
 import { voiceService } from '../src/ai/VoiceService';
+import { COMMANDER_INSTRUCTIONS_MAX, commanderReplanPrompt, commanderReplanSystem, commanderSystem, commanderUserPrompt } from '../src/ai/prompts';
 import { GAME_BALANCE, INITIAL_ENEMY_DESIGN, INITIAL_PLAYER_DESIGN } from '../src/config/balance';
 import { RobotBuilder } from '../src/engine/RobotBuilder';
 import { GameState } from '../src/engine/GameState';
@@ -328,5 +329,78 @@ describe('base-defence reflex of the game AI', () => {
 
   it('without fire on the base they keep to the plan', () => {
     expect(closeIn(false)).toBeLessThan(1);
+  });
+});
+
+describe('custom instructions for the teal commander (AI vs AI)', () => {
+  const orders = 'Играй от обороны, копи на тяжёлые машины, в рейды не ходи';
+
+  it('go into its system prompts above the reply format, again last in each report, and are capped in length', () => {
+    for (const system of [commanderSystem('player', true, orders), commanderReplanSystem('player', true, orders)]) {
+      expect(system).toContain(orders);
+      expect(system.indexOf(orders)).toBeLessThan(system.indexOf('Ответ — только JSON'));
+    }
+    // repeated right before the decision: the live model followed them far more often there
+    const s = new GameState();
+    for (const user of [commanderUserPrompt(s, 'player', orders), commanderReplanPrompt(s, 'player', 'Противник атакует завод!', orders)]) {
+      expect(user.trimEnd().split('\n').pop()).toContain(orders);
+    }
+    expect(commanderUserPrompt(s, 'player')).not.toMatch(/УКАЗАНИЯ ШТАБА/);
+    expect(commanderSystem('player', true)).not.toMatch(/Особые указания/);
+    expect(commanderSystem('player', true, '   ')).not.toMatch(/Особые указания/);
+    const long = commanderSystem('player', true, 'я'.repeat(COMMANDER_INSTRUCTIONS_MAX + 100));
+    expect(long).toContain('я'.repeat(COMMANDER_INSTRUCTIONS_MAX));
+    expect(long).not.toContain('я'.repeat(COMMANDER_INSTRUCTIONS_MAX + 1));
+  });
+
+  it('reach only the teal commander in a live AI-vs-AI match', async () => {
+    const mock = mockLLM(() => ({ taunt: 'Вперёд', design: null, plan: { stance: 'hold_center' }, actions: [] }));
+    const settings = { ...(await mock.start()), enemyUsesLLM: true };
+    try {
+      const s = new GameState();
+      const d = director(settings);
+      d.setMode('spectator');
+      d.setCommanderInstructions('player', orders);
+      for (let i = 0; i < 40 && !(d.lastCall.ally && d.lastCall.enemy); i++) {
+        for (let k = 0; k < 10; k++) {
+          s.gameTime += 0.1;
+          d.update(s, 0.1);
+        }
+        await vi.waitFor(() => expect(d.busy.enemy || d.busy.ally).toBe(false));
+      }
+      const teal = mock.prompts.filter(p => p.system.startsWith('Ты — «Командор Бирюзов»'));
+      const rust = mock.prompts.filter(p => p.system.startsWith('Ты — «Генерал Ржавый»'));
+      expect(teal.length).toBeGreaterThan(0);
+      expect(rust.length).toBeGreaterThan(0);
+      expect(teal.every(p => p.system.includes(orders) && p.user.includes(orders))).toBe(true);
+      expect(rust.some(p => p.system.includes(orders) || p.user.includes(orders))).toBe(false);
+    } finally {
+      mock.server.close();
+    }
+  });
+
+  it('are set on the start screen, kept between visits and apply only to AI vs AI', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, String(v)),
+      removeItem: (k: string) => void store.delete(k),
+    });
+    try {
+      const ctrl = new GameController();
+      ctrl.setAllyInstructions(orders);
+      ctrl.start('spectator');
+      expect(ctrl.director.commanderInstructions.player).toBe(orders);
+      ctrl.backToMenu(); // a new match in the normal mode: the teal side is the human again
+      expect(ctrl.director.commanderInstructions.player).toBe('');
+
+      const reopened = new GameController(); // the page is opened again
+      expect(reopened.allyInstructions).toBe(orders);
+      reopened.start('spectator');
+      expect(reopened.director.commanderInstructions.player).toBe(orders);
+      expect(reopened.director.commanderInstructions.enemy).toBe('');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

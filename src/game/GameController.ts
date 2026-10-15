@@ -1,4 +1,5 @@
 import { AIDirector, GameMode } from '../ai/AIDirector';
+import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
 import { COMMANDERS } from '../config/commanders';
 import { VoiceService, voiceService } from '../ai/VoiceService';
 import { LLM_PROVIDERS, LLMProviderId } from '../config/llmProviders';
@@ -12,6 +13,7 @@ import { AgentId, ChatMessage, LLMSettings, ProductionProposal, TacticalDecision
 import { ProductionAction, TacticalPlan, Team } from '../types/game';
 
 const SETTINGS_KEY = 'ironcore_settings_v2';
+const ALLY_INSTRUCTIONS_KEY = 'ironcore_ally_instructions_v1';
 
 export const DEFAULT_SETTINGS: LLMSettings = {
   provider: 'openrouter',
@@ -53,6 +55,14 @@ export interface ProxyStatus {
   host: string;
 }
 
+function loadAllyInstructions(): string {
+  try {
+    return localStorage.getItem(ALLY_INSTRUCTIONS_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 function loadSettings(): LLMSettings | null {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -84,6 +94,8 @@ export class GameController {
   public trial: TrialState | null = null;
   public mode: GameMode = 'human';
   public timeScale = 1;
+  /** Optional custom prompt for the teal commander in AI-vs-AI, set on the start screen (kept between visits) */
+  public allyInstructions = loadAllyInstructions();
   private trialCache = new Map<string, TrialReport>();
 
   private scene: SceneManager | null = null;
@@ -205,8 +217,20 @@ export class GameController {
   private setMode(mode: GameMode) {
     this.mode = mode;
     this.director.setMode(mode);
+    // In the normal mode the teal side is the human: its AI commander does not exist
+    this.director.setCommanderInstructions('player', mode === 'spectator' ? this.allyInstructions : '');
     this.timeScale = 1;
     if (mode === 'spectator') this.activeAgent = 'engineer';
+  }
+
+  setAllyInstructions(text: string) {
+    this.allyInstructions = text.slice(0, COMMANDER_INSTRUCTIONS_MAX);
+    try {
+      localStorage.setItem(ALLY_INSTRUCTIONS_KEY, this.allyInstructions);
+    } catch {
+      /* ignore */
+    }
+    this.bump();
   }
 
   setTimeScale(scale: number) {

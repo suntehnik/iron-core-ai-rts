@@ -1,11 +1,13 @@
-import React from 'react';
-import { Cpu, Eye, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
+import React, { useState } from 'react';
+import { Cpu, Eye, MessageSquarePlus, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
+import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
 import { GameController } from '../game/GameController';
 import { CommanderPortrait, EngineerPortrait } from './Portraits';
 import { cx } from './ui';
 
 export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: () => void }> = ({ ctrl, onOpenSettings }) => {
   const cloud = ctrl.director.cloudEnabled();
+  const [instructionsOpen, setInstructionsOpen] = useState(!!ctrl.allyInstructions);
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-[#1b1712]/55 backdrop-blur-[2px]">
       <div className="hud-panel w-full max-w-[640px] p-6 text-slate-100">
@@ -74,6 +76,41 @@ export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: (
             </span>
           </span>
         </button>
+        {instructionsOpen ? (
+          <div className="mt-1.5 rounded-lg bg-slate-800/60 border border-teal-400/20 p-2">
+            <label htmlFor="ally-instructions" className="flex items-center gap-1.5 text-[11px] font-semibold text-teal-200">
+              <CommanderPortrait team="player" size={18} /> Указания Командору Бирюзову
+              <span className="font-normal text-slate-400">— необязательно</span>
+            </label>
+            <textarea
+              id="ally-instructions"
+              rows={3}
+              maxLength={COMMANDER_INSTRUCTIONS_MAX}
+              value={ctrl.allyInstructions}
+              onChange={e => ctrl.setAllyInstructions(e.target.value)}
+              placeholder="Например: играй от обороны, копи на тяжёлые машины с осадными пушками, в рейды не ходи"
+              className="mt-1.5 w-full resize-none rounded-md bg-slate-900/80 border border-white/10 px-2 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-teal-400/60"
+            />
+            <div className="flex justify-between gap-2 text-[10px] text-slate-400">
+              <span>
+                {cloud
+                  ? 'Попадут в промпт Бирюзова: и в плановые сводки, и в быстрые пересмотры плана. Генерал Ржавый их не видит.'
+                  : 'Работают только с LLM: без неё командиры играют по локальным правилам.'}
+              </span>
+              <span className="tabular-nums shrink-0">
+                {ctrl.allyInstructions.length}/{COMMANDER_INSTRUCTIONS_MAX}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setInstructionsOpen(true)}
+            className="mt-1.5 flex items-center gap-1 text-[11px] text-teal-300 hover:text-teal-200"
+          >
+            <MessageSquarePlus className="w-3.5 h-3.5" /> Дать указания Командору Бирюзову
+          </button>
+        )}
         <div className="text-[10px] text-slate-400 text-center mt-2">Камера: перетаскивание мышью, колесо — масштаб, WASD/стрелки, клик по мини-карте.</div>
       </div>
     </div>
