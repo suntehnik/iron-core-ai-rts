@@ -15,7 +15,7 @@ export const TacticalPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const set = ctrl.setManualPlan.bind(ctrl);
   const army = ctrl.state.armySummary('player');
   const autonomousIn = Math.ceil(
-    Math.max(0, GAME_BALANCE.AI_AUTONOMOUS_MIN_INTERVAL_SEC - (ctrl.state.gameTime - (d.lastCall.tactician?.at ?? -999))),
+    Math.max(0, GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC - (ctrl.state.gameTime - (d.lastCall.tactician?.at ?? -999))),
   );
 
   return (

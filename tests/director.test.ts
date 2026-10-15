@@ -8,6 +8,7 @@ import { RobotBuilder } from '../src/engine/RobotBuilder';
 import { GameState } from '../src/engine/GameState';
 import { DEFAULT_SETTINGS, GameController } from '../src/game/GameController';
 import { ChatMessage, LLMSettings, ProductionProposal } from '../src/types/agent';
+import { CombatUnit } from '../src/types/game';
 import { RobotDesign } from '../src/types/robot';
 
 const offline: LLMSettings = { ...DEFAULT_SETTINGS, provider: 'offline', apiKey: '', model: '', baseUrl: '', autoSpeakResponse: false, soundMuted: true };
@@ -16,19 +17,24 @@ function director(settings: LLMSettings, chat: ChatMessage[] = []) {
   return new AIDirector(settings, { chat: m => chat.push(m), proposal() {}, tactical() {}, intercept() {}, changed() {} });
 }
 
-/** Mock OpenAI-compatible server: replies with `reply()` as the model's JSON after `delayMs`. */
+/** Mock OpenAI-compatible server: replies with `reply()` as the model's JSON after `delayMs`, records the prompts. */
 function mockLLM(reply: () => unknown, delayMs = 0) {
+  const prompts: { system: string; user: string }[] = [];
   const server = http.createServer((req, res) => {
-    req.resume();
-    req.on('end', () =>
+    let raw = '';
+    req.on('data', c => (raw += c));
+    req.on('end', () => {
+      const messages = (JSON.parse(raw || '{}').messages ?? []) as { role: string; content: string }[];
+      prompts.push({ system: messages.find(m => m.role === 'system')?.content ?? '', user: messages.find(m => m.role === 'user')?.content ?? '' });
       setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ model: 'mock', choices: [{ message: { content: JSON.stringify(reply()) } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }));
-      }, delayMs),
-    );
+      }, delayMs);
+    });
   });
   return {
     server,
+    prompts,
     async start(): Promise<LLMSettings> {
       await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
       const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
@@ -157,5 +163,170 @@ describe('GameController', () => {
     } finally {
       mock.server.close();
     }
+  });
+});
+
+describe('re-plans on battle events', () => {
+  const mock = mockLLM(() => ({ reply: 'Перестраиваемся', taunt: 'Держитесь!', plan: { stance: 'defend_base', summary: 'оборона' } }), 50);
+  let settings: LLMSettings;
+  beforeAll(async () => {
+    settings = { ...(await mock.start()), enemyUsesLLM: true, autonomousTactics: true };
+  });
+  afterAll(() => mock.server.close());
+
+  /** Advances game time without simulating (events stay under the test's control). */
+  const tick = (s: GameState, d: AIDirector, sec: number) => {
+    for (let i = 0; i < Math.round(sec * 10); i++) {
+      s.gameTime += 0.1;
+      d.update(s, 0.1);
+    }
+  };
+  const settle = (d: AIDirector) => vi.waitFor(() => expect(d.busy.enemy || d.busy.ally || d.busy.tactician).toBe(false));
+
+  it('an attack makes the enemy commander re-plan at once, a burst goes as one quick plan-only call', async () => {
+    mock.prompts.length = 0;
+    const s = new GameState();
+    const d = director(settings);
+    s.gameTime = 2; // well before the first full report
+    s.pushEvent('enemy', 'base_attack', 'Противник атакует завод!', true);
+    tick(s, d, 0.5);
+    s.pushEvent('enemy', 'heavy_losses', 'Тяжёлые потери: 4 машины за 20 секунд', true);
+    tick(s, d, 0.3);
+    expect(d.busy.enemy).toBe(false); // still gathering the burst
+    tick(s, d, 0.4);
+    expect(d.busy.enemy).toBe(true);
+    await settle(d);
+
+    expect(mock.prompts).toHaveLength(1);
+    expect(mock.prompts[0].user).toMatch(/атакует завод[\s\S]*Тяжёлые потери|Тяжёлые потери[\s\S]*атакует завод/);
+    expect(mock.prompts[0].user).not.toMatch(/КАТАЛОГ/); // short context: no catalog, no economy
+    expect(s.teams.enemy.plan.stance).toBe('defend_base');
+    expect(d.lastCall.enemy?.source).toBe('llm');
+  });
+
+  const isReplan = (p: { system: string }) => /быстро скорректируй план/.test(p.system);
+
+  it('events that arrive during a call wait for it to finish, then go out at once', async () => {
+    mock.prompts.length = 0;
+    const s = new GameState();
+    const d = director(settings);
+    s.gameTime = 2;
+    s.pushEvent('enemy', 'base_attack', 'Противник атакует штаб!', true);
+    tick(s, d, 1.1);
+    expect(d.busy.enemy).toBe(true);
+    s.pushEvent('enemy', 'harvester_attacked', 'Наших добытчиков атакуют!', true);
+    tick(s, d, GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC + 0.2); // the cooldown passes while the call is in flight
+    await settle(d);
+    expect(mock.prompts).toHaveLength(1);
+    tick(s, d, 0.1);
+    expect(d.busy.enemy).toBe(true);
+    await settle(d);
+    expect(mock.prompts).toHaveLength(2);
+    expect(mock.prompts.every(isReplan)).toBe(true);
+    expect(mock.prompts[1].user).toMatch(/добытчиков атакуют/);
+    expect(mock.prompts[1].user).not.toMatch(/атакует штаб/); // already handled
+  });
+
+  it('re-plans of one side are at least the cooldown apart', async () => {
+    mock.prompts.length = 0;
+    const s = new GameState();
+    const d = director(settings);
+    s.gameTime = 2;
+    s.pushEvent('enemy', 'base_attack', 'Противник атакует штаб!', true);
+    tick(s, d, 1.1);
+    expect(d.busy.enemy).toBe(true);
+    await settle(d);
+    s.pushEvent('enemy', 'base_attack', 'Противник атакует электростанцию!', true);
+    tick(s, d, GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC - 1);
+    expect(d.busy.enemy).toBe(false);
+    tick(s, d, 1.2);
+    expect(d.busy.enemy).toBe(true);
+    await settle(d);
+    expect(mock.prompts).toHaveLength(2);
+    expect(mock.prompts[1].user).toMatch(/электростанцию/);
+  });
+
+  it('the player\'s tactician and the enemy commander react to events at the same pace', async () => {
+    const s = new GameState();
+    const d = director(settings);
+    s.gameTime = 2;
+    const both = () => {
+      s.pushEvent('player', 'base_attack', 'Противник атакует завод!', true);
+      s.pushEvent('enemy', 'base_attack', 'Противник атакует завод!', true);
+    };
+    both();
+    tick(s, d, 0.8);
+    expect([d.busy.tactician, d.busy.enemy]).toEqual([false, false]);
+    tick(s, d, 0.4);
+    expect([d.busy.tactician, d.busy.enemy]).toEqual([true, true]);
+    await settle(d);
+
+    both();
+    tick(s, d, GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC - 1);
+    expect([d.busy.tactician, d.busy.enemy]).toEqual([false, false]);
+    tick(s, d, 1.2);
+    expect([d.busy.tactician, d.busy.enemy]).toEqual([true, true]);
+    await settle(d);
+  });
+
+  it('a due full report goes before a quick re-plan and covers its events', async () => {
+    mock.prompts.length = 0;
+    const s = new GameState();
+    const d = director(settings);
+    s.gameTime = GAME_BALANCE.AI_FIRST_ENEMY_DECISION_SEC - 0.5;
+    s.pushEvent('enemy', 'base_attack', 'Противник атакует завод!', true);
+    tick(s, d, 1.2); // the burst is ready and the first full report is due in the same moment
+    expect(d.busy.enemy).toBe(true);
+    await settle(d);
+    tick(s, d, GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC + 1);
+    await settle(d);
+    expect(mock.prompts).toHaveLength(1);
+    expect(isReplan(mock.prompts[0])).toBe(false);
+    expect(mock.prompts[0].user).toMatch(/атакует завод/);
+  });
+
+  it('without the cloud, events are let go: no calls, the rule-based commander keeps its timer', () => {
+    mock.prompts.length = 0;
+    const s = new GameState();
+    const d = director(offline);
+    s.gameTime = 2;
+    s.pushEvent('enemy', 'base_attack', 'Противник атакует завод!', true);
+    tick(s, d, 2);
+    expect(d.busy.enemy).toBe(false);
+    expect(mock.prompts).toHaveLength(0);
+  });
+});
+
+describe('base-defence reflex of the game AI', () => {
+  /** A guard waits at the rally point; a raider sits by the base out of its aggro range. Returns how far the guard closed in. */
+  function closeIn(baseUnderFire: boolean): number {
+    const s = new GameState();
+    s.units = s.units.filter(u => u.kind === 'harvester');
+    const hq = s.getHQ('player')!;
+    const rally = s.rallyPoint('player');
+    s.spawnCombatBot('player', { x: rally.x, y: rally.y }, s.teams.player.design, 1);
+    const guard = s.units[s.units.length - 1] as CombatUnit;
+    guard.lane = 0; // its place in the formation is the rally point itself
+    const spot = { x: hq.pos.x, y: hq.pos.y + 26 }; // near the base, beyond the HQ turret and the guard's aggro range
+    s.spawnCombatBot('enemy', spot, s.teams.enemy.design, 1);
+    const raider = s.units[s.units.length - 1] as CombatUnit;
+    const factory = s.buildings.find(b => b.team === 'player' && b.type === 'factory')!;
+    const gap = () => Math.hypot(guard.pos.x - raider.pos.x, guard.pos.y - raider.pos.y);
+    const before = gap();
+    for (let i = 0; i < 60; i++) {
+      raider.pos = { ...spot }; // the raider holds its spot and does not fire on its own
+      raider.cooldown = 99;
+      if (baseUnderFire) factory.lastDamagedAt = s.gameTime;
+      s.update(0.05);
+    }
+    return before - gap();
+  }
+
+  it('machines waiting near home go for a raider while the base is under fire, without any agent', () => {
+    expect(closeIn(true)).toBeGreaterThan(3);
+  });
+
+  it('without fire on the base they keep to the plan', () => {
+    expect(closeIn(false)).toBeLessThan(1);
   });
 });

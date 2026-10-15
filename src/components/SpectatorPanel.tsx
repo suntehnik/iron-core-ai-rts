@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Pickaxe, Radio, Shield, Users } from 'lucide-react';
 import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
 import { COMMANDERS } from '../config/commanders';
-import { TEAM_COLORS } from '../config/balance';
+import { GAME_BALANCE, TEAM_COLORS } from '../config/balance';
 import { GameController } from '../game/GameController';
 import { Team } from '../types/game';
 import { CommanderPortrait } from './Portraits';
@@ -15,7 +15,9 @@ export const SpectatorPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => 
       <div className="font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 flex items-center gap-1.5">
         <Radio className="w-3.5 h-3.5 text-cyan-300" /> ИИ против ИИ · эфир командиров
       </div>
-      <div className="text-[10px] text-slate-400">решения не чаще раза в 25 с — одинаково для обоих</div>
+      <div className="text-[10px] text-slate-400">
+        сводка раз в {GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC} с, по событиям боя — не чаще раза в {GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC} с; одинаково для обоих
+      </div>
     </div>
     <div className="grid grid-cols-2 gap-2">
       <CommanderColumn ctrl={ctrl} team="player" />

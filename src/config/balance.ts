@@ -84,9 +84,20 @@ export const GAME_BALANCE = {
   TRIAL_SQUAD_SIZE: 4,
 
   // AI decision pacing — identical for both participants (brief §10: no pay-to-win).
-  AI_AUTONOMOUS_MIN_INTERVAL_SEC: 25,
+  /** AI commanders' full strategic decision (design, economy, plan) on a timer */
+  AI_COMMANDER_HEARTBEAT_SEC: 30,
+  /** significant battle events trigger a quick plan-only re-plan, no more often than this per side */
+  AI_EVENT_REPLAN_COOLDOWN_SEC: 8,
+  /** a burst of events (an attack raises several) is gathered this long and sent as one call */
+  AI_EVENT_BATCH_SEC: 1,
   AI_PLAYER_ORDER_COOLDOWN_SEC: 2,
   AI_FIRST_ENEMY_DECISION_SEC: 18,
+
+  // Base-defence reflex of the game AI (no LLM): while our buildings take fire, machines near
+  // home go for the attacker without waiting for the commander's re-plan.
+  BASE_ALERT_SEC: 4,
+  BASE_THREAT_RADIUS: 30, // attackers this close to the HQ count as a raid on the base
+  BASE_DEFENSE_RECALL_RADIUS: 32, // machines this close to the HQ respond (covers the rally point)
 };
 
 /** Fixed building slots per team (mirrored for the enemy). */

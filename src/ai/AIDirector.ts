@@ -11,6 +11,8 @@ import { localCommanderDecision, localEngineer, localTactician } from './fallbac
 import { LLMConnection, LLMError, LLMResponse, chatJSON, cloudReady } from './llm/LLMClient';
 import { asString, describeAction, normalizeActions, normalizePlan } from './parsing';
 import {
+  commanderReplanPrompt,
+  commanderReplanSystem,
   commanderSystem,
   commanderUserPrompt,
   ENGINEER_SYSTEM,
@@ -47,10 +49,14 @@ const BUDGET = {
   engineer: { in: 1500, out: 320, max: 480 },
   tactician: { in: 900, out: 160, max: 280 },
   enemy: { in: 1600, out: 320, max: 480 },
+  /** quick plan-only re-plan of an AI commander on battle events */
+  replan: { in: 450, out: 90, max: 200 },
 };
 
-/** Commanders decide in the background every ~25 s, so a slow (local) model may take its time. */
+/** Commanders' full reports come every ~30 s in the background, so a slow (local) model may take its time. */
 const COMMANDER_TIMEOUT_MS = 45000;
+/** A re-plan on a battle event that arrives later than this is stale: the game AI keeps the last plan. */
+const REPLAN_TIMEOUT_MS = 20000;
 
 let msgCounter = 0;
 const newId = (p: string) => `${p}_${Date.now().toString(36)}_${(msgCounter++).toString(36)}`;
@@ -70,10 +76,15 @@ export class AIDirector {
   public standingOrders: string[] = [];
 
   private settings: LLMSettings;
-  private limiter = new DecisionRateLimiter(GAME_BALANCE.AI_AUTONOMOUS_MIN_INTERVAL_SEC);
+  /** AI commanders' full strategic decisions, keyed by commander */
+  private heartbeat = new DecisionRateLimiter(GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC);
+  /** Re-plans on battle events, keyed by side: the same pace for both (brief §10) */
+  private replanCooldown = new DecisionRateLimiter(GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC);
   /** Anti-spam for the player's own orders, in real seconds: game time stands still while paused. */
   private orderCooldown = new DecisionRateLimiter(GAME_BALANCE.AI_PLAYER_ORDER_COOLDOWN_SEC);
+  /** Event watermark per side: significant events counted so far, and the last event id already handled */
   private seenSignificant = { player: 0, enemy: 0 };
+  private handledEventId: Record<Team, number> = { player: 0, enemy: 0 };
   private macroTimer = 0;
   private generation = 0;
 
@@ -115,9 +126,11 @@ export class AIDirector {
     this.pendingProposal = null;
     this.lastTactical = null;
     this.standingOrders = [];
-    this.limiter.reset();
+    this.heartbeat.reset();
+    this.replanCooldown.reset();
     this.orderCooldown.reset();
     this.seenSignificant = { player: 0, enemy: 0 };
+    this.handledEventId = { player: 0, enemy: 0 };
     this.billing.resetMatch();
     this.events.changed();
   }
@@ -135,38 +148,63 @@ export class AIDirector {
       if (spectator) this.baselineMacro(state, 'player');
     }
 
-    // AI commanders: the enemy always; the teal side too in AI-vs-AI mode. Same decision
-    // interval for both (brief §10); the teal one starts a few seconds later so the two
-    // requests do not hit the model at the same moment.
-    // In AI-vs-AI the two commanders take turns instead of querying the model at once (a local
-    // server answers one request at a time); whoever decided longer ago goes first.
+    // AI commanders: the enemy always; the teal side too in AI-vs-AI mode, by the same rules
+    // (brief §10). A local server answers one request at a time, so in AI-vs-AI the two take turns
+    // instead of querying the model at once; whoever reported longer ago goes first.
     const commanders: Team[] = spectator
-      ? (['enemy', 'player'] as Team[]).sort((a, b) => this.limiter.lastAt(commanderKey(a)) - this.limiter.lastAt(commanderKey(b)))
+      ? (['enemy', 'player'] as Team[]).sort((a, b) => this.heartbeat.lastAt(commanderKey(a)) - this.heartbeat.lastAt(commanderKey(b)))
       : ['enemy'];
+    const commanderBusy = (team: Team) => (spectator ? this.busy.enemy || this.busy.ally : this.busy[commanderKey(team)]);
+    const commandersThink = this.settings.enemyUsesLLM && this.cloudEnabled();
+
+    // 1. A full report that is due goes first: it covers the events seen so far, and quick re-plans
+    //    must not starve design and economy when the model is busy with a heavy battle
     for (const team of commanders) {
       const key = commanderKey(team);
-      if (spectator && (this.busy.enemy || this.busy.ally)) break;
       const first = GAME_BALANCE.AI_FIRST_ENEMY_DECISION_SEC + (team === 'player' ? 6 : 0);
-      if (!this.busy[key] && state.gameTime >= first && this.limiter.ready(key, state.gameTime)) {
-        this.limiter.mark(key, state.gameTime);
-        void this.decideCommander(state, team);
-      }
+      if (commanderBusy(team) || state.gameTime < first || !this.heartbeat.ready(key, state.gameTime)) continue;
+      this.heartbeat.mark(key, state.gameTime);
+      this.markEventsHandled(state, team);
+      void this.decideCommander(state, team);
+    }
+    // 2. Battle events: a quick plan-only re-plan (the rule-based commander has no use for it)
+    for (const team of commanders) {
+      const trigger = this.takeEventTrigger(state, team, commandersThink, commanderBusy(team));
+      if (trigger) void this.replanCommander(state, team, trigger);
     }
     if (spectator) return; // no human orders, no player-side tactician
 
-    const sig = state.significantCounter.player;
-    if (sig > this.seenSignificant.player) {
-      if (this.settings.autonomousTactics && this.cloudEnabled() && !this.busy.tactician && this.limiter.ready('player', state.gameTime)) {
-        this.seenSignificant.player = sig;
-        const trigger = state.recentEvents('player', 3, 30).filter(e => e.significant).map(e => e.text).join('; ');
-        if (trigger) {
-          this.limiter.mark('player', state.gameTime);
-          void this.autonomousTactical(state, trigger);
-        }
-      } else if (!this.settings.autonomousTactics || !this.cloudEnabled()) {
-        this.seenSignificant.player = sig;
-      }
+    const trigger = this.takeEventTrigger(state, 'player', this.settings.autonomousTactics && this.cloudEnabled(), this.busy.tactician);
+    if (trigger) void this.autonomousTactical(state, trigger);
+  }
+
+  /**
+   * Significant battle events of a side → the text of one re-plan call, or null if it is not time yet.
+   * A burst is gathered for AI_EVENT_BATCH_SEC and sent at once, no more often than
+   * AI_EVENT_REPLAN_COOLDOWN_SEC; events that arrive while a call is in flight wait for it.
+   */
+  private takeEventTrigger(state: GameState, team: Team, canReplan: boolean, busy: boolean): string | null {
+    if (state.significantCounter[team] <= this.seenSignificant[team]) return null;
+    const after = this.handledEventId[team];
+    const fresh = canReplan ? state.events.filter(e => e.team === team && e.significant && e.id > after) : [];
+    if (!fresh.length) {
+      this.markEventsHandled(state, team);
+      return null;
     }
+    // The burst is timed from its first event (events are stored newest first)
+    const burstStart = fresh[fresh.length - 1].time;
+    if (busy || state.gameTime - burstStart < GAME_BALANCE.AI_EVENT_BATCH_SEC || !this.replanCooldown.ready(team, state.gameTime)) return null;
+    this.markEventsHandled(state, team);
+    this.replanCooldown.mark(team, state.gameTime);
+    return fresh
+      .slice(0, 4)
+      .map(e => e.text)
+      .join('; ');
+  }
+
+  private markEventsHandled(state: GameState, team: Team) {
+    this.seenSignificant[team] = state.significantCounter[team];
+    this.handledEventId[team] = state.events[0]?.id ?? 0;
   }
 
   setMode(mode: GameMode) {
@@ -571,6 +609,37 @@ export class AIDirector {
     for (const a of actions) state.applyProductionAction(team, a);
     if (taunt) this.events.intercept(taunt, source, team);
     this.busy[key] = false;
+    this.events.changed();
+  }
+
+  /**
+   * Quick re-plan of an AI commander on battle events: only the army plan, from a short context.
+   * If the model fails or is late, the game AI keeps executing the last valid plan.
+   */
+  private async replanCommander(state: GameState, team: Team, trigger: string) {
+    const key = commanderKey(team);
+    const participant: AIParticipant = team === 'enemy' ? 'enemy' : 'ally';
+    this.busy[key] = true;
+    const gen = this.generation;
+    const { res, coins, error } = await this.callAgent(
+      participant,
+      'tactical',
+      BUDGET.replan,
+      commanderReplanSystem(team, this.mode === 'spectator'),
+      commanderReplanPrompt(state, team, trigger),
+      REPLAN_TIMEOUT_MS,
+    );
+    if (gen !== this.generation) return;
+    this.busy[key] = false;
+    if (!res) {
+      this.lastCall[key] = { source: 'fallback', latencyMs: 0, coins: 0, error, at: state.gameTime };
+      this.events.changed();
+      return;
+    }
+    this.lastCall[key] = { source: 'llm', latencyMs: res.latencyMs, coins, model: res.model, at: state.gameTime };
+    if (!state.gameOver && res.data.plan) state.setPlan(team, normalizePlan(res.data.plan, state.teams[team].plan, 'agent'));
+    const taunt = asString(res.data.taunt);
+    if (taunt && !state.gameOver) this.events.intercept(taunt, 'llm', team);
     this.events.changed();
   }
 
