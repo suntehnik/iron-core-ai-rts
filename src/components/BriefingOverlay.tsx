@@ -1,7 +1,7 @@
 import React from 'react';
-import { Cpu, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
+import { Cpu, Eye, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
 import { GameController } from '../game/GameController';
-import { EngineerPortrait } from './Portraits';
+import { CommanderPortrait, EngineerPortrait } from './Portraits';
 import { cx } from './ui';
 
 export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: () => void }> = ({ ctrl, onOpenSettings }) => {
@@ -50,10 +50,29 @@ export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: (
 
         <button
           type="button"
-          onClick={() => ctrl.start()}
+          onClick={() => ctrl.start('human')}
           className="mt-5 w-full py-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-heading font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-teal-900/40"
         >
           <Play className="w-5 h-5" /> Начать матч
+        </button>
+        <button
+          type="button"
+          onClick={() => ctrl.start('spectator')}
+          className="mt-2 w-full py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-white/10 text-slate-100 flex items-center gap-3 text-left transition"
+        >
+          <span className="flex -space-x-2 shrink-0">
+            <CommanderPortrait team="player" size={34} />
+            <CommanderPortrait team="enemy" size={34} />
+          </span>
+          <span className="flex-1">
+            <span className="font-heading font-bold text-sm flex items-center gap-1.5">
+              <Eye className="w-4 h-4 text-cyan-300" /> ИИ против ИИ — режим наблюдения
+            </span>
+            <span className="block text-[11px] text-slate-400 leading-snug">
+              Командор Бирюзов и Генерал Ржавый воюют без вашего участия: оба проектируют роботов и планируют бой{' '}
+              {cloud ? 'облачной моделью' : 'на локальных правилах'}. Можно ускорить до ×4.
+            </span>
+          </span>
         </button>
         <div className="text-[10px] text-slate-400 text-center mt-2">Камера: перетаскивание мышью, колесо — масштаб, WASD/стрелки, клик по мини-карте.</div>
       </div>

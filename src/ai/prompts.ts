@@ -1,5 +1,6 @@
 import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
 import { GAME_BALANCE } from '../config/balance';
+import { COMMANDERS } from '../config/commanders';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { TacticalPlan, Team } from '../types/game';
@@ -175,29 +176,45 @@ export function tacticianUserPrompt(
   return lines.join('\n');
 }
 
-// ───────────────────────────── Enemy commander ─────────────────────────────
+// ───────────────────────────── AI commanders (enemy; both sides in AI-vs-AI mode) ─────────────────────────────
 
-export const ENEMY_SYSTEM = `Ты — «Генерал Ржавый», командир армии оранжевых роботов — противник игрока в RTS. Хвастливый и язвительный, но играешь всерьёз: цель — уничтожить командный центр игрока.
+/** How a commander refers to its opponent: the human player, or the other AI commander. */
+export function foeLabel(team: Team, vsAI: boolean): string {
+  if (vsAI) return COMMANDERS[opposite(team)].name;
+  return team === 'enemy' ? 'игрок-командир бирюзовой армии' : 'противник';
+}
+
+export function commanderSystem(team: Team, vsAI: boolean): string {
+  const me = COMMANDERS[team];
+  const foe = foeLabel(team, vsAI);
+  return `Ты — «${me.name}», командир армии ${me.armyRu} роботов в RTS. ${me.persona}, но играешь всерьёз: цель — уничтожить командный центр противника (${foe}).
 Раз в ~25 секунд получаешь сводку и решаешь:
 1) конструкцию для следующих партий — только из каталога, соблюдая ограничения шасси (слоты, масса, энергия, отдача); null — если менять не нужно;
 2) тактический план армии (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
-3) экономические действия.
-Подбирай контр-конструкции против замеченных моделей игрока, следи за экономикой: без добычи армия не растёт.
-Ответ — только JSON: {"taunt":"язвительная реплика игроку до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
+3) экономические действия. Добытчиков собирает завод вместо боевых машин — не заказывай их, пока армия не может держать фронт.
+Подбирай контр-конструкции против замеченных моделей противника, следи за экономикой: без добычи армия не растёт.
+Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
+}
 
-export function enemyUserPrompt(state: GameState): string {
-  const me: Team = 'enemy';
-  const t = state.teams[me];
+export function commanderUserPrompt(state: GameState, team: Team): string {
+  const t = state.teams[team];
+  const foe = opposite(team);
   return [
     `ВРЕМЯ МАТЧА: ${Math.round(state.gameTime)} с`,
     `ТВОЯ СЕРИЙНАЯ МОДЕЛЬ: ${describeDesign(t.design)}`,
     `ТВОЙ ПЛАН: ${planLine(t.plan)}`,
-    `ТВОЯ ЭКОНОМИКА: ${economyLine(state, me)}`,
-    `ТВОЯ АРМИЯ: ${armyLine(state, me)}; потери ${t.economy.totals.unitsLost}, уничтожено врагов ${t.economy.totals.kills}`,
-    `ЗАМЕЧЕННЫЕ МОДЕЛИ ИГРОКА: ${intelLine(state, me)}`,
-    `АРМИЯ ИГРОКА: ${state.armySummary(opposite(me)).combatUnits} боевых машин`,
-    `ШТАБЫ: твой ${state.baseHpPct(me)}%, игрока ${state.baseHpPct('player')}%`,
-    `СОБЫТИЯ: ${eventsLine(state, me)}`,
+    `ТВОЯ ЭКОНОМИКА: ${economyLine(state, team)}`,
+    `ТВОЯ АРМИЯ: ${armyLine(state, team)}; потери ${t.economy.totals.unitsLost}, уничтожено врагов ${t.economy.totals.kills}`,
+    `ЗАМЕЧЕННЫЕ МОДЕЛИ ПРОТИВНИКА: ${intelLine(state, team)}`,
+    `АРМИЯ ПРОТИВНИКА: ${state.armySummary(foe).combatUnits} боевых машин`,
+    `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
+    `СОБЫТИЯ: ${eventsLine(state, team)}`,
     `КАТАЛОГ:\n${compactCatalog()}`,
   ].join('\n');
+}
+
+/** Backwards-compatible names for the enemy commander vs a human player. */
+export const ENEMY_SYSTEM = commanderSystem('enemy', false);
+export function enemyUserPrompt(state: GameState): string {
+  return commanderUserPrompt(state, 'enemy');
 }

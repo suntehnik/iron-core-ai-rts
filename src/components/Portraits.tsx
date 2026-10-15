@@ -29,15 +29,33 @@ export const TacticianPortrait: React.FC<{ size?: number; talking?: boolean }> =
   </svg>
 );
 
-export const GeneralPortrait: React.FC<{ size?: number }> = ({ size = 40 }) => (
-  <svg width={size} height={size} viewBox="0 0 64 64" aria-label="Генерал Ржавый">
-    <rect x="10" y="16" width="44" height="40" rx="10" fill="#f97316" stroke="#2b2622" strokeWidth="2.5" />
-    <path d="M6 20 L58 20 L52 8 L12 8 Z" fill="#7c2d12" stroke="#2b2622" strokeWidth="2.5" />
-    <circle cx="32" cy="14" r="3" fill="#f2b134" stroke="#2b2622" strokeWidth="1.5" />
-    <rect x="16" y="26" width="13" height="9" rx="3" fill="#1d2a33" />
-    <rect x="35" y="26" width="13" height="9" rx="3" fill="#1d2a33" />
-    <circle cx="22" cy="30.5" r="2.5" fill="#ff6a3d" />
-    <circle cx="41" cy="30.5" r="2.5" fill="#ff6a3d" />
-    <path d="M18 44 Q25 39 32 44 Q39 39 46 44 Q39 48 32 45 Q25 48 18 44 Z" fill="#3a2a20" stroke="#2b2622" strokeWidth="1.5" />
-  </svg>
-);
+const COMMANDER_COLORS = {
+  enemy: { face: '#f97316', cap: '#7c2d12', eye: '#ff6a3d', label: 'Генерал Ржавый' },
+  player: { face: '#14b8a6', cap: '#115e59', eye: '#7ef0ff', label: 'Командор Бирюзов' },
+} as const;
+
+/** AI commander portrait: orange general (enemy) or teal commander (AI-vs-AI player side). */
+export const CommanderPortrait: React.FC<{ team: 'player' | 'enemy'; size?: number }> = ({ team, size = 40 }) => {
+  const c = COMMANDER_COLORS[team];
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-label={c.label}>
+      <rect x="10" y="16" width="44" height="40" rx="10" fill={c.face} stroke="#2b2622" strokeWidth="2.5" />
+      <path d="M6 20 L58 20 L52 8 L12 8 Z" fill={c.cap} stroke="#2b2622" strokeWidth="2.5" />
+      <circle cx="32" cy="14" r="3" fill="#f2b134" stroke="#2b2622" strokeWidth="1.5" />
+      <rect x="16" y="26" width="13" height="9" rx="3" fill="#1d2a33" />
+      <rect x="35" y="26" width="13" height="9" rx="3" fill="#1d2a33" />
+      <circle cx="22" cy="30.5" r="2.5" fill={c.eye} />
+      <circle cx="41" cy="30.5" r="2.5" fill={c.eye} />
+      {team === 'enemy' ? (
+        <path d="M18 44 Q25 39 32 44 Q39 39 46 44 Q39 48 32 45 Q25 48 18 44 Z" fill="#3a2a20" stroke="#2b2622" strokeWidth="1.5" />
+      ) : (
+        <>
+          <rect x="22" y="42" width="20" height="5" rx="2.5" fill="#f4ecdb" stroke="#2b2622" strokeWidth="1.5" />
+          <circle cx="47" cy="30.5" r="5.5" fill="none" stroke="#f2b134" strokeWidth="1.8" />
+        </>
+      )}
+    </svg>
+  );
+};
+
+export const GeneralPortrait: React.FC<{ size?: number }> = ({ size = 40 }) => <CommanderPortrait team="enemy" size={size} />;

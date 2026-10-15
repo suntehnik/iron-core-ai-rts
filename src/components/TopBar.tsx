@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Box, Clock, Cog, Coins, Cpu, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
+import { Box, Clock, Cog, Coins, Cpu, Eye, Home, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
-import { GameController } from '../game/GameController';
+import { GameController, TIME_SCALES } from '../game/GameController';
 import { CoinPanel } from './CoinPanel';
 import { IconButton, cx, fmtCoins, formatTime } from './ui';
 
@@ -84,13 +84,29 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
             </div>
           </button>
           <div
-            className={cx('hud-panel flex items-center gap-1.5 px-2.5 py-2 max-w-[260px]', cloud ? 'text-emerald-200' : 'text-amber-200')}
+            className={cx('hud-panel hidden xl:flex items-center gap-1.5 px-2.5 py-2 max-w-[260px]', cloud ? 'text-emerald-200' : 'text-amber-200')}
             title={cloud ? 'Агенты думают облачным LLM' : 'Облачный LLM не настроен — работают локальные эвристики'}
           >
             <Cpu className={cx('w-3.5 h-3.5 shrink-0', (busy.engineer || busy.tactician || busy.enemy) && 'animate-pulse text-cyan-300')} />
             <span className="text-[11px] font-semibold truncate">{ctrl.director.providerLabel()}</span>
           </div>
+          {ctrl.mode === 'spectator' && (
+            <div className="hud-panel flex items-center gap-1 p-1" title="Режим наблюдения: скорость игры">
+              <span className="flex items-center gap-1 px-1.5 text-[11px] font-semibold text-cyan-200 whitespace-nowrap">
+                <Eye className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline">ИИ vs ИИ</span>
+              </span>
+              {TIME_SCALES.map(k => (
+                <IconButton key={k} onClick={() => ctrl.setTimeScale(k)} active={ctrl.timeScale === k} title={`Скорость ×${k}`}>
+                  <span className="font-heading font-bold text-[11px]">×{k}</span>
+                </IconButton>
+              ))}
+            </div>
+          )}
           <div className="hud-panel flex items-center gap-1 p-1">
+            <IconButton onClick={() => ctrl.backToMenu()} title="В меню: выбрать режим игры">
+              <Home className="w-4 h-4" />
+            </IconButton>
             <IconButton onClick={() => ctrl.togglePause()} title={s.isPaused ? 'Продолжить' : 'Пауза'}>
               {s.isPaused ? <Play className="w-4 h-4 text-emerald-300" /> : <Pause className="w-4 h-4" />}
             </IconButton>

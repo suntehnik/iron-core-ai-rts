@@ -62,6 +62,9 @@ export const CoinPanel: React.FC<{ ctrl: GameController; onClose: () => void }> 
           <Row name="Агенты управления" hint="тактические планы, пересмотры" s={b.services.tactical} />
           <Row name="Распознавание речи" hint="ASR, голосовые приказы" s={b.services.asr} audio />
           <Row name="Синтез речи" hint="TTS, ответы агентов" s={b.services.tts} audio />
+          {(ctrl.mode === 'spectator' || b.ally.calls > 0) && (
+            <Row name="ИИ-союзник (ИИ против ИИ)" hint="Командор Бирюзов, не списывается" s={b.ally} muted />
+          )}
           <Row
             name="AI-противник"
             hint={b.chargeEnemyToPlayer ? 'включён в ваш тариф' : 'не списывается с вашего баланса'}

@@ -252,6 +252,12 @@ export class SceneManager {
   }
 
   /** Centre the camera on a map position (minimap clicks). */
+  /** Whole battlefield in view (AI-vs-AI spectating). */
+  overview() {
+    this.zoom = 38;
+    this.focus(GAME_BALANCE.MAP_WIDTH / 2, GAME_BALANCE.MAP_HEIGHT / 2);
+  }
+
   focus(x: number, y: number) {
     this.target.set(x, 0, y);
     this.clampTarget();

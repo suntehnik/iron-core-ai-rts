@@ -2,7 +2,8 @@ import { AI_TARIFFS, AI_WALLET, llmCost } from '../config/tariffs';
 
 /** The four billed services from brief §10. */
 export type AIService = 'tactical' | 'production' | 'asr' | 'tts';
-export type AIParticipant = 'player' | 'enemy';
+/** 'ally' = the teal AI commander in AI-vs-AI mode (a demo: never charged to the player). */
+export type AIParticipant = 'player' | 'enemy' | 'ally';
 
 export interface ServiceStats {
   calls: number;
@@ -23,6 +24,7 @@ export interface BillingSnapshot {
   status: 'ok' | 'low' | 'exhausted';
   services: Record<AIService, ServiceStats>;
   enemy: ServiceStats;
+  ally: ServiceStats;
   chargeEnemyToPlayer: boolean;
   lastWarning: string | null;
 }
@@ -60,6 +62,7 @@ export class AIBilling {
     tts: emptyStats(),
   };
   private enemy = emptyStats();
+  private ally = emptyStats();
   private settled = new Set<string>();
   private listeners = new Set<() => void>();
   private lowWarned = false;
@@ -122,6 +125,7 @@ export class AIBilling {
 
   /** Pre-flight check before an agent call. Enemy calls are free unless included in the tariff. */
   canAfford(participant: AIParticipant, estimate: number): Affordability {
+    if (participant === 'ally') return { ok: true };
     if (participant === 'enemy' && !this.chargeEnemyToPlayer) return { ok: true };
     const rem = this.remaining();
     if (rem < estimate) {
@@ -148,21 +152,21 @@ export class AIBilling {
     if (this.settled.has(requestId)) return 0;
     this.settled.add(requestId);
     const coins = llmCost(tokensIn, tokensOut);
-    const target = participant === 'enemy' ? this.enemy : this.services[service];
+    const target = participant === 'enemy' ? this.enemy : participant === 'ally' ? this.ally : this.services[service];
     target.calls++;
     target.tokensIn += tokensIn;
     target.tokensOut += tokensOut;
     target.lastLatencyMs = latencyMs;
     target.totalLatencyMs += latencyMs;
     target.coins += coins;
-    const charged = participant === 'player' || this.chargeEnemyToPlayer ? coins : 0;
+    const charged = participant === 'player' || (participant === 'enemy' && this.chargeEnemyToPlayer) ? coins : 0;
     this.charge(charged);
     return charged;
   }
 
   /** A failed call: logged for telemetry, never charged. */
   recordError(participant: AIParticipant, service: 'tactical' | 'production', latencyMs: number) {
-    const target = participant === 'enemy' ? this.enemy : this.services[service];
+    const target = participant === 'enemy' ? this.enemy : participant === 'ally' ? this.ally : this.services[service];
     target.errors++;
     target.lastLatencyMs = latencyMs;
     this.emit();
@@ -230,6 +234,7 @@ export class AIBilling {
     this.spentThisMatch = 0;
     this.services = { tactical: emptyStats(), production: emptyStats(), asr: emptyStats(), tts: emptyStats() };
     this.enemy = emptyStats();
+    this.ally = emptyStats();
     this.settled.clear();
     this.lowWarned = false;
     this.exhaustedWarned = false;
@@ -251,6 +256,7 @@ export class AIBilling {
         tts: { ...this.services.tts },
       },
       enemy: { ...this.enemy },
+      ally: { ...this.ally },
       chargeEnemyToPlayer: this.chargeEnemyToPlayer,
       lastWarning: this.lastWarning,
     };
@@ -272,6 +278,11 @@ export class DecisionRateLimiter {
 
   mark(key: string, now: number) {
     this.last.set(key, now);
+  }
+
+  /** Game time of the last decision for this key (-Infinity if none yet). */
+  lastAt(key: string): number {
+    return this.last.get(key) ?? -Infinity;
   }
 
   secondsUntil(key: string, now: number): number {

@@ -4,24 +4,26 @@ import { estimateLLMCost } from '../config/tariffs';
 import { GameState } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { ChatMessage, LLMSettings, ProductionProposal, TacticalDecision } from '../types/agent';
-import { ProductionAction, TacticalPlan } from '../types/game';
+import { ProductionAction, TacticalPlan, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { AIBilling, AIParticipant, DecisionRateLimiter } from './AIBilling';
-import { localEnemyDecision, localEngineer, localTactician } from './fallbacks';
+import { localCommanderDecision, localEngineer, localTactician } from './fallbacks';
 import { LLMConnection, LLMError, LLMResponse, chatJSON, cloudReady } from './llm/LLMClient';
 import { asString, describeAction, normalizeActions, normalizePlan } from './parsing';
 import {
-  ENEMY_SYSTEM,
+  commanderSystem,
+  commanderUserPrompt,
   ENGINEER_SYSTEM,
   TACTICIAN_SYSTEM,
-  enemyUserPrompt,
   engineerRepairPrompt,
   engineerUserPrompt,
   parseCostLimitPct,
   tacticianUserPrompt,
 } from './prompts';
 
-export type AgentKey = 'engineer' | 'tactician' | 'enemy';
+/** 'ally' = the teal AI commander that replaces the human in AI-vs-AI mode. */
+export type AgentKey = 'engineer' | 'tactician' | 'enemy' | 'ally';
+export type GameMode = 'human' | 'spectator';
 
 export interface AgentCallInfo {
   source: 'llm' | 'fallback';
@@ -36,7 +38,7 @@ export interface DirectorEvents {
   chat(msg: ChatMessage): void;
   proposal(p: ProductionProposal | null): void;
   tactical(d: TacticalDecision): void;
-  intercept(text: string, source: 'llm' | 'fallback'): void;
+  intercept(text: string, source: 'llm' | 'fallback', team: Team): void;
   changed(): void;
 }
 
@@ -47,6 +49,9 @@ const BUDGET = {
   enemy: { in: 1600, out: 320, max: 480 },
 };
 
+/** Commanders decide in the background every ~25 s, so a slow (local) model may take its time. */
+const COMMANDER_TIMEOUT_MS = 45000;
+
 let msgCounter = 0;
 const newId = (p: string) => `${p}_${Date.now().toString(36)}_${(msgCounter++).toString(36)}`;
 
@@ -56,8 +61,10 @@ const newId = (p: string) => `${p}_${Date.now().toString(36)}_${(msgCounter++).t
  */
 export class AIDirector {
   public readonly billing: AIBilling;
-  public busy: Record<AgentKey, boolean> = { engineer: false, tactician: false, enemy: false };
-  public lastCall: Record<AgentKey, AgentCallInfo | null> = { engineer: null, tactician: null, enemy: null };
+  public busy: Record<AgentKey, boolean> = { engineer: false, tactician: false, enemy: false, ally: false };
+  public lastCall: Record<AgentKey, AgentCallInfo | null> = { engineer: null, tactician: null, enemy: null, ally: null };
+  /** 'spectator' = AI vs AI: an AI commander also plays the teal side, the human only watches. */
+  public mode: GameMode = 'human';
   public pendingProposal: ProductionProposal | null = null;
   public lastTactical: TacticalDecision | null = null;
   public standingOrders: string[] = [];
@@ -102,8 +109,8 @@ export class AIDirector {
   /** Called when a match restarts: in-flight replies from the old match are ignored. */
   resetMatch() {
     this.generation++;
-    this.busy = { engineer: false, tactician: false, enemy: false };
-    this.lastCall = { engineer: null, tactician: null, enemy: null };
+    this.busy = { engineer: false, tactician: false, enemy: false, ally: false };
+    this.lastCall = { engineer: null, tactician: null, enemy: null, ally: null };
     this.pendingProposal = null;
     this.lastTactical = null;
     this.standingOrders = [];
@@ -119,16 +126,32 @@ export class AIDirector {
     if (state.isPaused || state.gameOver) return;
 
     // Baseline game AI for the opponent's economy (runs regardless of LLM availability)
+    const spectator = this.mode === 'spectator';
     this.macroTimer -= dt;
     if (this.macroTimer <= 0) {
       this.macroTimer = 3;
-      this.enemyBaselineMacro(state);
+      this.baselineMacro(state, 'enemy');
+      if (spectator) this.baselineMacro(state, 'player');
     }
 
-    if (!this.busy.enemy && state.gameTime >= GAME_BALANCE.AI_FIRST_ENEMY_DECISION_SEC && this.limiter.ready('enemy', state.gameTime)) {
-      this.limiter.mark('enemy', state.gameTime);
-      void this.decideEnemy(state);
+    // AI commanders: the enemy always; the teal side too in AI-vs-AI mode. Same decision
+    // interval for both (brief §10); the teal one starts a few seconds later so the two
+    // requests do not hit the model at the same moment.
+    // In AI-vs-AI the two commanders take turns instead of querying the model at once (a local
+    // server answers one request at a time); whoever decided longer ago goes first.
+    const commanders: Team[] = spectator
+      ? (['enemy', 'player'] as Team[]).sort((a, b) => this.limiter.lastAt(commanderKey(a)) - this.limiter.lastAt(commanderKey(b)))
+      : ['enemy'];
+    for (const team of commanders) {
+      const key = commanderKey(team);
+      if (spectator && (this.busy.enemy || this.busy.ally)) break;
+      const first = GAME_BALANCE.AI_FIRST_ENEMY_DECISION_SEC + (team === 'player' ? 6 : 0);
+      if (!this.busy[key] && state.gameTime >= first && this.limiter.ready(key, state.gameTime)) {
+        this.limiter.mark(key, state.gameTime);
+        void this.decideCommander(state, team);
+      }
     }
+    if (spectator) return; // no human orders, no player-side tactician
 
     const sig = state.significantCounter.player;
     if (sig > this.seenSignificant.player) {
@@ -145,26 +168,32 @@ export class AIDirector {
     }
   }
 
-  private enemyBaselineMacro(state: GameState) {
-    const econ = state.teams.enemy.economy;
+  setMode(mode: GameMode) {
+    this.mode = mode;
+    this.events.changed();
+  }
+
+  /** Baseline game AI economy for an AI-run side (runs regardless of LLM availability). */
+  private baselineMacro(state: GameState, team: Team) {
+    const econ = state.teams[team].economy;
     // ordered harvesters count too: they are already paid and on the factory line
-    const harvesters = state.harvesterCount('enemy') + state.harvestersInProduction('enemy');
+    const harvesters = state.harvesterCount(team) + state.harvestersInProduction(team);
     // Economy first: grow mining over time so production does not starve harvesters
     // Harvesters take factory time from the army, so grow mining gradually and not while defenceless
-    const army = state.combatCount('enemy');
+    const army = state.combatCount(team);
     const targetHarvesters = Math.min(6, 2 + Math.floor(state.gameTime / 75));
-    const canSpareFactory = army >= 3 || harvesters < 2 || !state.buildings.some(b => b.team === 'enemy' && b.type === 'factory');
+    const canSpareFactory = army >= 3 || harvesters < 2 || !state.buildings.some(b => b.team === team && b.type === 'factory');
     if (harvesters < targetHarvesters && canSpareFactory && (econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL || harvesters === 0)) {
-      state.orderHarvester('enemy');
+      state.orderHarvester(team);
     }
     if (econ.powerEfficiency < 0.9 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) {
-      const building = state.buildings.some(b => b.team === 'enemy' && b.type === 'power_plant' && b.built < 1);
-      if (!building) state.buildStructure('enemy', 'power_plant');
+      const building = state.buildings.some(b => b.team === team && b.type === 'power_plant' && b.built < 1);
+      if (!building) state.buildStructure(team, 'power_plant');
     }
     // Metal piling up while components are short → fabricate more components
     econ.componentReserve = econ.metal > 500 ? Math.max(econ.componentReserve, 350) : Math.min(econ.componentReserve, 220);
-    if (state.buildingCount('enemy', 'factory') === 0 && econ.metal >= GAME_BALANCE.FACTORY_COST_METAL) {
-      state.buildStructure('enemy', 'factory');
+    if (state.buildingCount(team, 'factory') === 0 && econ.metal >= GAME_BALANCE.FACTORY_COST_METAL) {
+      state.buildStructure(team, 'factory');
     }
   }
 
@@ -176,6 +205,7 @@ export class AIDirector {
     budget: { in: number; out: number; max: number },
     system: string,
     user: string,
+    timeoutMs: number = service === 'tactical' ? 18000 : 25000,
   ): Promise<{ res: LLMResponse | null; coins: number; error?: string }> {
     if (!this.cloudEnabled()) return { res: null, coins: 0, error: LLM_PROVIDERS[this.settings.provider].protocol === 'none' ? undefined : 'облачный LLM не настроен' };
     const afford = this.billing.canAfford(participant, estimateLLMCost(budget.in, budget.out));
@@ -189,7 +219,7 @@ export class AIDirector {
         user,
         maxTokens: budget.max,
         temperature: participant === 'enemy' ? 0.7 : 0.35,
-        timeoutMs: service === 'tactical' ? 18000 : 25000,
+        timeoutMs,
       });
       const coins = this.billing.recordLLM(requestId, participant, service, res.usage.tokensIn, res.usage.tokensOut, res.latencyMs);
       return { res, coins };
@@ -465,55 +495,63 @@ export class AIDirector {
 
   // ───────────────────────────── Enemy commander ─────────────────────────────
 
-  private async decideEnemy(state: GameState) {
-    this.busy.enemy = true;
+  private async decideCommander(state: GameState, team: Team) {
+    const key = commanderKey(team);
+    const participant: AIParticipant = team === 'enemy' ? 'enemy' : 'ally';
+    const vsAI = this.mode === 'spectator';
+    this.busy[key] = true;
     const gen = this.generation;
+    // In AI-vs-AI both commanders follow the same switch, so neither side gets a smarter brain
     const useCloud = this.settings.enemyUsesLLM && this.cloudEnabled();
     let taunt = '';
     let design: RobotDesign | null = null;
     let plan: TacticalPlan | null = null;
     let actions: ProductionAction[] = [];
     let source: 'llm' | 'fallback' = 'fallback';
+    const current = () => state.teams[team];
 
     if (useCloud) {
-      const { res, coins, error } = await this.callAgent('enemy', 'tactical', BUDGET.enemy, ENEMY_SYSTEM, enemyUserPrompt(state));
+      const { res, coins, error } = await this.callAgent(
+        participant,
+        'tactical',
+        BUDGET.enemy,
+        commanderSystem(team, vsAI),
+        commanderUserPrompt(state, team),
+        COMMANDER_TIMEOUT_MS,
+      );
       if (gen !== this.generation) return;
       if (res) {
         source = 'llm';
         taunt = asString(res.data.taunt) || asString(res.data.reply) || asString(res.data.message);
-        const n = res.data.design ? RobotBuilder.normalizeDesign(res.data.design, state.teams.enemy.design, 'enemy') : null;
-        if (n) {
-          const fixed = RobotBuilder.calculateStats(n.design).isValid ? n.design : RobotBuilder.repairDesign(n.design).design;
-          design = fixed;
-        }
-        plan = res.data.plan ? normalizePlan(res.data.plan, state.teams.enemy.plan, 'agent') : null;
+        const n = res.data.design ? RobotBuilder.normalizeDesign(res.data.design, current().design, team) : null;
+        if (n) design = RobotBuilder.calculateStats(n.design).isValid ? n.design : RobotBuilder.repairDesign(n.design).design;
+        plan = res.data.plan ? normalizePlan(res.data.plan, current().plan, 'agent') : null;
         actions = normalizeActions(res.data.actions);
-        this.lastCall.enemy = { source: 'llm', latencyMs: res.latencyMs, coins, model: res.model, at: state.gameTime };
+        this.lastCall[key] = { source: 'llm', latencyMs: res.latencyMs, coins, model: res.model, at: state.gameTime };
       } else {
-        this.lastCall.enemy = { source: 'fallback', latencyMs: 0, coins: 0, error, at: state.gameTime };
+        this.lastCall[key] = { source: 'fallback', latencyMs: 0, coins: 0, error, at: state.gameTime };
       }
     }
 
     if (source === 'fallback') {
-      const draft = localEnemyDecision(state);
+      const draft = localCommanderDecision(state, team);
       taunt = draft.taunt;
       design = draft.design;
       plan = draft.plan;
       actions = draft.actions;
-      if (!useCloud) this.lastCall.enemy = { source: 'fallback', latencyMs: 0, coins: 0, at: state.gameTime };
+      if (!useCloud) this.lastCall[key] = { source: 'fallback', latencyMs: 0, coins: 0, at: state.gameTime };
     }
 
     if (gen !== this.generation || state.gameOver) {
-      this.busy.enemy = false;
+      this.busy[key] = false;
       return;
     }
-    if (design && (design.chassisId !== state.teams.enemy.design.chassisId || design.modules.join() !== state.teams.enemy.design.modules.join())) {
-      state.setDesign('enemy', design);
-    }
-    if (plan) state.setPlan('enemy', plan);
-    for (const a of actions) state.applyProductionAction('enemy', a);
-    if (taunt) this.events.intercept(taunt, source);
-    this.busy.enemy = false;
+    const d = current().design;
+    if (design && (design.chassisId !== d.chassisId || design.modules.join() !== d.modules.join())) state.setDesign(team, design);
+    if (plan) state.setPlan(team, plan);
+    for (const a of actions) state.applyProductionAction(team, a);
+    if (taunt) this.events.intercept(taunt, source, team);
+    this.busy[key] = false;
     this.events.changed();
   }
 
@@ -547,6 +585,10 @@ function planChanged(a: TacticalPlan, b: TacticalPlan): boolean {
     a.retreatHpThreshold !== b.retreatHpThreshold ||
     a.guardHarvesters !== b.guardHarvesters
   );
+}
+
+function commanderKey(team: Team): 'enemy' | 'ally' {
+  return team === 'enemy' ? 'enemy' : 'ally';
 }
 
 export { describeAction };

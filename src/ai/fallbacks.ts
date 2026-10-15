@@ -1,7 +1,8 @@
 import { GAME_BALANCE } from '../config/balance';
-import { GameState } from '../engine/GameState';
+import { COMMANDERS } from '../config/commanders';
+import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
-import { ProductionAction, TacticalPlan } from '../types/game';
+import { ProductionAction, TacticalPlan, Team } from '../types/game';
 import { ChassisType, RobotDesign, TacticalRole } from '../types/robot';
 import { describePlan } from './parsing';
 
@@ -197,15 +198,6 @@ export function localTactician(order: string, prev: TacticalPlan): { reply: stri
   return { reply, plan };
 }
 
-const ENEMY_TAUNTS = [
-  'Ваши железки скрипят громче, чем стреляют!',
-  'Мои конвейеры уже знают ваши слабые места.',
-  'Сдавайтесь, пока у вас ещё есть металлолом.',
-  'Это была разведка боем. Настоящий бой впереди!',
-  'Ржавчина — это не возраст, это стиль.',
-  'Ваш инженер собирает роботов по инструкции от тостера?',
-];
-
 export interface EnemyDraft {
   taunt: string;
   design: RobotDesign | null;
@@ -213,16 +205,18 @@ export interface EnemyDraft {
   actions: ProductionAction[];
 }
 
-/** Rule-based counter-building commander (the classic game AI). */
-export function localEnemyDecision(state: GameState): EnemyDraft {
-  const t = state.teams.enemy;
-  const seen = state.observedEnemyDesigns('enemy');
+/** Rule-based counter-building commander (the classic game AI) for either side. */
+export function localCommanderDecision(state: GameState, team: Team): EnemyDraft {
+  const t = state.teams[team];
+  const foe = opposite(team);
+  const profile = COMMANDERS[team];
+  const seen = state.observedEnemyDesigns(team);
   const top = seen[0]?.design;
   let design: RobotDesign | null = null;
   const next = (name: string, chassisId: ChassisType, modules: string[], role: TacticalRole): RobotDesign => ({
     ...t.design,
-    id: `enemy_${Date.now().toString(36)}`,
-    name: `${name} Mk-${t.design.version + 1}`,
+    id: `${team}_${Date.now().toString(36)}`,
+    name: `${profile.designPrefix} ${name} Mk-${t.design.version + 1}`,
     chassisId,
     modules,
     tacticalRole: role,
@@ -234,38 +228,42 @@ export function localEnemyDecision(state: GameState): EnemyDraft {
   if (top) {
     const mods = top.modules;
     if (top.chassisId === 'heavy_quad' || mods.includes('heavy_siege_cannon') || mods.includes('sniper_railgun')) {
-      design = next('Ржавая Гончая', 'light_biped', ['light_composite', 'melee_buzzsaw', 'micro_turbine'], 'skirmisher');
+      design = next('Гончая', 'light_biped', ['light_composite', 'melee_buzzsaw', 'micro_turbine'], 'skirmisher');
       plan.engagementRange = 'close_brawl';
       plan.targetPriority = 'focus_fire';
     } else if (mods.includes('sloped_reactive') || (mods.includes('reinforced_steel') && top.chassisId !== 'light_biped')) {
-      design = next('Ржавый Плавильщик', 'medium_tracked', ['reinforced_steel', 'plasma_blasters', 'heat_radiator'], 'anti_armor');
+      design = next('Плавильщик', 'medium_tracked', ['reinforced_steel', 'plasma_blasters', 'heat_radiator'], 'anti_armor');
       plan.engagementRange = 'balanced';
       plan.targetPriority = 'high_threat_heavies';
     } else if (mods.includes('melee_buzzsaw')) {
-      design = next('Ржавый Страж', 'medium_tracked', ['reinforced_steel', 'autocannon_20mm', 'heat_radiator'], 'frontline');
+      design = next('Страж', 'medium_tracked', ['reinforced_steel', 'autocannon_20mm', 'heat_radiator'], 'frontline');
       plan.engagementRange = 'max_range';
     } else if (top.chassisId === 'light_biped') {
-      design = next('Ржавый Дробитель', 'medium_tracked', ['light_composite', 'autocannon_20mm', 'autocannon_20mm'], 'frontline');
+      design = next('Дробитель', 'medium_tracked', ['light_composite', 'autocannon_20mm', 'autocannon_20mm'], 'frontline');
       plan.engagementRange = 'balanced';
       plan.targetPriority = 'closest';
     }
     if (design && design.chassisId === t.design.chassisId && design.modules.join() === t.design.modules.join()) design = null;
   }
 
-  const mine = state.armySummary('enemy').combatUnits;
-  const theirs = state.armySummary('player').combatUnits;
+  const mine = state.armySummary(team).combatUnits;
+  const theirs = state.armySummary(foe).combatUnits;
   if (mine >= theirs * 1.3 + 2) plan.stance = 'advance';
   else if (mine + 3 < theirs) plan.stance = 'defend_base';
   else plan.stance = state.gameTime > 240 ? 'advance' : 'hold_center';
-  plan.guardHarvesters = state.recentEvents('enemy', 5).some(e => e.type === 'harvester_attacked');
+  plan.guardHarvesters = state.recentEvents(team, 5).some(e => e.type === 'harvester_attacked');
   plan.summaryRu = describePlan(plan);
 
   const actions: ProductionAction[] = [];
   const econ = t.economy;
-  const harvesters = state.harvesterCount('enemy') + state.harvestersInProduction('enemy');
+  const harvesters = state.harvesterCount(team) + state.harvestersInProduction(team);
   if (harvesters < 5 && mine >= 3 && econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL) actions.push({ type: 'build_harvester', count: 1 });
   if (econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
-  if (econ.metal > 750 && state.buildingCount('enemy', 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
+  if (econ.metal > 750 && state.buildingCount(team, 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
 
-  return { taunt: ENEMY_TAUNTS[Math.floor(Math.random() * ENEMY_TAUNTS.length)], design, plan, actions };
+  return { taunt: profile.taunts[Math.floor(Math.random() * profile.taunts.length)], design, plan, actions };
+}
+
+export function localEnemyDecision(state: GameState): EnemyDraft {
+  return localCommanderDecision(state, 'enemy');
 }

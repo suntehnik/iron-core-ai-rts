@@ -113,8 +113,9 @@ export async function chatJSON(conn: LLMConnection, req: LLMRequest): Promise<LL
         minimal = true;
         continue;
       }
-      const retryable =
-        err.kind === 'network' || err.kind === 'timeout' || (err.kind === 'http' && RETRYABLE_STATUS.has(err.status ?? 0));
+      // A timed-out request is usually still being computed by the server (local models process
+      // requests one by one), so retrying it only lengthens the queue — retry real failures only.
+      const retryable = err.kind === 'network' || (err.kind === 'http' && RETRYABLE_STATUS.has(err.status ?? 0));
       if (!retryable || attempts >= 2) throw err;
       await sleep(700 * attempts);
     }

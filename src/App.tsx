@@ -7,6 +7,7 @@ import { InterceptPanel, Notices } from './components/InterceptPanel';
 import { Minimap } from './components/Minimap';
 import { ProductionPanel } from './components/ProductionPanel';
 import { SettingsModal } from './components/SettingsModal';
+import { SpectatorPanel } from './components/SpectatorPanel';
 import { TacticalPanel } from './components/TacticalPanel';
 import { TopBar } from './components/TopBar';
 import { VictoryModal } from './components/VictoryModal';
@@ -26,6 +27,8 @@ export const App: React.FC = () => {
     return () => ctrl.detachScene();
   }, [ctrl]);
 
+  const spectator = ctrl.mode === 'spectator';
+
   return (
     <div className="relative w-screen h-screen overflow-hidden select-none font-sans">
       <div ref={canvasRef} className="absolute inset-0 z-0" />
@@ -35,22 +38,32 @@ export const App: React.FC = () => {
 
       {/* Left column: production & events */}
       <div className="absolute left-3 top-[76px] z-10 flex flex-col gap-2 pointer-events-none">
-        <ProductionPanel ctrl={ctrl} />
+        {!spectator && <ProductionPanel ctrl={ctrl} />}
         <EventFeed ctrl={ctrl} />
       </div>
 
       {/* Right top: intercepted enemy commander radio */}
-      <div className="absolute right-3 top-[76px] z-10 pointer-events-none">
-        <InterceptPanel ctrl={ctrl} />
-      </div>
+      {!spectator && (
+        <div className="absolute right-3 top-[76px] z-10 pointer-events-none">
+          <InterceptPanel ctrl={ctrl} />
+        </div>
+      )}
 
       {/* Bottom row: minimap, tactical plan, constructor */}
       <div className="absolute left-3 right-3 bottom-3 z-10 flex items-end gap-2 pointer-events-none">
         <Minimap ctrl={ctrl} version={version} />
-        <TacticalPanel ctrl={ctrl} />
-        <div className="ml-auto">
-          <AgentConsole ctrl={ctrl} />
-        </div>
+        {spectator ? (
+          <div className="ml-auto">
+            <SpectatorPanel ctrl={ctrl} />
+          </div>
+        ) : (
+          <>
+            <TacticalPanel ctrl={ctrl} />
+            <div className="ml-auto">
+              <AgentConsole ctrl={ctrl} />
+            </div>
+          </>
+        )}
       </div>
 
       {ctrl.state.isPaused && ctrl.started && !ctrl.state.gameOver && (

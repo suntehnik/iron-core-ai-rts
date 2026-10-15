@@ -1,4 +1,5 @@
-import { AIDirector } from '../ai/AIDirector';
+import { AIDirector, GameMode } from '../ai/AIDirector';
+import { COMMANDERS } from '../config/commanders';
 import { VoiceService, voiceService } from '../ai/VoiceService';
 import { LLM_PROVIDERS, LLMProviderId } from '../config/llmProviders';
 import { AI_WALLET } from '../config/tariffs';
@@ -8,7 +9,7 @@ import { GameState, SoundSink } from '../engine/GameState';
 import { sounds } from '../engine/SoundEffects';
 import { SceneManager } from '../rendering/SceneManager';
 import { AgentId, ChatMessage, LLMSettings, ProductionProposal, TacticalDecision } from '../types/agent';
-import { ProductionAction, TacticalPlan } from '../types/game';
+import { ProductionAction, TacticalPlan, Team } from '../types/game';
 
 const SETTINGS_KEY = 'ironcore_settings_v2';
 
@@ -30,7 +31,10 @@ export interface Intercept {
   text: string;
   time: number;
   source: 'llm' | 'fallback';
+  team: Team;
 }
+
+export const TIME_SCALES = [1, 2, 4] as const;
 
 /** Design test bench run for the pending proposal (brief §9). */
 export interface TrialState {
@@ -78,6 +82,8 @@ export class GameController {
   public proxyStatus: ProxyStatus | null = null;
   public fps = 0;
   public trial: TrialState | null = null;
+  public mode: GameMode = 'human';
+  public timeScale = 1;
   private trialCache = new Map<string, TrialReport>();
 
   private scene: SceneManager | null = null;
@@ -103,10 +109,11 @@ export class GameController {
         this.lastTactical = d;
         this.bump();
       },
-      intercept: (text, source) => {
-        this.intercepts.unshift({ id: this.nextId++, text, time: this.state.gameTime, source });
-        this.intercepts = this.intercepts.slice(0, 6);
-        this.state.pushEvent('player', 'intercept', `Перехват: «${text}»`, false);
+      intercept: (text, source, team) => {
+        this.intercepts.unshift({ id: this.nextId++, text, time: this.state.gameTime, source, team });
+        this.intercepts = this.intercepts.slice(0, 10);
+        const label = this.mode === 'spectator' ? COMMANDERS[team].name : 'Перехват';
+        this.state.pushEvent('player', 'intercept', `${label}: «${text}»`, false);
         this.bump();
       },
       changed: () => this.bump(),
@@ -160,9 +167,15 @@ export class GameController {
     this.lastFrame = now;
     this.shotBudget = Math.min(6, this.shotBudget + dt * 14);
     if (this.started) {
-      this.state.update(dt);
-      this.director.update(this.state, dt);
-      this.updateTrial();
+      // Time scale (AI-vs-AI spectating): sub-steps of ≤0.1 s keep the simulation stable
+      let remaining = dt * this.timeScale;
+      while (remaining > 1e-6) {
+        const step = Math.min(0.1, remaining);
+        this.state.update(step);
+        this.director.update(this.state, step);
+        this.updateTrial();
+        remaining -= step;
+      }
     }
     this.scene?.render(this.state, dt);
 
@@ -179,10 +192,32 @@ export class GameController {
     }
   };
 
-  start() {
+  /** 'human' — the player commands; 'spectator' — AI vs AI, two LLM commanders, the human only watches. */
+  start(mode: GameMode = 'human') {
+    this.setMode(mode);
     this.started = true;
     this.state.isPaused = false;
+    if (mode === 'spectator') this.scene?.overview();
     sounds.playClick();
+    this.bump();
+  }
+
+  private setMode(mode: GameMode) {
+    this.mode = mode;
+    this.director.setMode(mode);
+    this.timeScale = 1;
+    if (mode === 'spectator') this.activeAgent = 'engineer';
+  }
+
+  setTimeScale(scale: number) {
+    this.timeScale = TIME_SCALES.includes(scale as (typeof TIME_SCALES)[number]) ? scale : 1;
+    this.bump();
+  }
+
+  /** Back to the start screen with a fresh match. */
+  backToMenu() {
+    this.restart('human');
+    this.started = false;
     this.bump();
   }
 
@@ -191,18 +226,22 @@ export class GameController {
     this.bump();
   }
 
-  restart() {
+  restart(mode: GameMode = this.mode) {
     this.state = new GameState();
     this.attachSound();
     this.director.resetMatch();
+    this.setMode(mode);
     this.scene?.reset();
+    if (mode === 'spectator') this.scene?.overview();
     this.chat = [];
     this.proposal = null;
     this.trial = null;
     this.lastTactical = null;
     this.intercepts = [];
     this.notices = [];
-    this.pushChat({ id: `restart_${Date.now()}`, role: 'engineer', text: 'Матч перезапущен. Конвейеры чисты, жду приказов!', timestamp: Date.now(), source: 'local' });
+    if (mode === 'human') {
+      this.pushChat({ id: `restart_${Date.now()}`, role: 'engineer', text: 'Матч перезапущен. Конвейеры чисты, жду приказов!', timestamp: Date.now(), source: 'local' });
+    }
     this.started = true;
     this.bump();
   }
