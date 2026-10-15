@@ -1,0 +1,200 @@
+import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
+import { GAME_BALANCE } from '../config/balance';
+import { GameState, opposite } from '../engine/GameState';
+import { RobotBuilder } from '../engine/RobotBuilder';
+import { TacticalPlan, Team } from '../types/game';
+import { ProductionProposal } from '../types/agent';
+import { RobotDesign } from '../types/robot';
+
+const CATEGORY_RU: Record<string, string> = { armor: 'броня', weapon: 'оружие', engine: 'привод', utility: 'система' };
+
+let catalogCache: string | null = null;
+
+/** Compact catalog: every number the model needs to respect physical limits. */
+export function compactCatalog(): string {
+  if (catalogCache) return catalogCache;
+  const chassis = Object.values(CHASSIS_CATALOG)
+    .map(
+      c =>
+        `${c.id}: ${c.maxSlots} слота, масса базы ${c.baseMass}/макс ${c.maxMass} кг, источник ${c.basePowerOutput} кВт, ${c.baseSpeed} м/с, держит отдачу ≤${c.recoilResistance}, ${c.metalCost}м/${c.componentCost}к`,
+    )
+    .join('\n');
+  const modules = Object.values(MODULES_CATALOG)
+    .map(m => {
+      const parts: string[] = [`${m.mass}кг`];
+      if (m.powerDraw > 0) parts.push(`−${m.powerDraw}кВт`);
+      if (m.powerOutput) parts.push(`+${m.powerOutput}кВт`);
+      if (m.heatGen) parts.push(`тепло ${m.heatGen}`);
+      if (m.heatDissipation > 0) parts.push(`охлаждение ${m.heatDissipation}`);
+      parts.push(`${m.metalCost}м/${m.componentCost}к`);
+      const fx: string[] = [];
+      if (m.hpBonus) fx.push(`+${m.hpBonus}HP`);
+      if (m.armorRating) fx.push(`броня ${Math.round(m.armorRating * 100)}%`);
+      if (m.weaponDamage && m.weaponFireRate) {
+        fx.push(`${Math.round(m.weaponDamage * m.weaponFireRate)} DPS, ${m.weaponRange}м, ${m.weaponType}, отдача ${m.weaponRecoil}`);
+      }
+      if (m.requiresDeploy) fx.push('стреляет после развёртывания');
+      if (m.splashRadius) fx.push(`сплэш ${m.splashRadius}м`);
+      if (m.armorPierce) fx.push(`игнор брони ${Math.round(m.armorPierce * 100)}%`);
+      if (m.speedMultiplier) fx.push(`скорость ×${m.speedMultiplier}`);
+      if (m.rangeMultiplier) fx.push(`дальность ×${m.rangeMultiplier}`);
+      return `${m.id} [${CATEGORY_RU[m.category]}]: ${parts.join(', ')} — ${fx.join(', ')}`;
+    })
+    .join('\n');
+  catalogCache = `ШАССИ:\n${chassis}\nМОДУЛИ:\n${modules}\nБазовое охлаждение корпуса 10/с.`;
+  return catalogCache;
+}
+
+export function describeDesign(d: RobotDesign): string {
+  const s = RobotBuilder.calculateStats(d);
+  return `«${d.name}» — ${d.chassisId} [${d.modules.join(', ')}], роль ${d.tacticalRole}; HP ${s.hp}, броня ${Math.round(
+    s.armorRating * 100,
+  )}%, ${s.dps} DPS, дальность ${s.effectiveRange} м, скорость ${s.effectiveSpeed} м/с, энергия ${s.powerDraw}/${s.powerOutput} кВт, стоимость ${
+    s.metalCost
+  }м/${s.componentCost}к, сборка ${s.buildTimeSec} с`;
+}
+
+function economyLine(state: GameState, team: Team): string {
+  const e = state.teams[team].economy;
+  const harv = state.units.filter(u => u.team === team && u.kind === 'harvester').length;
+  return `металл ${Math.round(e.metal)}, компоненты ${Math.round(e.components)}, энергия базы ${Math.round(e.powerDemand)}/${
+    e.powerCapacity
+  } кВт, добыча ${e.miningRatePerMin}/мин, добытчиков ${harv}/${GAME_BALANCE.MAX_HARVESTERS}, заводов ${state.buildingCount(
+    team,
+    'factory',
+  )}, электростанций ${state.buildingCount(team, 'power_plant')}, размер партии ${e.batchSize}, резерв компонентов ${e.componentReserve}`;
+}
+
+function intelLine(state: GameState, team: Team): string {
+  const seen = state.observedEnemyDesigns(team);
+  if (!seen.length) return 'вражеские модели пока не замечены';
+  return seen
+    .slice(0, 4)
+    .map(s => `${s.design.name} ×${s.count} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
+    .join('; ');
+}
+
+function armyLine(state: GameState, team: Team): string {
+  const a = state.armySummary(team);
+  const roles = Object.entries(a.byRole)
+    .map(([r, n]) => `${r} ${n}`)
+    .join(', ');
+  return `${a.combatUnits} боевых (${roles || 'нет'}), средняя прочность ${a.avgHpPct}%, фронт x=${a.frontX ?? '—'}`;
+}
+
+function eventsLine(state: GameState, team: Team): string {
+  const ev = state.recentEvents(team, 5);
+  return ev.length ? ev.map(e => `[${Math.round(e.time)}с] ${e.text}`).join('; ') : 'нет';
+}
+
+function planLine(p: TacticalPlan): string {
+  return `stance=${p.stance}, engagementRange=${p.engagementRange}, targetPriority=${p.targetPriority}, retreatHpThreshold=${p.retreatHpThreshold}, guardHarvesters=${p.guardHarvesters}`;
+}
+
+// ───────────────────────────── Production agent (engineer) ─────────────────────────────
+
+export const ENGINEER_SYSTEM = `Ты — «Болт», главный инженер-конструктор боевых роботов в RTS. Ворчливый, но толковый; лёгкий юмор допустим, но ответ должен быть ясным.
+Задача: перевести приказ командира в допустимую конфигурацию робота из каталога и/или в производственные действия.
+Правила:
+- Используй только id из каталога. Не назначай бонусы — характеристики рассчитает игра.
+- Число модулей ≤ слотов шасси. Масса базы шасси + модули ≤ максимальной. Потребление энергии модулей ≤ источник шасси + генераторы. Суммарная отдача оружия выше предела шасси снижает точность. Нужно хотя бы одно оружие.
+- Оружие греет корпус; без охлаждения долгая стрельба ведёт к перегреву. Осадная пушка и рельсотрон стреляют только после остановки.
+- Нельзя одновременно максимизировать броню, огневую мощь, дальность и скорость. Если требования противоречат — выбери конкретный компромисс и назови его в поле "compromise".
+- Если командир ограничил стоимость — соблюдай лимит относительно текущей стоимости.
+- Изменения идут в следующие партии, выпущенные машины не меняются.
+- Если приказ про производство (добытчики, электростанция, завод, размер партии, резерв компонентов), а не про конструкцию — верни "design": null и действия.
+- Если командир ограничил рост стоимости, верни лимит в процентах в "costLimitPct" (четверть = 25, треть = 33, половина = 50), иначе null. Стоимость = металл шасси + металл всех модулей.
+- В "reply" и "compromise" не используй id деталей — называй их по-русски (осадная пушка, усиленная броня). Имя модели — по-русски.
+Ответ — только JSON:
+{"reply":"1–2 коротких предложения командиру","design":{"name":"короткое имя модели","chassis":"id шасси","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200}],"costLimitPct":null,"compromise":"чем пожертвовали или пустая строка"}`;
+
+export function engineerUserPrompt(state: GameState, order: string, pending: ProductionProposal | null): string {
+  const t = state.teams.player;
+  const lines = [
+    `ПРИКАЗ КОМАНДИРА: "${order}"`,
+    `ТЕКУЩАЯ СЕРИЙНАЯ МОДЕЛЬ: ${describeDesign(t.design)}`,
+  ];
+  if (pending?.design) lines.push(`НЕПОДТВЕРЖДЁННОЕ ПРЕДЛОЖЕНИЕ (командир уточняет его): ${describeDesign(pending.design)}`);
+  lines.push(`ЭКОНОМИКА: ${economyLine(state, 'player')}`);
+  lines.push(`НАША АРМИЯ: ${armyLine(state, 'player')}`);
+  lines.push(`РАЗВЕДКА: ${intelLine(state, 'player')}`);
+  lines.push(`СОБЫТИЯ: ${eventsLine(state, 'player')}`);
+  lines.push(`КАТАЛОГ:\n${compactCatalog()}`);
+  return lines.join('\n');
+}
+
+export function engineerRepairPrompt(errors: string[]): string {
+  return `Твоя конфигурация нарушает ограничения: ${errors.join('; ')}. Исправь её, сохранив замысел командира (если всё сразу невозможно — выбери компромисс и назови его), и верни тот же JSON.`;
+}
+
+/** Cost cap stated in the order ("не дороже чем на четверть", "не больше 30%"). */
+export function parseCostLimitPct(order: string): number | null {
+  const p = order.toLowerCase();
+  if (!/(стоимост|дорож|цен|бюджет|металл)/.test(p)) return null;
+  const pct = p.match(/(\d{1,3})\s*(%|процент)/);
+  if (pct) return Number(pct[1]);
+  if (/четверт/.test(p)) return 25;
+  if (/трет/.test(p)) return 33;
+  if (/половин|полтора/.test(p)) return 50;
+  if (/вдвое|в два раза|в 2 раза/.test(p)) return 100;
+  if (/не дороже(?! чем на)|той же цен|не повыша|не увеличива[а-я]* стоимост[а-я]*$/.test(p)) return 0;
+  return null;
+}
+
+// ───────────────────────────── Combat-control agent (tactician) ─────────────────────────────
+
+export const TACTICIAN_SYSTEM = `Ты — «Кобра», офицер управления боевыми машинами в RTS. Ты не ведёшь каждого робота — ты задаёшь план, игровой AI его исполняет.
+Параметры плана:
+- stance: advance (наступать на базу врага) | hold_center (держать линию у центра карты) | defend_base (оборона базы) | raid_economy (быстрые машины бьют добытчиков врага, остальные наступают)
+- engagementRange: max_range (бить с предельной дистанции, отходить от ближнего боя) | balanced | close_brawl (сближаться вплотную)
+- targetPriority: closest | high_threat_heavies | scouts_harvesters | focus_fire | buildings
+- retreatHpThreshold: 0–60 — при каком % прочности машина уходит на ремонт к штабу (0 — не отступать)
+- guardHarvesters: true/false — прикрывать своих добытчиков
+Инструкции командира главнее всего. Учитывай состав армий, конструкции и события. Если меняешь план сам — коротко объясни почему.
+Ответ — только JSON: {"reply":"1–2 предложения командиру","plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"суть плана до 12 слов"}}`;
+
+export function tacticianUserPrompt(
+  state: GameState,
+  order: string | null,
+  standingOrders: string[],
+  trigger: string | null,
+): string {
+  const t = state.teams.player;
+  const lines: string[] = [];
+  if (order) lines.push(`НОВЫЙ ПРИКАЗ КОМАНДИРА: "${order}"`);
+  else lines.push(`ПОВОД ДЛЯ ПЕРЕСМОТРА ПЛАНА: ${trigger ?? 'плановая проверка'}`);
+  lines.push(`ДЕЙСТВУЮЩИЕ ИНСТРУКЦИИ КОМАНДИРА: ${standingOrders.length ? standingOrders.map(s => `"${s}"`).join('; ') : 'нет'}`);
+  lines.push(`ТЕКУЩИЙ ПЛАН: ${planLine(t.plan)}`);
+  lines.push(`НАША АРМИЯ: ${armyLine(state, 'player')}; серийная модель ${describeDesign(t.design)}`);
+  lines.push(`АРМИЯ ВРАГА (замечено): ${intelLine(state, 'player')}`);
+  lines.push(`ШТАБЫ: наш ${state.baseHpPct('player')}%, вражеский ${state.baseHpPct('enemy')}%`);
+  lines.push(`СОБЫТИЯ: ${eventsLine(state, 'player')}`);
+  return lines.join('\n');
+}
+
+// ───────────────────────────── Enemy commander ─────────────────────────────
+
+export const ENEMY_SYSTEM = `Ты — «Генерал Ржавый», командир армии оранжевых роботов — противник игрока в RTS. Хвастливый и язвительный, но играешь всерьёз: цель — уничтожить командный центр игрока.
+Раз в ~25 секунд получаешь сводку и решаешь:
+1) конструкцию для следующих партий — только из каталога, соблюдая ограничения шасси (слоты, масса, энергия, отдача); null — если менять не нужно;
+2) тактический план армии (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
+3) экономические действия.
+Подбирай контр-конструкции против замеченных моделей игрока, следи за экономикой: без добычи армия не растёт.
+Ответ — только JSON: {"taunt":"язвительная реплика игроку до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
+
+export function enemyUserPrompt(state: GameState): string {
+  const me: Team = 'enemy';
+  const t = state.teams[me];
+  return [
+    `ВРЕМЯ МАТЧА: ${Math.round(state.gameTime)} с`,
+    `ТВОЯ СЕРИЙНАЯ МОДЕЛЬ: ${describeDesign(t.design)}`,
+    `ТВОЙ ПЛАН: ${planLine(t.plan)}`,
+    `ТВОЯ ЭКОНОМИКА: ${economyLine(state, me)}`,
+    `ТВОЯ АРМИЯ: ${armyLine(state, me)}; потери ${t.economy.totals.unitsLost}, уничтожено врагов ${t.economy.totals.kills}`,
+    `ЗАМЕЧЕННЫЕ МОДЕЛИ ИГРОКА: ${intelLine(state, me)}`,
+    `АРМИЯ ИГРОКА: ${state.armySummary(opposite(me)).combatUnits} боевых машин`,
+    `ШТАБЫ: твой ${state.baseHpPct(me)}%, игрока ${state.baseHpPct('player')}%`,
+    `СОБЫТИЯ: ${eventsLine(state, me)}`,
+    `КАТАЛОГ:\n${compactCatalog()}`,
+  ].join('\n');
+}

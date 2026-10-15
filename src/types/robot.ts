@@ -2,6 +2,10 @@ export type ChassisType = 'light_biped' | 'medium_tracked' | 'heavy_quad';
 
 export type ModuleCategory = 'armor' | 'weapon' | 'engine' | 'utility';
 
+export type WeaponKind = 'kinetic' | 'energy' | 'explosive' | 'melee';
+
+export type TacticalRole = 'frontline' | 'skirmisher' | 'artillery' | 'anti_armor' | 'balanced';
+
 export interface RobotModule {
   id: string;
   name: string;
@@ -9,7 +13,7 @@ export interface RobotModule {
   category: ModuleCategory;
   mass: number;         // kg
   powerDraw: number;    // kW (positive = consumes, negative = generates)
-  heatGen: number;      // heat generated per sec during action
+  heatGen: number;      // heat generated per sec while the module works (firing / moving)
   heatDissipation: number; // heat dissipated per sec
   metalCost: number;
   componentCost: number;
@@ -17,16 +21,20 @@ export interface RobotModule {
   descriptionRu: string;
 
   // Specific stat bonuses
-  armorRating?: number;     // damage reduction %
+  armorRating?: number;     // damage reduction share
   hpBonus?: number;         // extra health points
   weaponDamage?: number;    // damage per shot
   weaponRange?: number;     // meters
   weaponFireRate?: number;  // shots per second
-  weaponType?: 'kinetic' | 'energy' | 'explosive' | 'melee';
+  weaponType?: WeaponKind;
   weaponRecoil?: number;    // kickback strain on chassis
+  requiresDeploy?: boolean; // must stop and deploy before firing
+  splashRadius?: number;    // explosive area damage
+  armorPierce?: number;     // share of target armor ignored
   speedMultiplier?: number; // modifier on mobility
+  accelBonus?: number;      // extra acceleration
   powerOutput?: number;     // generator capacity
-  salvageBonus?: number;    // % faster scrap harvesting
+  rangeMultiplier?: number; // sensor bonus
 }
 
 export interface ChassisConfig {
@@ -34,12 +42,15 @@ export interface ChassisConfig {
   name: string;
   nameRu: string;
   baseHp: number;
+  baseMass: number;
   maxMass: number;
   maxSlots: number;
   basePowerOutput: number;
   baseSpeed: number;
+  baseAccel: number;
   recoilResistance: number;
   metalCost: number;
+  componentCost: number;
   buildTimeSec: number;
   descriptionRu: string;
 }
@@ -52,21 +63,32 @@ export interface RobotDesign {
   color: string;
   version: number;
   createdAt: number;
-  tacticalRole: 'frontline' | 'skirmisher' | 'artillery' | 'anti_armor' | 'balanced';
+  tacticalRole: TacticalRole;
 }
 
 export interface CalculatedRobotStats {
   hp: number;
   mass: number;
   maxMass: number;
+  slotsUsed: number;
+  maxSlots: number;
   speed: number;
   effectiveSpeed: number;
+  accel: number;
   powerDraw: number;
   powerOutput: number;
   isPowerSurplus: boolean;
-  heatDissipationNet: number; // >0 means it cools down easily, <0 means it overheats
+  heatGenFiring: number;      // heat per second while firing
+  heatDissipation: number;    // heat removed per second
+  heatDissipationNet: number; // >0 means it cools down while firing, <0 means it overheats
   dps: number;
   effectiveRange: number;
+  fireInterval: number;       // seconds between volleys
+  volleyDamage: number;       // damage per volley
+  weaponKind: WeaponKind | null;
+  requiresDeploy: boolean;
+  splashRadius: number;
+  armorPierce: number;
   armorRating: number;
   recoilStability: number; // 0..1, 1 is perfectly stable
   metalCost: number;
@@ -75,4 +97,12 @@ export interface CalculatedRobotStats {
   isValid: boolean;
   validationErrors: string[];
   tradeoffsSummaryRu: string;
+}
+
+/** 0..1 normalised bars shown in the constructor panel (Броня / Мощь / Скорость / Дальность). */
+export interface DesignBars {
+  armor: number;
+  power: number;
+  speed: number;
+  range: number;
 }

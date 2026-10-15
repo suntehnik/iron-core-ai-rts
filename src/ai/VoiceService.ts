@@ -1,109 +1,119 @@
+import { AI_TARIFFS } from '../config/tariffs';
+
+export interface ASRResult {
+  text: string;
+  isFinal: boolean;
+  /** seconds of speech captured so far (billed as ASR on the final result) */
+  seconds: number;
+}
+
+/**
+ * Browser speech services. ASR and TTS are billed as separate services (brief §10),
+ * so we measure recognised-speech and synthesised-speech durations.
+ */
 export class VoiceService {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private recognition: any = null;
-  private isListening = false;
-  private onResultCallback: ((text: string, isFinal: boolean) => void) | null = null;
-  private onErrorCallback: ((error: string) => void) | null = null;
-  private onEndCallback: (() => void) | null = null;
+  private listening = false;
+  private startedAt = 0;
+  private onResult: ((r: ASRResult) => void) | null = null;
+  private onError: ((error: string) => void) | null = null;
+  private onEnd: (() => void) | null = null;
 
   constructor() {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (typeof window === 'undefined') return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SpeechRecognition = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
 
-      if (SpeechRecognition) {
-        this.recognition = new SpeechRecognition();
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        this.recognition.lang = 'ru-RU';
+    this.recognition = new SpeechRecognition();
+    this.recognition.continuous = false;
+    this.recognition.interimResults = true;
+    this.recognition.lang = 'ru-RU';
 
-        this.recognition.onresult = (event: any) => {
-          let interimTranscript = '';
-          let finalTranscript = '';
-
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript;
-            } else {
-              interimTranscript += event.results[i][0].transcript;
-            }
-          }
-
-          if (finalTranscript && this.onResultCallback) {
-            this.onResultCallback(finalTranscript.trim(), true);
-          } else if (interimTranscript && this.onResultCallback) {
-            this.onResultCallback(interimTranscript.trim(), false);
-          }
-        };
-
-        this.recognition.onerror = (event: any) => {
-          if (this.onErrorCallback) {
-            this.onErrorCallback(event.error);
-          }
-        };
-
-        this.recognition.onend = () => {
-          this.isListening = false;
-          if (this.onEndCallback) {
-            this.onEndCallback();
-          }
-        };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.recognition.onresult = (event: any) => {
+      let interim = '';
+      let final = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) final += event.results[i][0].transcript;
+        else interim += event.results[i][0].transcript;
       }
-    }
+      const seconds = (performance.now() - this.startedAt) / 1000;
+      if (final) this.onResult?.({ text: final.trim(), isFinal: true, seconds });
+      else if (interim) this.onResult?.({ text: interim.trim(), isFinal: false, seconds });
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.recognition.onerror = (event: any) => this.onError?.(String(event.error || 'error'));
+    this.recognition.onend = () => {
+      this.listening = false;
+      this.onEnd?.();
+    };
   }
 
-  public isSupported(): boolean {
+  isSupported(): boolean {
     return !!this.recognition;
   }
 
-  public startListening(
-    onResult: (text: string, isFinal: boolean) => void,
-    onError?: (error: string) => void,
-    onEnd?: () => void
-  ) {
-    if (!this.recognition || this.isListening) return;
+  isListening(): boolean {
+    return this.listening;
+  }
 
-    this.onResultCallback = onResult;
-    this.onErrorCallback = onError || null;
-    this.onEndCallback = onEnd || null;
-
+  startListening(onResult: (r: ASRResult) => void, onError?: (e: string) => void, onEnd?: () => void) {
+    if (!this.recognition || this.listening) return;
+    this.onResult = onResult;
+    this.onError = onError || null;
+    this.onEnd = onEnd || null;
     try {
       this.recognition.start();
-      this.isListening = true;
+      this.listening = true;
+      this.startedAt = performance.now();
     } catch (e) {
       console.warn('Speech recognition start failed:', e);
     }
   }
 
-  public stopListening() {
-    if (!this.recognition || !this.isListening) return;
+  stopListening() {
+    if (!this.recognition || !this.listening) return;
     try {
       this.recognition.stop();
-      this.isListening = false;
-    } catch {}
+    } catch {
+      /* ignore */
+    }
+    this.listening = false;
   }
 
-  public speak(text: string, onEnd?: () => void) {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  static estimateSpeechSeconds(text: string): number {
+    return Math.max(0.6, text.length / AI_TARIFFS.TTS_CHARS_PER_SEC);
+  }
 
-    window.speechSynthesis.cancel(); // Stop any pending speech
-
+  /** Speaks text; reports the real synthesised duration when playback ends. */
+  speak(text: string, onEnd?: (seconds: number) => void): boolean {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return false;
+    window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ru-RU';
-    utterance.rate = 1.05; // Slightly brisk military cadence
-    utterance.pitch = 0.9; // Slightly deeper engineer tone
-
-    // Try finding a Russian voice
-    const voices = window.speechSynthesis.getVoices();
-    const ruVoice = voices.find(v => v.lang.startsWith('ru'));
-    if (ruVoice) {
-      utterance.voice = ruVoice;
-    }
-
-    if (onEnd) {
-      utterance.onend = onEnd;
-    }
-
+    utterance.rate = 1.08;
+    utterance.pitch = 0.95;
+    const ruVoice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('ru'));
+    if (ruVoice) utterance.voice = ruVoice;
+    let started = 0;
+    utterance.onstart = () => {
+      started = performance.now();
+    };
+    const finish = () => {
+      const seconds = started ? (performance.now() - started) / 1000 : VoiceService.estimateSpeechSeconds(text);
+      onEnd?.(seconds);
+    };
+    utterance.onend = finish;
+    utterance.onerror = finish;
     window.speechSynthesis.speak(utterance);
+    return true;
+  }
+
+  stopSpeaking() {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
   }
 }
 

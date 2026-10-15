@@ -3,45 +3,78 @@
 @tailwind utilities;
 
 @layer base {
+  html,
   body {
-    font-family: 'Rajdhani', sans-serif;
+    background: #e9d6aa;
+  }
+  body {
+    font-family: 'Rajdhani', system-ui, sans-serif;
     user-select: none;
     -webkit-user-select: none;
   }
-  
-  h1, h2, h3, h4, .font-heading {
-    font-family: 'Chakra Petch', sans-serif;
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-heading {
+    font-family: 'Chakra Petch', system-ui, sans-serif;
   }
 }
 
-/* Custom scrollbar for HUD panels */
+@layer components {
+  /* Dark navy HUD panels from the concept art, readable over the bright sand field */
+  .hud-panel {
+    background: linear-gradient(180deg, rgba(30, 41, 54, 0.94), rgba(20, 28, 38, 0.94));
+    border: 1px solid rgba(148, 196, 210, 0.22);
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(40, 28, 10, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(6px);
+  }
+  .field {
+    width: 100%;
+    height: 34px;
+    border-radius: 10px;
+    background: rgba(15, 23, 32, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 0 10px;
+    font-size: 12px;
+    color: #f1f5f9;
+    outline: none;
+  }
+  .field:focus {
+    border-color: #2dd4bf;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(56, 189, 248, 0.3);
+  background: rgba(94, 234, 212, 0.3);
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(56, 189, 248, 0.6);
-}
 
-/* Pulse animation for voice indicator */
-@keyframes voice-pulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.8;
+@keyframes voice-bar {
+  0%,
+  100% {
+    height: 4px;
   }
   50% {
-    transform: scale(1.15);
-    opacity: 1;
+    height: 16px;
   }
 }
-
-.animate-voice {
-  animation: voice-pulse 1.2s infinite ease-in-out;
+.voice-bar {
+  height: 4px;
+  animation: voice-bar 0.8s infinite ease-in-out;
 }

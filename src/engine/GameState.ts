@@ -1,674 +1,1231 @@
-import { GAME_BALANCE, INITIAL_ENEMY_DESIGN, INITIAL_PLAYER_DESIGN } from '../config/balance';
 import {
+  GAME_BALANCE,
+  INITIAL_ENEMY_DESIGN,
+  INITIAL_PLAYER_DESIGN,
+  MAX_SLOTS,
+  buildingSlot,
+} from '../config/balance';
+import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
+import {
+  ArmySummary,
   Building,
+  BuildingType,
   CombatUnit,
+  GameEvent,
+  GameEventType,
+  GameUnit,
   HarvesterUnit,
+  ProductionAction,
   Projectile,
   ResourcePatch,
   ScrapWreckage,
-  TacticalDoctrine,
+  TacticalPlan,
   Team,
   TeamEconomy,
+  TeamState,
   Vector2D,
+  VisualEffect,
 } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { RobotBuilder } from './RobotBuilder';
-import { sounds } from './SoundEffects';
 
-export interface CombatEvent {
-  type: 'kill' | 'factory_complete' | 'base_attack' | 'design_changed' | 'overheat';
-  text: string;
-  timestamp: number;
+export const DEFAULT_PLAN: TacticalPlan = {
+  stance: 'advance',
+  engagementRange: 'balanced',
+  targetPriority: 'closest',
+  retreatHpThreshold: 0,
+  guardHarvesters: false,
+  summaryRu: 'Стандартное наступление: идём на базу противника, бьём ближайшие цели.',
+  source: 'default',
+  updatedAt: 0,
+};
+
+export interface SoundSink {
+  shot(kind: string, team: Team): void;
+  explosion(big: boolean): void;
+  batchReady(team: Team): void;
 }
 
+const noopSound: SoundSink = { shot() {}, explosion() {}, batchReady() {} };
+
+export const opposite = (t: Team): Team => (t === 'player' ? 'enemy' : 'player');
+const dist = (a: Vector2D, b: Vector2D) => Math.hypot(a.x - b.x, a.y - b.y);
+
 export class GameState {
-  public playerEconomy: TeamEconomy;
-  public enemyEconomy: TeamEconomy;
-
-  public playerDesign: RobotDesign;
-  public enemyDesign: RobotDesign;
-
-  public playerDoctrine: TacticalDoctrine;
-  public enemyDoctrine: TacticalDoctrine;
-
-  public units: (CombatUnit | HarvesterUnit)[] = [];
+  public teams: Record<Team, TeamState>;
+  public units: GameUnit[] = [];
   public buildings: Building[] = [];
   public resourcePatches: ResourcePatch[] = [];
   public scrapPiles: ScrapWreckage[] = [];
   public projectiles: Projectile[] = [];
+  public effects: VisualEffect[] = [];
+  public events: GameEvent[] = [];
 
-  public gameTime: number = 0;
-  public isPaused: boolean = false;
+  public gameTime = 0;
+  public isPaused = false;
   public gameOver: 'player_won' | 'enemy_won' | null = null;
-  public events: CombatEvent[] = [];
+  /** Increments when a significant event concerns the team — agents watch this counter. */
+  public significantCounter: Record<Team, number> = { player: 0, enemy: 0 };
 
-  private nextUnitId: number = 1;
-  private nextProjId: number = 1;
-  private nextScrapId: number = 1;
+  public sound: SoundSink = noopSound;
 
-  public playerBatchNumber: number = 1;
-  public enemyBatchNumber: number = 1;
+  private nextId = 1;
+  private nextEventId = 1;
+  private nextEffectId = 1;
+  private lossTimes: Record<Team, number[]> = { player: [], enemy: [] };
+  private throttle: Record<string, number> = {};
+  private seenDesigns: Record<Team, Set<string>> = { player: new Set(), enemy: new Set() };
+  private sightingTimer = 0;
+  private minedWindow: Record<Team, { t: number; amount: number }[]> = { player: [], enemy: [] };
 
   constructor() {
-    this.playerEconomy = {
-      metal: GAME_BALANCE.INITIAL_METAL,
-      components: GAME_BALANCE.INITIAL_COMPONENTS,
-      powerAvailable: GAME_BALANCE.POWER_PLANT_KW,
-      powerConsumed: 120,
-      harvestersCount: 2,
-      combatBotsCount: 0,
-      totalMetalMined: 0,
-      totalScrapReclaimed: 0,
+    this.teams = {
+      player: this.createTeam('player', INITIAL_PLAYER_DESIGN),
+      enemy: this.createTeam('enemy', INITIAL_ENEMY_DESIGN),
     };
-
-    this.enemyEconomy = {
-      metal: GAME_BALANCE.INITIAL_METAL,
-      components: GAME_BALANCE.INITIAL_COMPONENTS,
-      powerAvailable: GAME_BALANCE.POWER_PLANT_KW,
-      powerConsumed: 120,
-      harvestersCount: 2,
-      combatBotsCount: 0,
-      totalMetalMined: 0,
-      totalScrapReclaimed: 0,
-    };
-
-    this.playerDesign = { ...INITIAL_PLAYER_DESIGN };
-    this.enemyDesign = { ...INITIAL_ENEMY_DESIGN };
-
-    this.playerDoctrine = {
-      engagementRange: 'balanced',
-      targetPriority: 'closest',
-      retreatHpThreshold: 0,
-    };
-
-    this.enemyDoctrine = {
-      engagementRange: 'balanced',
-      targetPriority: 'closest',
-      retreatHpThreshold: 0,
-    };
-
     this.initMap();
   }
 
-  public initMap() {
-    this.units = [];
-    this.buildings = [];
-    this.resourcePatches = [];
-    this.scrapPiles = [];
-    this.projectiles = [];
-    this.events = [];
-    this.gameOver = null;
-    this.gameTime = 0;
-
-    // Player Base (Left side, X: 10, Y: 30)
-    this.buildings.push({
-      id: 'p_hq',
-      team: 'player',
-      type: 'command_center',
-      pos: { x: 10, y: 30 },
-      hp: GAME_BALANCE.COMMAND_CENTER_HP,
-      maxHp: GAME_BALANCE.COMMAND_CENTER_HP,
-      radius: 5,
-      productionQueue: null,
-    });
-    this.buildings.push({
-      id: 'p_factory',
-      team: 'player',
-      type: 'factory',
-      pos: { x: 14, y: 22 },
-      hp: GAME_BALANCE.FACTORY_HP,
-      maxHp: GAME_BALANCE.FACTORY_HP,
-      radius: 4,
-      productionQueue: null,
-    });
-    this.buildings.push({
-      id: 'p_power',
-      team: 'player',
-      type: 'power_plant',
-      pos: { x: 12, y: 40 },
-      hp: GAME_BALANCE.POWER_PLANT_HP,
-      maxHp: GAME_BALANCE.POWER_PLANT_HP,
-      radius: 3.5,
-      productionQueue: null,
-    });
-
-    // Enemy Base (Right side, X: 90, Y: 30)
-    this.buildings.push({
-      id: 'e_hq',
-      team: 'enemy',
-      type: 'command_center',
-      pos: { x: 90, y: 30 },
-      hp: GAME_BALANCE.COMMAND_CENTER_HP,
-      maxHp: GAME_BALANCE.COMMAND_CENTER_HP,
-      radius: 5,
-      productionQueue: null,
-    });
-    this.buildings.push({
-      id: 'e_factory',
-      team: 'enemy',
-      type: 'factory',
-      pos: { x: 86, y: 22 },
-      hp: GAME_BALANCE.FACTORY_HP,
-      maxHp: GAME_BALANCE.FACTORY_HP,
-      radius: 4,
-      productionQueue: null,
-    });
-    this.buildings.push({
-      id: 'e_power',
-      team: 'enemy',
-      type: 'power_plant',
-      pos: { x: 88, y: 40 },
-      hp: GAME_BALANCE.POWER_PLANT_HP,
-      maxHp: GAME_BALANCE.POWER_PLANT_HP,
-      radius: 3.5,
-      productionQueue: null,
-    });
-
-    // Resource Nodes (Metal Ore patches)
-    // Safe base nodes + contested center nodes
-    this.resourcePatches.push(
-      { id: 'res_p_safe', pos: { x: 14, y: 12 }, metalRemaining: 3000, maxMetal: 3000, radius: 3 },
-      { id: 'res_e_safe', pos: { x: 86, y: 12 }, metalRemaining: 3000, maxMetal: 3000, radius: 3 },
-      { id: 'res_mid_top', pos: { x: 50, y: 16 }, metalRemaining: 4500, maxMetal: 4500, radius: 4 },
-      { id: 'res_mid_center', pos: { x: 50, y: 30 }, metalRemaining: 6000, maxMetal: 6000, radius: 4.5 },
-      { id: 'res_mid_bot', pos: { x: 50, y: 44 }, metalRemaining: 4500, maxMetal: 4500, radius: 4 },
-    );
-
-    // Initial Harvesters
-    this.spawnHarvester('player', { x: 12, y: 28 });
-    this.spawnHarvester('player', { x: 12, y: 32 });
-
-    this.spawnHarvester('enemy', { x: 88, y: 28 });
-    this.spawnHarvester('enemy', { x: 88, y: 32 });
-
-    // Initial production queues
-    this.queueBatch('player');
-    this.queueBatch('enemy');
+  private createTeam(team: Team, design: RobotDesign): TeamState {
+    const economy: TeamEconomy = {
+      metal: GAME_BALANCE.INITIAL_METAL,
+      components: GAME_BALANCE.INITIAL_COMPONENTS,
+      powerCapacity: 0,
+      powerDemand: 0,
+      powerEfficiency: 1,
+      componentReserve: GAME_BALANCE.DEFAULT_COMPONENT_RESERVE,
+      fabricatorActive: false,
+      batchSize: GAME_BALANCE.BATCH_SIZE_DEFAULT,
+      miningRatePerMin: 0,
+      totals: {
+        metalMined: 0,
+        scrapReclaimed: 0,
+        componentsMade: 0,
+        unitsBuilt: 0,
+        unitsLost: 0,
+        kills: 0,
+        harvestersLost: 0,
+      },
+    };
+    return {
+      team,
+      economy,
+      design: { ...design, createdAt: Date.now() },
+      plan: { ...DEFAULT_PLAN },
+      batchCounter: 1,
+      designsFielded: [design.name],
+    };
   }
 
+  private initMap() {
+    for (const team of ['player', 'enemy'] as Team[]) {
+      this.addBuilding(team, 'command_center', buildingSlot(team, 'command_center'), true);
+      this.addBuilding(team, 'factory', buildingSlot(team, 'factory', 0), true);
+      this.addBuilding(team, 'power_plant', buildingSlot(team, 'power_plant', 0), true);
+    }
+
+    const W = GAME_BALANCE.MAP_WIDTH;
+    const patch = (id: string, x: number, y: number, metal: number, radius: number, zone: ResourcePatch['zone']) =>
+      this.resourcePatches.push({ id, pos: { x, y }, metalRemaining: metal, maxMetal: metal, radius, zone });
+    patch('res_p_safe_n', 22, 9, 3200, 3, 'player_safe');
+    patch('res_p_safe_s', 24, 51, 2400, 3, 'player_safe');
+    patch('res_e_safe_n', W - 22, 9, 3200, 3, 'enemy_safe');
+    patch('res_e_safe_s', W - 24, 51, 2400, 3, 'enemy_safe');
+    patch('res_mid_n', 50, 12, 4500, 4, 'contested');
+    patch('res_mid_c', 50, 30, 6500, 4.5, 'contested');
+    patch('res_mid_s', 50, 48, 4500, 4, 'contested');
+
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const hq = buildingSlot(team, 'command_center');
+      const dx = team === 'player' ? 4 : -4;
+      this.spawnHarvester(team, { x: hq.x + dx, y: hq.y - 3 });
+      this.spawnHarvester(team, { x: hq.x + dx, y: hq.y + 3 });
+    }
+    this.recomputePower();
+  }
+
+  // ───────────────────────────── Construction ─────────────────────────────
+
+  private addBuilding(team: Team, type: BuildingType, pos: Vector2D, instant: boolean): Building {
+    const maxHp =
+      type === 'command_center'
+        ? GAME_BALANCE.COMMAND_CENTER_HP
+        : type === 'factory'
+          ? GAME_BALANCE.FACTORY_HP
+          : GAME_BALANCE.POWER_PLANT_HP;
+    const b: Building = {
+      id: `${type}_${team}_${this.nextId++}`,
+      team,
+      type,
+      pos: { ...pos },
+      hp: instant ? maxHp : maxHp * 0.15,
+      maxHp,
+      radius: type === 'command_center' ? 5 : type === 'factory' ? 4 : 3.2,
+      job: null,
+      built: instant ? 1 : 0,
+      buildTimeSec:
+        type === 'factory' ? GAME_BALANCE.FACTORY_BUILD_SEC : type === 'power_plant' ? GAME_BALANCE.POWER_PLANT_BUILD_SEC : 1,
+      turretCooldown: 0,
+      lastDamagedAt: -999,
+    };
+    this.buildings.push(b);
+    return b;
+  }
+
+  public getHQ(team: Team): Building | undefined {
+    return this.buildings.find(b => b.team === team && b.type === 'command_center');
+  }
+
+  public buildingCount(team: Team, type: BuildingType): number {
+    return this.buildings.filter(b => b.team === team && b.type === type).length;
+  }
+
+  public canBuild(team: Team, type: 'factory' | 'power_plant'): { ok: boolean; reason?: string } {
+    const econ = this.teams[team].economy;
+    const max = type === 'factory' ? GAME_BALANCE.MAX_FACTORIES : GAME_BALANCE.MAX_POWER_PLANTS;
+    if (this.buildingCount(team, type) >= Math.min(max, MAX_SLOTS[type])) {
+      return { ok: false, reason: type === 'factory' ? 'Достигнут предел заводов' : 'Нет места под электростанцию' };
+    }
+    const metal = type === 'factory' ? GAME_BALANCE.FACTORY_COST_METAL : GAME_BALANCE.POWER_PLANT_COST_METAL;
+    const comps = type === 'factory' ? GAME_BALANCE.FACTORY_COST_COMPONENTS : 0;
+    if (econ.metal < metal) return { ok: false, reason: `Нужно ${metal} металла` };
+    if (econ.components < comps) return { ok: false, reason: `Нужно ${comps} компонентов` };
+    return { ok: true };
+  }
+
+  public buildStructure(team: Team, type: 'factory' | 'power_plant'): { ok: boolean; text: string } {
+    const check = this.canBuild(team, type);
+    if (!check.ok) return { ok: false, text: check.reason || 'Невозможно построить' };
+    const occupied = this.buildings.filter(b => b.team === team && b.type === type).map(b => b.pos);
+    let slot: Vector2D | null = null;
+    for (let i = 0; i < MAX_SLOTS[type]; i++) {
+      const s = buildingSlot(team, type, i);
+      if (!occupied.some(p => dist(p, s) < 1)) {
+        slot = s;
+        break;
+      }
+    }
+    if (!slot) return { ok: false, text: 'Нет свободной площадки' };
+    const econ = this.teams[team].economy;
+    econ.metal -= type === 'factory' ? GAME_BALANCE.FACTORY_COST_METAL : GAME_BALANCE.POWER_PLANT_COST_METAL;
+    econ.components -= type === 'factory' ? GAME_BALANCE.FACTORY_COST_COMPONENTS : 0;
+    this.addBuilding(team, type, slot, false);
+    const label = type === 'factory' ? 'завода' : 'электростанции';
+    this.pushEvent(team, 'info', `Начато строительство ${label}`, false);
+    return { ok: true, text: `Строим ${type === 'factory' ? 'завод' : 'электростанцию'}` };
+  }
+
+  public buyHarvester(team: Team): { ok: boolean; text: string } {
+    const econ = this.teams[team].economy;
+    const count = this.units.filter(u => u.team === team && u.kind === 'harvester').length;
+    if (count >= GAME_BALANCE.MAX_HARVESTERS) return { ok: false, text: `Предел добытчиков: ${GAME_BALANCE.MAX_HARVESTERS}` };
+    if (econ.metal < GAME_BALANCE.HARVESTER_COST_METAL) {
+      return { ok: false, text: `Нужно ${GAME_BALANCE.HARVESTER_COST_METAL} металла` };
+    }
+    const hq = this.getHQ(team);
+    if (!hq) return { ok: false, text: 'Нет командного центра' };
+    econ.metal -= GAME_BALANCE.HARVESTER_COST_METAL;
+    const dx = team === 'player' ? 5 : -5;
+    this.spawnHarvester(team, { x: hq.pos.x + dx, y: hq.pos.y + (Math.random() - 0.5) * 6 });
+    return { ok: true, text: 'Добытчик выпущен' };
+  }
+
+  public applyProductionAction(team: Team, action: ProductionAction): string {
+    const econ = this.teams[team].economy;
+    switch (action.type) {
+      case 'build_harvester': {
+        const n = Math.max(1, Math.min(4, Math.round(action.count || 1)));
+        let built = 0;
+        let lastFail = '';
+        for (let i = 0; i < n; i++) {
+          const r = this.buyHarvester(team);
+          if (r.ok) built++;
+          else {
+            lastFail = r.text;
+            break;
+          }
+        }
+        return built > 0 ? `Выпущено добытчиков: ${built}${lastFail ? ` (${lastFail})` : ''}` : `Добытчик не выпущен: ${lastFail}`;
+      }
+      case 'build_power_plant':
+        return this.buildStructure(team, 'power_plant').text;
+      case 'build_factory':
+        return this.buildStructure(team, 'factory').text;
+      case 'set_batch_size': {
+        econ.batchSize = Math.max(GAME_BALANCE.BATCH_SIZE_MIN, Math.min(GAME_BALANCE.BATCH_SIZE_MAX, Math.round(action.size)));
+        return `Размер партии: ${econ.batchSize}`;
+      }
+      case 'set_component_reserve': {
+        econ.componentReserve = Math.max(0, Math.min(600, Math.round(action.amount)));
+        return `Резерв компонентов: ${econ.componentReserve}`;
+      }
+    }
+  }
+
+  // ───────────────────────────── Design & plan ─────────────────────────────
+
+  public setDesign(team: Team, design: RobotDesign) {
+    const t = this.teams[team];
+    t.design = { ...design };
+    if (!t.designsFielded.includes(design.name)) t.designsFielded.push(design.name);
+    this.pushEvent(team, 'design_changed', `Новая конструкция «${design.name}» пойдёт в следующую партию`, false);
+  }
+
+  public setPlan(team: Team, plan: TacticalPlan) {
+    this.teams[team].plan = { ...plan, updatedAt: this.gameTime };
+  }
+
+  // ───────────────────────────── Spawning ─────────────────────────────
+
   public spawnHarvester(team: Team, pos: Vector2D) {
-    const id = `harv_${this.nextUnitId++}_${team}`;
     const harv: HarvesterUnit = {
-      id,
+      id: `harv_${this.nextId++}_${team}`,
       team,
       kind: 'harvester',
       pos: { ...pos },
-      targetPos: null,
       hp: GAME_BALANCE.HARVESTER_HP,
       maxHp: GAME_BALANCE.HARVESTER_HP,
       speed: GAME_BALANCE.HARVESTER_SPEED,
-      radius: 1.4,
+      radius: 1.3,
       state: 'idle',
-      carryingMetal: 0,
-      maxCarryCapacity: GAME_BALANCE.HARVESTER_MAX_CARRY,
-      harvestTargetId: null,
+      facing: team === 'player' ? 0 : Math.PI,
+      vel: 0,
+      lastDamagedAt: -999,
+      carrying: 0,
+      capacity: GAME_BALANCE.HARVESTER_MAX_CARRY,
+      targetId: null,
       targetType: null,
     };
     this.units.push(harv);
   }
 
   public spawnCombatBot(team: Team, pos: Vector2D, design: RobotDesign, batchNumber: number) {
-    const id = `bot_${this.nextUnitId++}_${team}`;
     const stats = RobotBuilder.calculateStats(design);
-
     const bot: CombatUnit = {
-      id,
+      id: `bot_${this.nextId++}_${team}`,
       team,
       kind: 'combat',
       design: { ...design },
       stats,
       pos: { ...pos },
-      targetPos: null,
       hp: stats.hp,
       maxHp: stats.hp,
       speed: stats.effectiveSpeed,
-      radius: design.chassisId === 'heavy_quad' ? 2.2 : design.chassisId === 'medium_tracked' ? 1.8 : 1.4,
+      radius: design.chassisId === 'heavy_quad' ? 2.1 : design.chassisId === 'medium_tracked' ? 1.7 : 1.3,
       state: 'moving',
-      targetUnitId: null,
-      lastShotTime: 0,
-      currentHeat: 0,
+      facing: team === 'player' ? 0 : Math.PI,
+      vel: 0,
+      lastDamagedAt: -999,
+      targetId: null,
+      cooldown: Math.random() * 0.5,
+      heat: 0,
       isOverheated: false,
+      deployTimer: 0,
       kills: 0,
       batchNumber,
+      lane: Math.random() * 2 - 1,
+      lastShotAt: -999,
+      committed: false,
+      rallySince: this.gameTime,
     };
     this.units.push(bot);
+    this.teams[team].economy.totals.unitsBuilt++;
   }
 
-  public queueBatch(team: Team) {
-    const factory = this.buildings.find(b => b.team === team && b.type === 'factory');
-    if (!factory || factory.productionQueue) return false;
-
-    const design = team === 'player' ? this.playerDesign : this.enemyDesign;
-    const stats = RobotBuilder.calculateStats(design);
-    const econ = team === 'player' ? this.playerEconomy : this.enemyEconomy;
-
-    const totalBatchMetalCost = stats.metalCost * GAME_BALANCE.BATCH_SIZE_DEFAULT;
-    if (econ.metal < totalBatchMetalCost) {
-      return false; // Not enough metal
-    }
-
-    econ.metal -= totalBatchMetalCost;
-
-    factory.productionQueue = {
-      design: { ...design },
-      stats,
-      progressSec: 0,
-      totalTimeSec: stats.buildTimeSec,
-      batchSize: GAME_BALANCE.BATCH_SIZE_DEFAULT,
-      batchRemaining: GAME_BALANCE.BATCH_SIZE_DEFAULT,
-    };
-
-    if (team === 'player') {
-      this.events.unshift({
-        type: 'design_changed',
-        text: `Завод заложил партию #${this.playerBatchNumber} (${design.name}, x${GAME_BALANCE.BATCH_SIZE_DEFAULT})`,
-        timestamp: this.gameTime,
-      });
-    }
-
-    return true;
-  }
+  // ───────────────────────────── Main loop ─────────────────────────────
 
   public update(dt: number) {
     if (this.isPaused || this.gameOver) return;
-
     this.gameTime += dt;
 
-    // 1. Update Factory Production
+    this.recomputePower();
+    this.updateConstruction(dt);
+    this.updateFabricators(dt);
     this.updateProduction(dt);
-
-    // 2. Update Harvesters
     this.updateHarvesters(dt);
-
-    // 3. Update Combat Units & Frontline AI
     this.updateCombatUnits(dt);
-
-    // 4. Update Projectiles
+    this.updateTurrets(dt);
     this.updateProjectiles(dt);
-
-    // 5. Check Victory / Defeat Conditions
+    this.updateSightings(dt);
+    this.updateScrap();
     this.checkVictory();
-
-    // 6. Clean dead units and decayed scrap
     this.cleanup();
+  }
+
+  private recomputePower() {
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const econ = this.teams[team].economy;
+      let capacity = 0;
+      let demand = 0;
+      for (const b of this.buildings) {
+        if (b.team !== team || b.built < 1) continue;
+        if (b.type === 'command_center') capacity += GAME_BALANCE.HQ_BUILTIN_POWER_KW;
+        if (b.type === 'power_plant') capacity += GAME_BALANCE.POWER_PLANT_KW;
+        if (b.type === 'factory' && b.job && !this.isArmyCapped(team)) demand += GAME_BALANCE.POWER_FACTORY_KW;
+      }
+      if (econ.fabricatorActive) demand += GAME_BALANCE.POWER_FABRICATOR_KW;
+      let repairing = false;
+      for (const u of this.units) {
+        if (u.team !== team) continue;
+        if (u.kind === 'harvester') demand += GAME_BALANCE.POWER_HARVESTER_KW;
+        else if (u.state === 'repairing') repairing = true;
+      }
+      if (repairing) demand += GAME_BALANCE.POWER_REPAIR_KW;
+      econ.powerCapacity = capacity;
+      econ.powerDemand = demand;
+      econ.powerEfficiency = demand <= capacity ? 1 : Math.max(0.15, capacity / demand);
+      if (econ.powerEfficiency < 0.85 && this.throttled(`power_${team}`, 45)) {
+        this.pushEvent(
+          team,
+          'power_shortage',
+          `Дефицит энергии базы: ${Math.round(demand)} из ${capacity} кВт — заводы и добыча замедлены`,
+          false,
+        );
+      }
+    }
+  }
+
+  private updateConstruction(dt: number) {
+    for (const b of this.buildings) {
+      if (b.built >= 1) continue;
+      const before = b.built;
+      b.built = Math.min(1, b.built + dt / b.buildTimeSec);
+      b.hp = Math.min(b.maxHp, b.hp + (b.built - before) * b.maxHp * 0.85);
+      if (b.built >= 1) {
+        this.addEffect('build_complete', b.pos, b.team, b.radius);
+        this.pushEvent(b.team, 'build_complete', b.type === 'factory' ? 'Новый завод запущен' : 'Электростанция подключена к сети', false);
+      }
+    }
+  }
+
+  private updateFabricators(dt: number) {
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const econ = this.teams[team].economy;
+      const hq = this.getHQ(team);
+      const wants = econ.components < econ.componentReserve && econ.metal > GAME_BALANCE.FABRICATOR_MIN_METAL_RESERVE;
+      econ.fabricatorActive = !!hq && wants;
+      if (!econ.fabricatorActive) continue;
+      const made = Math.min(
+        GAME_BALANCE.FABRICATOR_RATE_PER_SEC * econ.powerEfficiency * dt,
+        (econ.metal - GAME_BALANCE.FABRICATOR_MIN_METAL_RESERVE) / GAME_BALANCE.FABRICATOR_METAL_PER_COMPONENT,
+      );
+      if (made <= 0) continue;
+      econ.components += made;
+      econ.metal -= made * GAME_BALANCE.FABRICATOR_METAL_PER_COMPONENT;
+      econ.totals.componentsMade += made;
+    }
+  }
+
+  public isArmyCapped(team: Team): boolean {
+    return this.combatCount(team) >= GAME_BALANCE.MAX_ACTIVE_COMBAT_BOTS;
+  }
+
+  public combatCount(team: Team): number {
+    let n = 0;
+    for (const u of this.units) if (u.team === team && u.kind === 'combat') n++;
+    return n;
+  }
+
+  /** Factory status for the HUD */
+  public factoryStatus(b: Building): string {
+    if (b.built < 1) return `Строится ${Math.round(b.built * 100)}%`;
+    if (!b.job) return 'Ожидание ресурсов';
+    if (this.isArmyCapped(b.team)) return 'Предел армии';
+    if (b.job.progressSec === 0 && !this.canAffordUnit(b.team, b.job.stats.metalCost, b.job.stats.componentCost)) {
+      return 'Ждёт металл/компоненты';
+    }
+    return 'Сборка';
+  }
+
+  private canAffordUnit(team: Team, metal: number, comps: number) {
+    const econ = this.teams[team].economy;
+    return econ.metal >= metal && econ.components >= comps;
   }
 
   private updateProduction(dt: number) {
     for (const b of this.buildings) {
-      if (b.type === 'factory' && b.productionQueue) {
-        const q = b.productionQueue;
-        q.progressSec += dt;
+      if (b.type !== 'factory' || b.built < 1) continue;
+      const t = this.teams[b.team];
+      const econ = t.economy;
 
-        if (q.progressSec >= q.totalTimeSec) {
-          // Spawn one bot from the batch
-          const offset = (Math.random() - 0.5) * 4;
-          const spawnPos = {
-            x: b.team === 'player' ? b.pos.x + 4 : b.pos.x - 4,
-            y: b.pos.y + offset,
-          };
-          const batchNum = b.team === 'player' ? this.playerBatchNumber : this.enemyBatchNumber;
-          this.spawnCombatBot(b.team, spawnPos, q.design, batchNum);
+      if (!b.job) {
+        const stats = RobotBuilder.calculateStats(t.design);
+        if (!stats.isValid) continue;
+        if (!this.canAffordUnit(b.team, stats.metalCost, stats.componentCost)) continue;
+        b.job = {
+          design: { ...t.design },
+          stats,
+          progressSec: 0,
+          unitTimeSec: stats.buildTimeSec,
+          batchSize: econ.batchSize,
+          remaining: econ.batchSize,
+          batchNumber: t.batchCounter++,
+        };
+        this.pushEvent(b.team, 'batch_started', `Партия #${b.job.batchNumber}: «${t.design.name}» ×${econ.batchSize}`, false);
+      }
 
-          q.batchRemaining--;
-          q.progressSec = 0;
+      const job = b.job;
+      if (this.isArmyCapped(b.team)) continue;
 
-          if (q.batchRemaining <= 0) {
-            b.productionQueue = null;
-            if (b.team === 'player') {
-              sounds.playBatchReady();
-              this.events.unshift({
-                type: 'factory_complete',
-                text: `Партия #${this.playerBatchNumber} [${q.design.name}] вышла на передовую!`,
-                timestamp: this.gameTime,
-              });
-              this.playerBatchNumber++;
-              // Auto-queue next batch if resources permit
-              this.queueBatch('player');
-            } else {
-              this.enemyBatchNumber++;
-              this.queueBatch('enemy');
-            }
-          }
+      // Pay for each unit when its assembly starts (keeps the factory busy without locking a whole batch)
+      if (job.progressSec === 0) {
+        if (!this.canAffordUnit(b.team, job.stats.metalCost, job.stats.componentCost)) continue;
+        econ.metal -= job.stats.metalCost;
+        econ.components -= job.stats.componentCost;
+      }
+
+      job.progressSec += dt * econ.powerEfficiency;
+      if (job.progressSec >= job.unitTimeSec) {
+        const dir = b.team === 'player' ? 1 : -1;
+        const spawnPos = { x: b.pos.x + dir * (b.radius + 1.5), y: b.pos.y + (Math.random() - 0.5) * 3 };
+        this.spawnCombatBot(b.team, spawnPos, job.design, job.batchNumber);
+        job.remaining--;
+        job.progressSec = 0;
+        if (job.remaining <= 0) {
+          this.pushEvent(b.team, 'batch_complete', `Партия #${job.batchNumber} «${job.design.name}» вышла на передовую`, false);
+          this.sound.batchReady(b.team);
+          b.job = null;
         }
       }
     }
   }
 
   private updateHarvesters(dt: number) {
-    const hqPlayer = this.buildings.find(b => b.team === 'player' && b.type === 'command_center');
-    const hqEnemy = this.buildings.find(b => b.team === 'enemy' && b.type === 'command_center');
-
     for (const u of this.units) {
       if (u.kind !== 'harvester' || u.state === 'dead') continue;
+      const hq = this.getHQ(u.team);
+      const econ = this.teams[u.team].economy;
+      if (!hq) continue;
 
-      const baseHQ = u.team === 'player' ? hqPlayer : hqEnemy;
-      const econ = u.team === 'player' ? this.playerEconomy : this.enemyEconomy;
-
-      // Full capacity -> Return to base
-      if (u.carryingMetal >= u.maxCarryCapacity) {
+      // Flee home when attacked and an enemy is close
+      const threatened = this.gameTime - u.lastDamagedAt < 4 && this.nearestEnemyCombat(u.team, u.pos, 14);
+      if (u.carrying >= u.capacity || (threatened && u.carrying > 0) || (threatened && u.state !== 'delivering')) {
         u.state = 'delivering';
-        if (baseHQ) {
-          const dx = baseHQ.pos.x - u.pos.x;
-          const dy = baseHQ.pos.y - u.pos.y;
-          const dist = Math.hypot(dx, dy);
-
-          if (dist < baseHQ.radius + u.radius) {
-            // Offload metal at base
-            econ.metal += u.carryingMetal;
-            if (u.targetType === 'scrap') {
-              econ.totalScrapReclaimed += u.carryingMetal;
-            } else {
-              econ.totalMetalMined += u.carryingMetal;
-            }
-            u.carryingMetal = 0;
-            u.state = 'idle';
-            u.harvestTargetId = null;
-          } else {
-            // Move toward HQ
-            u.pos.x += (dx / dist) * u.speed * dt;
-            u.pos.y += (dy / dist) * u.speed * dt;
+        if (dist(u.pos, hq.pos) < hq.radius + u.radius + 0.4) {
+          if (u.carrying > 0) {
+            econ.metal += u.carrying;
+            if (u.targetType === 'scrap') econ.totals.scrapReclaimed += u.carrying;
+            else econ.totals.metalMined += u.carrying;
+            this.minedWindow[u.team].push({ t: this.gameTime, amount: u.carrying });
           }
+          u.carrying = 0;
+          u.targetId = null;
+          u.state = threatened ? 'idle' : 'moving';
+        } else {
+          this.moveToward(u, hq.pos, u.speed, dt);
         }
         continue;
       }
 
-      // Find target: Check for scrap first if nearby, otherwise mining patch
-      if (!u.harvestTargetId) {
-        // Find nearest scrap pile
-        let nearestScrap: ScrapWreckage | null = null;
-        let minScrapDist = 35; // Scrap search radius
-        for (const s of this.scrapPiles) {
-          const d = Math.hypot(s.pos.x - u.pos.x, s.pos.y - u.pos.y);
-          if (d < minScrapDist) {
-            minScrapDist = d;
-            nearestScrap = s;
-          }
-        }
-
-        if (nearestScrap) {
-          u.harvestTargetId = nearestScrap.id;
-          u.targetType = 'scrap';
-        } else {
-          // Find safe or nearest resource patch
-          let bestPatch: ResourcePatch | null = null;
-          let bestDist = Infinity;
-          for (const p of this.resourcePatches) {
-            if (p.metalRemaining <= 0) continue;
-            const d = Math.hypot(p.pos.x - u.pos.x, p.pos.y - u.pos.y);
-            if (d < bestDist) {
-              bestDist = d;
-              bestPatch = p;
-            }
-          }
-          if (bestPatch) {
-            u.harvestTargetId = bestPatch.id;
-            u.targetType = 'ore';
-          }
-        }
+      if (!u.targetId) this.pickHarvestTarget(u);
+      if (!u.targetId) {
+        u.state = 'idle';
+        continue;
       }
 
-      // Harvest scrap
-      if (u.targetType === 'scrap' && u.harvestTargetId) {
-        const scrap = this.scrapPiles.find(s => s.id === u.harvestTargetId);
+      if (u.targetType === 'scrap') {
+        const scrap = this.scrapPiles.find(s => s.id === u.targetId);
         if (!scrap) {
-          u.harvestTargetId = null;
+          u.targetId = null;
           continue;
         }
-
-        const dx = scrap.pos.x - u.pos.x;
-        const dy = scrap.pos.y - u.pos.y;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist > 1.5) {
-          u.pos.x += (dx / dist) * u.speed * dt;
-          u.pos.y += (dy / dist) * u.speed * dt;
+        if (dist(u.pos, scrap.pos) > 1.4) {
+          this.moveToward(u, scrap.pos, u.speed, dt);
           u.state = 'moving';
         } else {
           u.state = 'harvesting';
-          const gather = Math.min(scrap.metalAmount, GAME_BALANCE.HARVEST_RATE_PER_SEC * dt * 1.5);
-          scrap.metalAmount -= gather;
-          u.carryingMetal += gather;
-
-          if (scrap.metalAmount <= 0) {
+          const gather = Math.min(scrap.metal, GAME_BALANCE.HARVEST_RATE_PER_SEC * 1.5 * econ.powerEfficiency * dt, u.capacity - u.carrying);
+          scrap.metal -= gather;
+          u.carrying += gather;
+          if (scrap.metal <= 0.5) {
             this.scrapPiles = this.scrapPiles.filter(s => s.id !== scrap.id);
-            u.harvestTargetId = null;
+            u.targetId = null;
           }
         }
         continue;
       }
 
-      // Harvest ore
-      if (u.targetType === 'ore' && u.harvestTargetId) {
-        const patch = this.resourcePatches.find(p => p.id === u.harvestTargetId);
-        if (!patch || patch.metalRemaining <= 0) {
-          u.harvestTargetId = null;
-          continue;
-        }
-
-        const dx = patch.pos.x - u.pos.x;
-        const dy = patch.pos.y - u.pos.y;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist > patch.radius * 0.7) {
-          u.pos.x += (dx / dist) * u.speed * dt;
-          u.pos.y += (dy / dist) * u.speed * dt;
-          u.state = 'moving';
-        } else {
-          u.state = 'harvesting';
-          const gather = Math.min(patch.metalRemaining, GAME_BALANCE.HARVEST_RATE_PER_SEC * dt);
-          patch.metalRemaining -= gather;
-          u.carryingMetal += gather;
-        }
+      const patch = this.resourcePatches.find(p => p.id === u.targetId);
+      if (!patch || patch.metalRemaining <= 0) {
+        u.targetId = null;
+        continue;
       }
+      if (dist(u.pos, patch.pos) > patch.radius * 0.8 + 0.6) {
+        this.moveToward(u, patch.pos, u.speed, dt);
+        u.state = 'moving';
+      } else {
+        u.state = 'harvesting';
+        const gather = Math.min(patch.metalRemaining, GAME_BALANCE.HARVEST_RATE_PER_SEC * econ.powerEfficiency * dt, u.capacity - u.carrying);
+        patch.metalRemaining -= gather;
+        u.carrying += gather;
+      }
+    }
+
+    // Mining rate over the last 60 s for the HUD
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const w = this.minedWindow[team];
+      while (w.length && this.gameTime - w[0].t > 60) w.shift();
+      const sum = w.reduce((a, b) => a + b.amount, 0);
+      const window = Math.min(60, Math.max(15, this.gameTime));
+      this.teams[team].economy.miningRatePerMin = Math.round((sum * 60) / window);
     }
   }
 
+  private pickHarvestTarget(u: HarvesterUnit) {
+    const hq = this.getHQ(u.team)!;
+    let best: { id: string; type: 'ore' | 'scrap'; score: number } | null = null;
+    for (const s of this.scrapPiles) {
+      const d = dist(u.pos, s.pos);
+      if (d > 28) continue;
+      const danger = this.nearestEnemyCombat(u.team, s.pos, 14) ? 60 : 0;
+      const score = d + dist(s.pos, hq.pos) * 0.5 + danger - 8;
+      if (!best || score < best.score) best = { id: s.id, type: 'scrap', score };
+    }
+    for (const p of this.resourcePatches) {
+      if (p.metalRemaining <= 0) continue;
+      const crowd = this.units.filter(o => o.kind === 'harvester' && o.team === u.team && o.targetId === p.id).length;
+      const danger = this.nearestEnemyCombat(u.team, p.pos, 15) ? 70 : 0;
+      const score = dist(p.pos, hq.pos) * 1.2 + dist(u.pos, p.pos) * 0.3 + crowd * 7 + danger;
+      if (!best || score < best.score) best = { id: p.id, type: 'ore', score };
+    }
+    if (best) {
+      u.targetId = best.id;
+      u.targetType = best.type;
+    }
+  }
+
+  private nearestEnemyCombat(team: Team, pos: Vector2D, radius: number): CombatUnit | null {
+    let best: CombatUnit | null = null;
+    let bestD = radius;
+    for (const o of this.units) {
+      if (o.team === team || o.kind !== 'combat' || o.state === 'dead') continue;
+      const d = dist(o.pos, pos);
+      if (d < bestD) {
+        bestD = d;
+        best = o;
+      }
+    }
+    return best;
+  }
+
+  // ───────────────────────────── Combat AI (executes the agent plan) ─────────────────────────────
+
   private updateCombatUnits(dt: number) {
-    const oppTeam = (team: Team): Team => (team === 'player' ? 'enemy' : 'player');
+    const W = GAME_BALANCE.MAP_WIDTH;
+    const H = GAME_BALANCE.MAP_HEIGHT;
+
+    // Front-most non-artillery ally per team (artillery stays behind it)
+    const front: Record<Team, number | null> = { player: null, enemy: null };
+    for (const u of this.units) {
+      if (u.kind !== 'combat' || u.state === 'dead' || u.state === 'retreating' || u.state === 'repairing') continue;
+      if (u.design.tacticalRole === 'artillery' || u.stats.requiresDeploy) continue;
+      const f = front[u.team];
+      front[u.team] = f === null ? u.pos.x : u.team === 'player' ? Math.max(f, u.pos.x) : Math.min(f, u.pos.x);
+    }
+
+    this.updateWaves();
 
     for (const u of this.units) {
       if (u.kind !== 'combat' || u.state === 'dead') continue;
+      const team = this.teams[u.team];
+      const plan = team.plan;
+      const dir = u.team === 'player' ? 1 : -1;
+      const ownHQ = this.getHQ(u.team);
+      const enemyHQ = this.getHQ(opposite(u.team));
+      const hpPct = (u.hp / u.maxHp) * 100;
+      let engaging = false;
 
-      // Handle Heat Dissipation
-      if (u.stats.heatDissipationNet > 0) {
-        u.currentHeat = Math.max(0, u.currentHeat - u.stats.heatDissipationNet * dt);
-      }
-      if (u.currentHeat > 100) {
-        u.isOverheated = true;
-      } else if (u.currentHeat < 30) {
-        u.isOverheated = false;
-      }
-
-      const enemyTeam = oppTeam(u.team);
-      const doctrine = u.team === 'player' ? this.playerDoctrine : this.enemyDoctrine;
-
-      // Target Acquisition
-      let target: (CombatUnit | HarvesterUnit | Building) | null = null;
-      let minScore = Infinity;
-
-      // 1. Scan enemy units
-      for (const enemy of this.units) {
-        if (enemy.team !== enemyTeam || enemy.state === 'dead') continue;
-        const dist = Math.hypot(enemy.pos.x - u.pos.x, enemy.pos.y - u.pos.y);
-
-        let priorityScore = dist;
-        if (doctrine.targetPriority === 'high_threat_heavies' && enemy.kind === 'combat' && enemy.stats.dps > 50) {
-          priorityScore -= 12; // Favor heavy hitters
-        } else if (doctrine.targetPriority === 'scouts_harvesters' && enemy.kind === 'harvester') {
-          priorityScore -= 18; // Favor harvesters
-        }
-
-        if (priorityScore < minScore) {
-          minScore = priorityScore;
-          target = enemy;
-        }
-      }
-
-      // 2. If no units in sight, target enemy buildings (frontline assault)
-      if (!target || minScore > u.stats.effectiveRange * 1.5) {
-        for (const b of this.buildings) {
-          if (b.team === enemyTeam) {
-            const dist = Math.hypot(b.pos.x - u.pos.x, b.pos.y - u.pos.y);
-            if (dist < minScore) {
-              minScore = dist;
-              target = b;
-            }
-          }
-        }
-      }
-
-      if (target) {
-        const dx = target.pos.x - u.pos.x;
-        const dy = target.pos.y - u.pos.y;
-        const dist = Math.hypot(dx, dy);
-
-        // Desired engagement distance from doctrine
-        let desiredDist = u.stats.effectiveRange * 0.8;
-        if (doctrine.engagementRange === 'max_range') desiredDist = u.stats.effectiveRange * 0.95;
-        if (doctrine.engagementRange === 'close_brawl') desiredDist = Math.min(6, u.stats.effectiveRange * 0.4);
-
-        if (dist > desiredDist) {
-          // Advance toward target
-          u.pos.x += (dx / dist) * u.speed * dt;
-          u.pos.y += (dy / dist) * u.speed * dt;
+      // Retreat & repair cycle
+      if (u.state === 'repairing') {
+        if (!ownHQ || hpPct >= 96) {
           u.state = 'moving';
-        } else if (dist < desiredDist * 0.7 && doctrine.engagementRange === 'max_range') {
-          // Kite backwards
-          u.pos.x -= (dx / dist) * u.speed * 0.6 * dt;
-          u.pos.y -= (dy / dist) * u.speed * 0.6 * dt;
-          u.state = 'moving';
+          u.committed = false;
+          u.rallySince = this.gameTime;
         } else {
-          u.state = 'attacking';
+          const d = dist(u.pos, ownHQ.pos);
+          if (d > GAME_BALANCE.REPAIR_RADIUS) this.moveToward(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          else this.brake(u, dt);
+          u.hp = Math.min(u.maxHp, u.hp + GAME_BALANCE.REPAIR_HP_PER_SEC * team.economy.powerEfficiency * dt);
+          this.coolDown(u, dt, false);
+          continue;
         }
-
-        // Fire Weapons if in range
-        if (dist <= u.stats.effectiveRange && !u.isOverheated) {
-          const fireInterval = u.stats.dps > 0 ? 1.0 / (u.stats.dps / 30) : 1.0;
-          if (this.gameTime - u.lastShotTime >= fireInterval) {
-            u.lastShotTime = this.gameTime;
-            this.fireProjectile(u, target);
-
-            // Heat buildup
-            u.currentHeat += 12;
-          }
+      }
+      if (plan.retreatHpThreshold > 0 && hpPct < plan.retreatHpThreshold && u.state !== 'retreating' && ownHQ) {
+        u.state = 'retreating';
+        u.targetId = null;
+      }
+      if (u.state === 'retreating') {
+        if (!ownHQ) {
+          u.state = 'moving';
+        } else if (dist(u.pos, ownHQ.pos) <= GAME_BALANCE.REPAIR_RADIUS) {
+          u.state = 'repairing';
+        } else {
+          this.moveToward(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          this.coolDown(u, dt, false);
+          continue;
         }
+      }
+
+      // Target acquisition
+      const target = this.acquireTarget(u);
+      u.targetId = target ? target.id : null;
+
+      let goal: Vector2D | null = null;
+      let desired = 0;
+      if (target) {
+        const range = u.stats.effectiveRange + (target as { radius: number }).radius;
+        const d = dist(u.pos, target.pos);
+        if (u.stats.weaponKind === 'melee') desired = range * 0.8;
+        else if (plan.engagementRange === 'max_range') desired = range * 0.92;
+        else if (plan.engagementRange === 'close_brawl') desired = Math.max(2.2, Math.min(range * 0.5, 6));
+        else desired = range * 0.8;
+
+        if (d > desired) {
+          goal = target.pos;
+        } else if (
+          plan.engagementRange === 'max_range' &&
+          !u.stats.requiresDeploy &&
+          u.stats.weaponKind !== 'melee' &&
+          'kind' in target &&
+          target.kind === 'combat' &&
+          d < range * 0.55
+        ) {
+          // Kite: step back while keeping the gun on target
+          goal = { x: u.pos.x - (target.pos.x - u.pos.x), y: u.pos.y - (target.pos.y - u.pos.y) };
+        }
+        engaging = d <= range && !u.isOverheated;
       } else {
-        // Idle march toward enemy side of map
-        const forwardDir = u.team === 'player' ? 1 : -1;
-        u.pos.x += forwardDir * u.speed * 0.4 * dt;
+        goal = this.stanceGoal(u, plan.stance, ownHQ, enemyHQ, front[u.team], dir);
+      }
+
+      // Artillery holds behind the front line (needs cover)
+      const isArtillery = u.design.tacticalRole === 'artillery' || u.stats.requiresDeploy;
+      if (isArtillery && goal && front[u.team] !== null && !(target && dist(u.pos, target.pos) <= desired)) {
+        const limit = front[u.team]! - dir * 6;
+        if ((dir > 0 && goal.x > limit) || (dir < 0 && goal.x < limit)) goal = { x: limit, y: goal.y };
+      }
+
+      // Movement
+      let moving = false;
+      if (goal && dist(u.pos, goal) > 1.2) {
+        moving = this.moveToward(u, goal, u.stats.effectiveSpeed, dt, true);
+      } else {
+        this.brake(u, dt);
+      }
+      u.pos.x = Math.max(1, Math.min(W - 1, u.pos.x));
+      u.pos.y = Math.max(1, Math.min(H - 1, u.pos.y));
+
+      // Facing the target while fighting
+      if (target && engaging) u.facing = Math.atan2(target.pos.y - u.pos.y, target.pos.x - u.pos.x);
+
+      // Deployment for siege weapons: only after stopping
+      if (u.stats.requiresDeploy) {
+        if (moving || u.vel > 0.4) u.deployTimer = 0;
+        else u.deployTimer += dt;
+      }
+      const deployed = !u.stats.requiresDeploy || u.deployTimer >= GAME_BALANCE.DEPLOY_TIME_SEC;
+
+      u.cooldown -= dt;
+      if (target && engaging && deployed && u.cooldown <= 0) {
+        this.fire(u, target);
+        u.cooldown = u.stats.fireInterval;
+      }
+
+      if (target && engaging) u.state = deployed ? 'attacking' : 'deploying';
+      else u.state = moving ? 'moving' : 'idle';
+
+      this.coolDown(u, dt, engaging && deployed);
+    }
+
+    this.applySeparation(dt);
+  }
+
+  public rallyPoint(team: Team): Vector2D {
+    const dir = team === 'player' ? 1 : -1;
+    return { x: GAME_BALANCE.FRONTLINE_CENTER_X - dir * GAME_BALANCE.RALLY_X_OFFSET, y: GAME_BALANCE.MAP_HEIGHT / 2 };
+  }
+
+  public waveSize(): number {
+    return Math.min(GAME_BALANCE.WAVE_MAX_SIZE, GAME_BALANCE.WAVE_MIN_SIZE + Math.floor(this.gameTime / 150));
+  }
+
+  /** Launches an assault wave once enough machines gathered at the rally point. */
+  private updateWaves() {
+    for (const team of ['player', 'enemy'] as Team[]) {
+      if (this.teams[team].plan.stance !== 'advance') continue;
+      const rally = this.rallyPoint(team);
+      const waiting = this.units.filter(
+        (u): u is CombatUnit =>
+          u.kind === 'combat' && u.team === team && !u.committed && u.state !== 'dead' && u.state !== 'retreating' && u.state !== 'repairing',
+      );
+      if (!waiting.length) continue;
+      const gathered = waiting.filter(u => dist(u.pos, rally) < 16);
+      const oldest = Math.min(...waiting.map(u => u.rallySince));
+      const enough = gathered.length >= this.waveSize();
+      const waitedTooLong = this.gameTime - oldest > GAME_BALANCE.WAVE_MAX_WAIT_SEC && gathered.length >= 2;
+      if (enough || waitedTooLong) {
+        for (const u of waiting) u.committed = true;
+        this.pushEvent(team, 'info', `Волна из ${waiting.length} машин пошла в наступление`, false);
       }
     }
   }
 
-  private fireProjectile(shooter: CombatUnit, target: CombatUnit | HarvesterUnit | Building) {
-    const projId = `proj_${this.nextProjId++}`;
-    const damage = shooter.stats.dps * 0.8; // Burst slice
+  private stanceGoal(
+    u: CombatUnit,
+    stance: TacticalPlan['stance'],
+    ownHQ: Building | undefined,
+    enemyHQ: Building | undefined,
+    frontX: number | null,
+    dir: number,
+  ): Vector2D {
+    const H = GAME_BALANCE.MAP_HEIGHT;
+    const laneY = Math.max(6, Math.min(H - 6, H / 2 + u.lane * 17));
+    const center = GAME_BALANCE.FRONTLINE_CENTER_X;
+    const enemyTeam = opposite(u.team);
+    switch (stance) {
+      case 'hold_center':
+        return { x: center - dir * 6, y: laneY };
+      case 'defend_base': {
+        const base = ownHQ?.pos.x ?? (dir > 0 ? 10 : 90);
+        return { x: base + dir * 15, y: H / 2 + u.lane * 13 };
+      }
+      case 'raid_economy': {
+        const fast = u.design.tacticalRole === 'skirmisher' || u.stats.effectiveSpeed >= 4.4;
+        if (fast) {
+          const harv = this.units
+            .filter(o => o.team === enemyTeam && o.kind === 'harvester')
+            .sort((a, b) => dist(a.pos, u.pos) - dist(b.pos, u.pos))[0];
+          if (harv) return harv.pos;
+          const patch = this.resourcePatches.find(p => p.zone === (enemyTeam === 'enemy' ? 'enemy_safe' : 'player_safe') && p.metalRemaining > 0);
+          if (patch) return { x: patch.pos.x, y: patch.pos.y };
+        }
+        break;
+      }
+      default:
+        break;
+    }
+    // advance (also the fallback): gather into a wave, then march in lanes toward the enemy HQ
+    if (!u.committed && stance === 'advance') {
+      const rally = this.rallyPoint(u.team);
+      return { x: rally.x - dir * Math.abs(u.lane) * 3, y: rally.y + u.lane * 14 };
+    }
+    if (!enemyHQ) return { x: u.pos.x + dir * 10, y: laneY };
+    const remaining = Math.abs(enemyHQ.pos.x - u.pos.x);
+    const y = remaining < 22 ? enemyHQ.pos.y + u.lane * 5 : laneY;
+    void frontX;
+    return { x: enemyHQ.pos.x, y };
+  }
 
+  private acquireTarget(u: CombatUnit): GameUnit | Building | null {
+    const plan = this.teams[u.team].plan;
+    const enemyTeam = opposite(u.team);
+    const aggro = u.stats.effectiveRange + GAME_BALANCE.AGGRO_EXTRA_RANGE;
+    const myHarvesters = plan.guardHarvesters ? this.units.filter(o => o.team === u.team && o.kind === 'harvester') : [];
+
+    let best: GameUnit | Building | null = null;
+    let bestScore = Infinity;
+    for (const e of this.units) {
+      if (e.team !== enemyTeam || e.state === 'dead') continue;
+      const d = dist(u.pos, e.pos);
+      if (d > aggro) continue;
+      let score = d;
+      switch (plan.targetPriority) {
+        case 'high_threat_heavies':
+          if (e.kind === 'combat') score -= e.stats.dps * 0.1 + (e.maxHp > 700 ? 10 : 0);
+          else score += 6;
+          break;
+        case 'scouts_harvesters':
+          if (e.kind === 'harvester') score -= 22;
+          else if (e.design.chassisId === 'light_biped') score -= 8;
+          break;
+        case 'focus_fire': {
+          let allies = 0;
+          for (const a of this.units) if (a.team === u.team && a.kind === 'combat' && a.targetId === e.id) allies++;
+          score = d * 0.5 + (e.hp / e.maxHp) * 15 - allies * 4;
+          break;
+        }
+        case 'buildings':
+          score += e.kind === 'harvester' ? 4 : 0;
+          break;
+        default:
+          if (e.kind === 'harvester') score += 3;
+      }
+      if (myHarvesters.length && myHarvesters.some(h => dist(h.pos, e.pos) < 13)) score -= 15;
+      if (score < bestScore) {
+        bestScore = score;
+        best = e;
+      }
+    }
+    for (const b of this.buildings) {
+      if (b.team !== enemyTeam) continue;
+      const d = dist(u.pos, b.pos) - b.radius;
+      if (d > aggro) continue;
+      let score = d + 6;
+      if (plan.targetPriority === 'buildings') score -= 25;
+      if (b.type === 'command_center') score -= 2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  private coolDown(u: CombatUnit, dt: number, firing: boolean) {
+    const gen = firing ? u.stats.heatGenFiring : 0;
+    u.heat = Math.max(0, u.heat + (gen - u.stats.heatDissipation) * dt);
+    if (u.heat >= GAME_BALANCE.OVERHEAT_THRESHOLD && !u.isOverheated) {
+      u.isOverheated = true;
+    } else if (u.isOverheated && u.heat <= GAME_BALANCE.OVERHEAT_RECOVER) {
+      u.isOverheated = false;
+    }
+  }
+
+  /** Acceleration-limited movement. Returns true when the unit actually moved. */
+  private moveToward(u: GameUnit, goal: Vector2D, maxSpeed: number, dt: number, accelModel = false): boolean {
+    const dx = goal.x - u.pos.x;
+    const dy = goal.y - u.pos.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.05) return false;
+    const accel = accelModel && u.kind === 'combat' ? u.stats.accel : 12;
+    u.vel = Math.min(maxSpeed, u.vel + accel * dt);
+    const step = Math.min(d, u.vel * dt);
+    u.pos.x += (dx / d) * step;
+    u.pos.y += (dy / d) * step;
+    const targetFacing = Math.atan2(dy, dx);
+    u.facing = lerpAngle(u.facing, targetFacing, Math.min(1, dt * 6));
+    return step > 0.001;
+  }
+
+  private brake(u: GameUnit, dt: number) {
+    const decel = u.kind === 'combat' ? u.stats.accel * 1.5 : 12;
+    u.vel = Math.max(0, u.vel - decel * dt);
+  }
+
+  private applySeparation(dt: number) {
+    const list = this.units;
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (a.state === 'dead') continue;
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (b.state === 'dead') continue;
+        const minD = a.radius + b.radius;
+        const dx = b.pos.x - a.pos.x;
+        const dy = b.pos.y - a.pos.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= minD * minD || d2 < 1e-6) continue;
+        const d = Math.sqrt(d2);
+        const push = Math.min(0.5, (minD - d) * 0.5) * Math.min(1, dt * 12);
+        const nx = dx / d;
+        const ny = dy / d;
+        a.pos.x -= nx * push;
+        a.pos.y -= ny * push;
+        b.pos.x += nx * push;
+        b.pos.y += ny * push;
+      }
+      // keep units out of buildings
+      for (const bld of this.buildings) {
+        const dx = a.pos.x - bld.pos.x;
+        const dy = a.pos.y - bld.pos.y;
+        const d = Math.hypot(dx, dy);
+        const minD = bld.radius + a.radius * 0.6;
+        if (d < minD && d > 1e-4) {
+          a.pos.x = bld.pos.x + (dx / d) * minD;
+          a.pos.y = bld.pos.y + (dy / d) * minD;
+        }
+      }
+    }
+  }
+
+  private fire(shooter: CombatUnit, target: GameUnit | Building) {
+    const s = shooter.stats;
+    shooter.lastShotAt = this.gameTime;
+    if (s.weaponKind === 'melee') {
+      this.addEffect('melee', target.pos, shooter.team, 1);
+      this.applyDamage(target, s.volleyDamage, s.armorPierce, shooter.team, shooter.id);
+      this.sound.shot('melee', shooter.team);
+      return;
+    }
+    const kind = s.weaponKind || 'kinetic';
+    const speed = kind === 'explosive' ? 26 : kind === 'energy' ? 40 : s.effectiveRange > 25 ? 95 : 48;
+    const muzzle = {
+      x: shooter.pos.x + Math.cos(shooter.facing) * shooter.radius,
+      y: shooter.pos.y + Math.sin(shooter.facing) * shooter.radius,
+    };
     this.projectiles.push({
-      id: projId,
+      id: `proj_${this.nextId++}`,
+      team: shooter.team,
       sourceId: shooter.id,
       targetId: target.id,
-      team: shooter.team,
-      startPos: { ...shooter.pos },
-      currentPos: { ...shooter.pos },
-      targetPos: { ...target.pos },
-      speed: 38,
-      damage,
-      type: shooter.stats.effectiveRange > 25 ? 'explosive' : 'kinetic',
+      from: { ...muzzle },
+      to: { x: target.pos.x + (Math.random() - 0.5) * 0.8, y: target.pos.y + (Math.random() - 0.5) * 0.8 },
+      pos: { ...muzzle },
       progress: 0,
+      speed,
+      damage: s.volleyDamage,
+      kind,
+      splash: s.splashRadius,
+      armorPierce: s.armorPierce,
     });
+    this.addEffect('muzzle', muzzle, shooter.team, kind === 'explosive' ? 1.6 : 0.8);
+    this.sound.shot(kind, shooter.team);
+  }
 
-    if (shooter.stats.effectiveRange > 25) {
-      sounds.playCannon();
-    } else {
-      sounds.playLaser();
+  private updateTurrets(dt: number) {
+    for (const b of this.buildings) {
+      if (b.type !== 'command_center') continue;
+      b.turretCooldown -= dt;
+      if (b.turretCooldown > 0) continue;
+      const target = this.nearestEnemyUnit(b.team, b.pos, GAME_BALANCE.HQ_TURRET_RANGE + b.radius);
+      if (!target) continue;
+      b.turretCooldown = GAME_BALANCE.HQ_TURRET_INTERVAL;
+      const from = { x: b.pos.x, y: b.pos.y };
+      this.projectiles.push({
+        id: `proj_${this.nextId++}`,
+        team: b.team,
+        sourceId: b.id,
+        targetId: target.id,
+        from,
+        to: { ...target.pos },
+        pos: { ...from },
+        progress: 0,
+        speed: 55,
+        damage: GAME_BALANCE.HQ_TURRET_DAMAGE,
+        kind: 'turret',
+        splash: 0,
+        armorPierce: 0.2,
+      });
+      this.sound.shot('turret', b.team);
     }
+  }
+
+  private nearestEnemyUnit(team: Team, pos: Vector2D, radius: number): GameUnit | null {
+    let best: GameUnit | null = null;
+    let bestD = radius;
+    for (const o of this.units) {
+      if (o.team === team || o.state === 'dead') continue;
+      const d = dist(o.pos, pos);
+      if (d < bestD) {
+        bestD = d;
+        best = o;
+      }
+    }
+    return best;
   }
 
   private updateProjectiles(dt: number) {
     for (const p of this.projectiles) {
-      const dx = p.targetPos.x - p.startPos.x;
-      const dy = p.targetPos.y - p.startPos.y;
-      const totalDist = Math.hypot(dx, dy);
-
-      if (totalDist < 0.1) {
-        p.progress = 1;
-        continue;
-      }
-
-      p.progress += (p.speed * dt) / totalDist;
-
-      p.currentPos.x = p.startPos.x + dx * p.progress;
-      p.currentPos.y = p.startPos.y + dy * p.progress;
-
-      if (p.progress >= 1.0) {
-        this.applyDamage(p);
-      }
+      // Home on moving targets so projectiles visibly connect
+      const t = this.units.find(u => u.id === p.targetId);
+      if (t && t.state !== 'dead') p.to = { x: t.pos.x, y: t.pos.y };
+      const dx = p.to.x - p.from.x;
+      const dy = p.to.y - p.from.y;
+      const total = Math.max(0.1, Math.hypot(dx, dy));
+      p.progress = Math.min(1, p.progress + (p.speed * dt) / total);
+      p.pos.x = p.from.x + dx * p.progress;
+      p.pos.y = p.from.y + dy * p.progress;
+      if (p.progress >= 1) this.impact(p);
     }
-
-    this.projectiles = this.projectiles.filter(p => p.progress < 1.0);
+    this.projectiles = this.projectiles.filter(p => p.progress < 1);
   }
 
-  private applyDamage(proj: Projectile) {
-    // Find target (unit or building)
-    const unitTarget = this.units.find(u => u.id === proj.targetId);
-    if (unitTarget && unitTarget.state !== 'dead') {
-      let finalDamage = proj.damage;
-      if (unitTarget.kind === 'combat') {
-        // Apply armor mitigation
-        finalDamage *= (1.0 - unitTarget.stats.armorRating);
+  private impact(p: Projectile) {
+    const target: GameUnit | Building | undefined =
+      this.units.find(u => u.id === p.targetId && u.state !== 'dead') ?? this.buildings.find(b => b.id === p.targetId);
+    if (target) this.applyDamage(target, p.damage, p.armorPierce, p.team, p.sourceId);
+    this.addEffect(p.kind === 'explosive' ? 'explosion' : 'hit', p.pos, p.team, p.kind === 'explosive' ? p.splash : 0.7);
+    if (p.splash > 0) {
+      for (const u of this.units) {
+        if (u.team === p.team || u.state === 'dead' || u.id === p.targetId) continue;
+        if (dist(u.pos, p.pos) <= p.splash) this.applyDamage(u, p.damage * 0.5, p.armorPierce, p.team, p.sourceId);
       }
-      unitTarget.hp -= Math.max(2, finalDamage);
+    }
+  }
 
-      if (unitTarget.hp <= 0) {
-        unitTarget.state = 'dead';
-        sounds.playExplosion();
-
-        // Spawn scrap pile on battlefield! (Section 3 of brief)
-        const metalValue = unitTarget.kind === 'combat'
-          ? Math.round(unitTarget.stats.metalCost * GAME_BALANCE.SCRAP_SALVAGE_PERCENT)
-          : 25;
-
-        this.scrapPiles.push({
-          id: `scrap_${this.nextScrapId++}`,
-          pos: { ...unitTarget.pos },
-          metalAmount: metalValue,
-          sourceDesignName: unitTarget.kind === 'combat' ? unitTarget.design.name : 'Сборщик',
-          createdAt: this.gameTime,
-        });
-
-        if (unitTarget.team === 'enemy') {
-          this.events.unshift({
-            type: 'kill',
-            text: `Уничтожен вражеский робот! Образовались обломки (${metalValue} металла).`,
-            timestamp: this.gameTime,
-          });
-        }
+  private applyDamage(target: GameUnit | Building, raw: number, pierce: number, sourceTeam: Team, sourceId: string) {
+    if (target.team === sourceTeam) return;
+    if ('kind' in target) {
+      if (target.state === 'dead') return;
+      let dmg = raw;
+      if (target.kind === 'combat') dmg *= 1 - target.stats.armorRating * (1 - pierce);
+      target.hp -= Math.max(1, dmg);
+      target.lastDamagedAt = this.gameTime;
+      if (target.kind === 'harvester' && this.throttled(`harv_attack_${target.team}`, 25)) {
+        this.pushEvent(target.team, 'harvester_attacked', 'Наших добытчиков атакуют!', true);
       }
+      if (target.hp <= 0) this.killUnit(target, sourceTeam, sourceId);
       return;
     }
 
-    const buildingTarget = this.buildings.find(b => b.id === proj.targetId);
-    if (buildingTarget) {
-      buildingTarget.hp -= proj.damage;
-      if (buildingTarget.hp <= 0) {
-        sounds.playExplosion();
+    // Building
+    const b = target;
+    if (b.hp <= 0) return;
+    b.hp -= Math.max(1, raw * (1 - GAME_BALANCE.BUILDING_ARMOR * (1 - pierce)));
+    b.lastDamagedAt = this.gameTime;
+    if (this.throttled(`base_attack_${b.team}`, 25)) {
+      const what = b.type === 'command_center' ? 'командный центр' : b.type === 'factory' ? 'завод' : 'электростанцию';
+      this.pushEvent(b.team, 'base_attack', `Противник атакует ${what}!`, true);
+    }
+    if (b.hp <= 0) {
+      this.addEffect('big_explosion', b.pos, b.team, b.radius * 1.4);
+      this.sound.explosion(true);
+      if (b.type !== 'command_center') {
+        this.buildings = this.buildings.filter(x => x.id !== b.id);
+        const what = b.type === 'factory' ? 'Завод' : 'Электростанция';
+        this.pushEvent(b.team, 'base_attack', `${what} уничтожен(а)!`, true);
       }
     }
   }
 
-  private checkVictory() {
-    const pCenter = this.buildings.find(b => b.id === 'p_hq');
-    const eCenter = this.buildings.find(b => b.id === 'e_hq');
+  private killUnit(u: GameUnit, killerTeam: Team, killerId: string) {
+    u.state = 'dead';
+    u.hp = 0;
+    this.sound.explosion(false);
+    this.addEffect(u.kind === 'combat' && u.design.chassisId === 'heavy_quad' ? 'big_explosion' : 'explosion', u.pos, u.team, u.radius);
+    const metal = u.kind === 'combat' ? Math.round(u.stats.metalCost * GAME_BALANCE.SCRAP_SALVAGE_PERCENT) : 25;
+    this.scrapPiles.push({ id: `scrap_${this.nextId++}`, pos: { ...u.pos }, metal, createdAt: this.gameTime });
 
-    if (eCenter && eCenter.hp <= 0) {
-      this.gameOver = 'player_won';
-    } else if (pCenter && pCenter.hp <= 0) {
-      this.gameOver = 'enemy_won';
+    const killer = this.units.find(k => k.id === killerId);
+    if (killer && killer.kind === 'combat') killer.kills++;
+    this.teams[killerTeam].economy.totals.kills++;
+
+    const econ = this.teams[u.team].economy;
+    if (u.kind === 'harvester') {
+      econ.totals.harvestersLost++;
+      this.pushEvent(u.team, 'loss', 'Потерян добытчик', false);
+    } else {
+      econ.totals.unitsLost++;
+      const times = this.lossTimes[u.team];
+      times.push(this.gameTime);
+      while (times.length && this.gameTime - times[0] > 20) times.shift();
+      if (times.length >= 4 && this.throttled(`heavy_losses_${u.team}`, 20)) {
+        this.pushEvent(u.team, 'heavy_losses', `Тяжёлые потери: ${times.length} машин за 20 секунд`, true);
+      }
     }
+  }
+
+  /** Detects when a new enemy design shows up near our forces (a significant event). */
+  private updateSightings(dt: number) {
+    this.sightingTimer -= dt;
+    if (this.sightingTimer > 0) return;
+    this.sightingTimer = 1;
+    for (const u of this.units) {
+      if (u.kind !== 'combat' || u.state === 'dead') continue;
+      const observer = opposite(u.team);
+      const seen = this.seenDesigns[observer];
+      if (seen.has(u.design.id)) continue;
+      const near =
+        this.units.some(o => o.team === observer && dist(o.pos, u.pos) < 28) ||
+        this.buildings.some(b => b.team === observer && dist(b.pos, u.pos) < 30);
+      if (!near) continue;
+      seen.add(u.design.id);
+      const chassis = CHASSIS_CATALOG[u.design.chassisId]?.nameRu ?? u.design.chassisId;
+      const weapons = u.design.modules
+        .map(id => MODULES_CATALOG[id])
+        .filter(m => m && m.category === 'weapon')
+        .map(m => m.nameRu)
+        .join(', ');
+      const first = seen.size === 1;
+      this.pushEvent(
+        observer,
+        'enemy_new_design',
+        first
+          ? `Разведка: противник выставил «${u.design.name}» (${chassis}, ${weapons || 'без оружия'})`
+          : `Противник вывел новую модель «${u.design.name}»: ${chassis}, ${weapons || 'без оружия'}`,
+        !first,
+      );
+    }
+  }
+
+  private updateScrap() {
+    this.scrapPiles = this.scrapPiles.filter(s => this.gameTime - s.createdAt < GAME_BALANCE.SCRAP_DECAY_TIME_SEC && s.metal > 0.5);
+  }
+
+  private checkVictory() {
+    const p = this.getHQ('player');
+    const e = this.getHQ('enemy');
+    if (!e || e.hp <= 0) this.gameOver = 'player_won';
+    else if (!p || p.hp <= 0) this.gameOver = 'enemy_won';
   }
 
   private cleanup() {
     this.units = this.units.filter(u => u.state !== 'dead');
+    this.effects = this.effects.filter(e => this.gameTime - e.time < 2);
+    if (this.events.length > 120) this.events.length = 120;
   }
+
+  // ───────────────────────────── Events & effects ─────────────────────────────
+
+  public pushEvent(team: Team | 'neutral', type: GameEventType, text: string, significant: boolean) {
+    this.events.unshift({ id: this.nextEventId++, team, type, text, time: this.gameTime, significant });
+    if (significant && team !== 'neutral') this.significantCounter[team]++;
+  }
+
+  private addEffect(type: VisualEffect['type'], pos: Vector2D, team: Team | 'neutral', size: number) {
+    this.effects.push({ id: this.nextEffectId++, type, pos: { ...pos }, team, size, time: this.gameTime });
+  }
+
+  private throttled(key: string, intervalSec: number): boolean {
+    const last = this.throttle[key] ?? -Infinity;
+    if (this.gameTime - last < intervalSec) return false;
+    this.throttle[key] = this.gameTime;
+    return true;
+  }
+
+  // ───────────────────────────── Compact summaries for agents (short context, brief §10) ─────────────────────────────
+
+  public armySummary(team: Team): ArmySummary {
+    const units = this.units.filter(u => u.team === team && u.state !== 'dead');
+    const combat = units.filter((u): u is CombatUnit => u.kind === 'combat');
+    const byRole: Record<string, number> = {};
+    const designs = new Map<string, number>();
+    let hpSum = 0;
+    let frontX: number | null = null;
+    for (const c of combat) {
+      byRole[c.design.tacticalRole] = (byRole[c.design.tacticalRole] || 0) + 1;
+      designs.set(c.design.name, (designs.get(c.design.name) || 0) + 1);
+      hpSum += c.hp / c.maxHp;
+      frontX = frontX === null ? c.pos.x : team === 'player' ? Math.max(frontX, c.pos.x) : Math.min(frontX, c.pos.x);
+    }
+    return {
+      combatUnits: combat.length,
+      harvesters: units.length - combat.length,
+      avgHpPct: combat.length ? Math.round((hpSum / combat.length) * 100) : 0,
+      byRole,
+      frontX: frontX === null ? null : Math.round(frontX),
+      designs: [...designs.entries()].map(([name, count]) => ({ name, count })),
+    };
+  }
+
+  /** Enemy designs this team has actually seen on the battlefield (no omniscience). */
+  public observedEnemyDesigns(team: Team): { design: RobotDesign; count: number }[] {
+    const seen = this.seenDesigns[team];
+    const map = new Map<string, { design: RobotDesign; count: number }>();
+    for (const u of this.units) {
+      if (u.team === team || u.kind !== 'combat' || !seen.has(u.design.id)) continue;
+      const entry = map.get(u.design.id);
+      if (entry) entry.count++;
+      else map.set(u.design.id, { design: u.design, count: 1 });
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }
+
+  public recentEvents(team: Team, max = 5, sinceSec = 90): GameEvent[] {
+    return this.events
+      .filter(e => (e.team === team || e.team === 'neutral') && this.gameTime - e.time <= sinceSec && e.type !== 'intercept' && e.type !== 'ai')
+      .slice(0, max);
+  }
+
+  public baseHpPct(team: Team): number {
+    const hq = this.getHQ(team);
+    return hq ? Math.round((hq.hp / hq.maxHp) * 100) : 0;
+  }
+}
+
+function lerpAngle(a: number, b: number, t: number): number {
+  let diff = b - a;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  return a + diff * t;
 }

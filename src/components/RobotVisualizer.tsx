@@ -1,80 +1,61 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { RobotDesign } from '../types/robot';
+import { TEAM_COLORS } from '../config/balance';
 import { RobotMeshFactory } from '../rendering/RobotMeshFactory';
+import { RobotDesign } from '../types/robot';
 
-interface RobotVisualizerProps {
-  design: RobotDesign;
-  width?: number;
-  height?: number;
-}
-
-export const RobotVisualizer: React.FC<RobotVisualizerProps> = ({
-  design,
-  width = 240,
-  height = 180,
-}) => {
+/** Rotating model preview: the upgrade visibly changes the robot (brief §7). */
+export const RobotVisualizer: React.FC<{ design: RobotDesign; width?: number; height?: number }> = ({ design, width = 150, height = 124 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
+  const ctx = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; model: THREE.Group | null; raf: number } | null>(null);
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
-
-    // Scene
-    const scene = new THREE.Scene();
-
-    // Camera
-    const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 100);
-    camera.position.set(4, 3, 5);
-    camera.lookAt(0, 1.2, 0);
-
-    // Renderer
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(width, height);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(renderer.domElement);
-
-    // Lights
-    const ambient = new THREE.AmbientLight('#ffffff', 1.4);
-    scene.add(ambient);
-
-    const dirLight = new THREE.DirectionalLight('#38bdf8', 2.0);
-    dirLight.position.set(5, 8, 4);
-    scene.add(dirLight);
-
-    const backLight = new THREE.DirectionalLight('#f59e0b', 0.8);
-    backLight.position.set(-5, 3, -4);
-    scene.add(backLight);
-
-    // Robot Mesh
-    const robotMesh = RobotMeshFactory.createRobotMesh(design, design.color || '#3b82f6');
-    scene.add(robotMesh);
-
-    // Pedestal platform
-    const pedestal = new THREE.Mesh(
-      new THREE.CylinderGeometry(2.4, 2.6, 0.2, 24),
-      new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.7 })
-    );
-    pedestal.position.y = -0.1;
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight('#fff6e0', '#8a7a60', 2.2));
+    const sun = new THREE.DirectionalLight('#ffffff', 2);
+    sun.position.set(4, 8, 5);
+    scene.add(sun);
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.8, 0.25, 32), new THREE.MeshLambertMaterial({ color: '#334155' }));
+    pedestal.position.y = -0.13;
     scene.add(pedestal);
-
-    // Animation Loop
-    let animId: number;
+    const camera = new THREE.PerspectiveCamera(32, width / height, 0.1, 100);
+    camera.position.set(6.5, 4.6, 7.5);
+    camera.lookAt(0, 1.3, 0);
+    const state = { renderer, scene, camera, model: null as THREE.Group | null, raf: 0 };
+    ctx.current = state;
     const animate = () => {
-      animId = requestAnimationFrame(animate);
-      robotMesh.rotation.y += 0.015;
+      state.raf = requestAnimationFrame(animate);
+      if (state.model) state.model.rotation.y += 0.012;
       renderer.render(scene, camera);
     };
     animate();
-
     return () => {
-      cancelAnimationFrame(animId);
+      cancelAnimationFrame(state.raf);
       renderer.dispose();
-      if (mount.contains(renderer.domElement)) {
-        mount.removeChild(renderer.domElement);
-      }
+      if (renderer.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
+      ctx.current = null;
     };
-  }, [design, width, height]);
+  }, [width, height]);
 
-  return <div ref={mountRef} className="rounded-lg overflow-hidden border border-slate-700/60 bg-slate-900/60" />;
+  const key = `${design.chassisId}|${design.modules.join(',')}`;
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c) return;
+    const prevRot = c.model?.rotation.y ?? -0.6;
+    if (c.model) c.scene.remove(c.model);
+    const rig = RobotMeshFactory.createRobot(design, TEAM_COLORS.player);
+    rig.root.rotation.y = prevRot;
+    c.scene.add(rig.root);
+    c.model = rig.root;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return <div ref={mountRef} className="rounded-xl overflow-hidden bg-gradient-to-b from-slate-700/50 to-slate-900/60 border border-white/10" style={{ width, height }} />;
 };
