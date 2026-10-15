@@ -644,22 +644,16 @@ export class GameState {
       const hpPct = (u.hp / u.maxHp) * 100;
       let engaging = false;
 
-      // Retreat & repair cycle
-      if (u.state === 'repairing') {
-        if (!ownHQ || hpPct >= 96) {
-          u.state = 'moving';
-          u.committed = false;
-          u.rallySince = this.gameTime;
-        } else {
-          const d = dist(u.pos, ownHQ.pos);
-          if (d > GAME_BALANCE.REPAIR_RADIUS) this.moveToward(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
-          else this.brake(u, dt);
-          u.hp = Math.min(u.maxHp, u.hp + GAME_BALANCE.REPAIR_HP_PER_SEC * team.economy.powerEfficiency * dt);
-          this.coolDown(u, dt, false);
-          continue;
-        }
-      }
-      if (plan.retreatHpThreshold > 0 && hpPct < plan.retreatHpThreshold && u.state !== 'retreating' && ownHQ) {
+      // Retreat & repair cycle: below the plan's threshold → walk to the HQ → repair to ~full → rejoin.
+      // Order matters: a unit that arrives this tick must start repairing this tick, otherwise the
+      // combat code below overwrites its state and it never heals.
+      if (
+        plan.retreatHpThreshold > 0 &&
+        hpPct < plan.retreatHpThreshold &&
+        u.state !== 'retreating' &&
+        u.state !== 'repairing' &&
+        ownHQ
+      ) {
         u.state = 'retreating';
         u.targetId = null;
       }
@@ -670,6 +664,20 @@ export class GameState {
           u.state = 'repairing';
         } else {
           this.moveToward(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          this.coolDown(u, dt, false);
+          continue;
+        }
+      }
+      if (u.state === 'repairing') {
+        if (!ownHQ || hpPct >= 96) {
+          u.state = 'moving';
+          u.committed = false;
+          u.rallySince = this.gameTime;
+        } else {
+          const d = dist(u.pos, ownHQ.pos);
+          if (d > GAME_BALANCE.REPAIR_RADIUS) this.moveToward(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          else this.brake(u, dt);
+          u.hp = Math.min(u.maxHp, u.hp + GAME_BALANCE.REPAIR_HP_PER_SEC * team.economy.powerEfficiency * dt);
           this.coolDown(u, dt, false);
           continue;
         }
