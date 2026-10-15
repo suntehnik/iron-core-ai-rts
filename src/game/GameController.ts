@@ -375,6 +375,14 @@ export class GameController {
     this.notify(text, 'info');
   }
 
+  toggleFactory(id: string) {
+    sounds.playClick();
+    const f = this.state.buildings.find(b => b.id === id && b.team === 'player' && b.type === 'factory');
+    if (!f) return;
+    this.state.setFactoryPaused('player', id, !f.paused);
+    this.notify(f.paused ? 'Завод остановлен: металл копится, энергия свободна' : 'Завод снова в работе', 'info');
+  }
+
   topUpTestBalance() {
     this.director.billing.topUpTestBalance();
     this.notify('Тестовый баланс пополнен', 'info');

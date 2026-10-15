@@ -423,7 +423,7 @@ export class SceneManager {
         const k = 1 + Math.sin(this.time * 4 + i) * 0.04 * state.teams[b.team].economy.powerEfficiency;
         p.scale.set(k, 1, k);
       }
-      const producing = !!b.job && built >= 1;
+      const producing = (!!b.job || !!b.harvesterBuild) && built >= 1 && !b.paused;
       for (const r of rig.conveyor) {
         if (producing) r.position.x = ((r.position.x + 1.5 + dt * 1.2) % 3.6) - 1.5;
       }

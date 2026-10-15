@@ -9,7 +9,29 @@ const offline: LLMSettings = {
   autoSpeakResponse: false, matchCoinLimit: 40, soundMuted: true,
 };
 
-function runMatch(maxSec: number, playerScript?: (s: GameState, d: AIDirector) => void) {
+/** Deterministic Math.random for reproducible balance checks (mulberry32). */
+function seeded(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let x = s;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function runMatch(maxSec: number, playerScript?: (s: GameState, d: AIDirector) => void, seed = 1) {
+  const original = Math.random;
+  Math.random = seeded(seed);
+  try {
+    return simulate(maxSec, playerScript);
+  } finally {
+    Math.random = original;
+  }
+}
+
+function simulate(maxSec: number, playerScript?: (s: GameState, d: AIDirector) => void) {
   const state = new GameState();
   const director = new AIDirector(offline, { chat() {}, proposal() {}, tactical() {}, intercept() {}, changed() {} });
   const dt = 1 / 20;
@@ -44,18 +66,20 @@ describe('headless match simulation', () => {
     let wins = 0;
     for (let i = 0; i < 4; i++) {
       const { state, t } = runMatch(25 * 60, (s, d) => {
-        // simple scripted "good player": more harvesters, a power plant, a stronger design later
-        if (s.gameTime > 5 && s.units.filter(u => u.team === 'player' && u.kind === 'harvester').length < 5) s.buyHarvester('player');
-        if (s.gameTime > 60 && s.buildingCount('player', 'power_plant') < 2) s.buildStructure('player', 'power_plant');
-        if (s.gameTime > 120 && s.teams.player.design.version === 1) {
-          s.setDesign('player', { ...s.teams.player.design, id: 'p2', name: 'Центурион Mk-2', chassisId: 'medium_tracked', modules: ['reinforced_steel', 'autocannon_20mm', 'plasma_blasters', 'heat_radiator'], version: 2, tacticalRole: 'balanced' });
+        // scripted "good player": armours up early and grows mining only once the army can hold
+        // (harvesters take factory time, so greedy early mining loses the first clash)
+        if (s.gameTime > 40 && s.harvesterCount('player') + s.harvestersInProduction('player') < 4 && s.combatCount('player') >= 3) {
+          s.orderHarvester('player');
+        }
+        if (s.gameTime > 30 && s.teams.player.design.version === 1) {
+          s.setDesign('player', { ...s.teams.player.design, id: 'p2', name: 'Бастион Mk-2', chassisId: 'medium_tracked', modules: ['reinforced_steel', 'autocannon_20mm', 'autocannon_20mm'], version: 2, tacticalRole: 'frontline' });
         }
         void d;
-      });
+      }, i + 1);
       console.log(`match ${i}: ${state.gameOver} at ${Math.round(t)}s`);
       if (state.gameOver === 'player_won') wins++;
     }
-    expect(wins).toBeGreaterThanOrEqual(0);
+    expect(wins).toBeGreaterThanOrEqual(3);
   });
 });
 

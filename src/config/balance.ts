@@ -51,6 +51,10 @@ export const GAME_BALANCE = {
   HARVEST_RATE_PER_SEC: 14,
   HARVESTER_SPEED: 5.0,
   HARVESTER_COST_METAL: 60,
+  HARVESTER_BUILD_SEC: 7, // assembled at a factory, competing with the combat batch for factory time
+  // With no factory left the HQ's emergency bay assembles harvesters, twice as slow — otherwise
+  // losing the factory and the miners would make recovery impossible (brief §9).
+  HQ_EMERGENCY_HARVESTER_FACTOR: 2,
   HARVESTER_HP: 160,
   SCRAP_SALVAGE_PERCENT: 0.4, // 40% of destroyed bot metal drops as scrap
   SCRAP_DECAY_TIME_SEC: 150,

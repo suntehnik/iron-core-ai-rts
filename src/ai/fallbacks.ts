@@ -30,6 +30,15 @@ export function localEngineer(order: string, current: RobotDesign): EngineerDraf
   const actions: ProductionAction[] = [];
   const replies: string[] = [];
 
+  // Stop / resume the factories ("останови производство, копим на электростанцию")
+  const aboutProduction = has(p, 'производств', 'завод', 'конвейер', 'выпуск', 'сборк');
+  const stop = aboutProduction && has(p, 'останов', 'стоп', 'пауз', 'прекрат', 'приостанов', 'не выпуска', 'хватит');
+  const resume = aboutProduction && !stop && has(p, 'возобнов', 'продолж', 'запусти', 'включи', 'сними с пауз', 'сними паузу');
+  if (stop || resume) {
+    actions.push({ type: 'set_production', paused: stop });
+    replies.push(stop ? 'Глушу конвейеры: металл копится, энергия свободна.' : 'Конвейеры снова в работе.');
+  }
+
   if (has(p, 'добытчик', 'сборщик', 'харвест', 'шахтёр', 'шахтер')) {
     const n = numberIn(p) ?? 1;
     actions.push({ type: 'build_harvester', count: Math.max(1, Math.min(4, n)) });
@@ -39,7 +48,7 @@ export function localEngineer(order: string, current: RobotDesign): EngineerDraf
     actions.push({ type: 'build_power_plant' });
     replies.push('Заложу электростанцию: +300 кВт в сеть базы.');
   }
-  if (has(p, 'завод') && has(p, 'построй', 'втор', 'ещё', 'еще', 'нов')) {
+  if (!stop && !resume && has(p, 'завод') && has(p, 'построй', 'втор', 'ещё', 'еще', 'нов')) {
     actions.push({ type: 'build_factory' });
     replies.push('Второй завод удвоит выпуск, но съест металл и энергию.');
   }
@@ -253,8 +262,8 @@ export function localEnemyDecision(state: GameState): EnemyDraft {
 
   const actions: ProductionAction[] = [];
   const econ = t.economy;
-  const harvesters = state.units.filter(u => u.team === 'enemy' && u.kind === 'harvester').length;
-  if (harvesters < 5 && econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL) actions.push({ type: 'build_harvester', count: 1 });
+  const harvesters = state.harvesterCount('enemy') + state.harvestersInProduction('enemy');
+  if (harvesters < 5 && mine >= 3 && econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL) actions.push({ type: 'build_harvester', count: 1 });
   if (econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
   if (econ.metal > 750 && state.buildingCount('enemy', 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
 

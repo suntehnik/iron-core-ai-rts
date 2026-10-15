@@ -70,6 +70,8 @@ export interface ProductionJob {
   batchSize: number;
   remaining: number;
   batchNumber: number;
+  /** the current unit has been paid for (payment happens when its assembly starts) */
+  unitPaid: boolean;
 }
 
 export interface Building {
@@ -81,6 +83,10 @@ export interface Building {
   maxHp: number;
   radius: number;
   job: ProductionJob | null;
+  /** harvester being assembled at this factory (takes priority over the combat batch between units) */
+  harvesterBuild: { progressSec: number; totalSec: number } | null;
+  /** production stopped by the player: no spending, no power draw, progress frozen */
+  paused: boolean;
   /** 0..1 while under construction, 1 when operational */
   built: number;
   buildTimeSec: number;
@@ -174,6 +180,8 @@ export interface TeamState {
   plan: TacticalPlan;
   batchCounter: number;
   designsFielded: string[];
+  /** harvesters ordered (already paid) and waiting for a free factory */
+  harvesterQueue: number;
 }
 
 export type GameEventType =
@@ -208,7 +216,8 @@ export type ProductionAction =
   | { type: 'build_power_plant' }
   | { type: 'build_factory' }
   | { type: 'set_batch_size'; size: number }
-  | { type: 'set_component_reserve'; amount: number };
+  | { type: 'set_component_reserve'; amount: number }
+  | { type: 'set_production'; paused: boolean };
 
 export interface ArmySummary {
   combatUnits: number;

@@ -56,13 +56,15 @@ export function describeDesign(d: RobotDesign): string {
 
 function economyLine(state: GameState, team: Team): string {
   const e = state.teams[team].economy;
-  const harv = state.units.filter(u => u.team === team && u.kind === 'harvester').length;
+  const harv = state.harvesterCount(team);
+  const harvQueued = state.harvestersInProduction(team);
+  const factories = state.buildings.filter(b => b.team === team && b.type === 'factory');
+  const paused = factories.filter(b => b.paused).length;
   return `металл ${Math.round(e.metal)}, компоненты ${Math.round(e.components)}, энергия базы ${Math.round(e.powerDemand)}/${
     e.powerCapacity
-  } кВт, добыча ${e.miningRatePerMin}/мин, добытчиков ${harv}/${GAME_BALANCE.MAX_HARVESTERS}, заводов ${state.buildingCount(
-    team,
-    'factory',
-  )}, электростанций ${state.buildingCount(team, 'power_plant')}, размер партии ${e.batchSize}, резерв компонентов ${e.componentReserve}`;
+  } кВт, добыча ${e.miningRatePerMin}/мин, добытчиков ${harv}/${GAME_BALANCE.MAX_HARVESTERS}${
+    harvQueued ? ` (+${harvQueued} в производстве)` : ''
+  }, заводов ${factories.length}${paused ? ` (на паузе: ${paused})` : ''}, электростанций ${state.buildingCount(team, 'power_plant')}, размер партии ${e.batchSize}, резерв компонентов ${e.componentReserve}`;
 }
 
 function intelLine(state: GameState, team: Team): string {
@@ -102,11 +104,12 @@ export const ENGINEER_SYSTEM = `Ты — «Болт», главный инжен
 - Нельзя одновременно максимизировать броню, огневую мощь, дальность и скорость. Если требования противоречат — выбери конкретный компромисс и назови его в поле "compromise".
 - Если командир ограничил стоимость — соблюдай лимит относительно текущей стоимости.
 - Изменения идут в следующие партии, выпущенные машины не меняются.
-- Если приказ про производство (добытчики, электростанция, завод, размер партии, резерв компонентов), а не про конструкцию — верни "design": null и действия.
+- Если приказ про производство (добытчики, электростанция, завод, размер партии, резерв компонентов, остановка/запуск конвейеров), а не про конструкцию — верни "design": null и действия.
+- Добытчиков собирает завод (${GAME_BALANCE.HARVESTER_BUILD_SEC} с каждый) вместо боевых машин. "set_production" с paused=true останавливает все заводы (копить металл, освободить энергию), paused=false — запускает.
 - Если командир ограничил рост стоимости, верни лимит в процентах в "costLimitPct" (четверть = 25, треть = 33, половина = 50), иначе null. Стоимость = металл шасси + металл всех модулей.
 - В "reply" и "compromise" не используй id деталей — называй их по-русски (осадная пушка, усиленная броня). Имя модели — по-русски.
 Ответ — только JSON:
-{"reply":"1–2 коротких предложения командиру","design":{"name":"короткое имя модели","chassis":"id шасси","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200}],"costLimitPct":null,"compromise":"чем пожертвовали или пустая строка"}`;
+{"reply":"1–2 коротких предложения командиру","design":{"name":"короткое имя модели","chassis":"id шасси","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"чем пожертвовали или пустая строка"}`;
 
 export function engineerUserPrompt(state: GameState, order: string, pending: ProductionProposal | null): string {
   const t = state.teams.player;

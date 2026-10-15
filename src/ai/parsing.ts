@@ -93,6 +93,11 @@ export function normalizeActions(raw: unknown): ProductionAction[] {
         if (Number.isFinite(amount)) out.push({ type: 'set_component_reserve', amount: Math.max(0, Math.min(600, amount)) });
         break;
       }
+      case 'set_production': {
+        const paused = a.paused === true || a.paused === 'true' ? true : a.paused === false || a.paused === 'false' ? false : null;
+        if (paused !== null) out.push({ type: 'set_production', paused });
+        break;
+      }
       default:
         break;
     }
@@ -103,7 +108,7 @@ export function normalizeActions(raw: unknown): ProductionAction[] {
 export function describeAction(a: ProductionAction): string {
   switch (a.type) {
     case 'build_harvester':
-      return `Выпустить добытчиков: ${a.count} (по ${GAME_BALANCE.HARVESTER_COST_METAL} металла)`;
+      return `Заказать добытчиков на заводе: ${a.count} (по ${GAME_BALANCE.HARVESTER_COST_METAL} металла, ~${GAME_BALANCE.HARVESTER_BUILD_SEC} с каждый)`;
     case 'build_power_plant':
       return `Построить электростанцию (${GAME_BALANCE.POWER_PLANT_COST_METAL} металла, +${GAME_BALANCE.POWER_PLANT_KW} кВт)`;
     case 'build_factory':
@@ -112,6 +117,8 @@ export function describeAction(a: ProductionAction): string {
       return `Размер партии: ${a.size}`;
     case 'set_component_reserve':
       return `Резерв компонентов: ${a.amount}`;
+    case 'set_production':
+      return a.paused ? 'Остановить производство на всех заводах' : 'Возобновить производство на всех заводах';
   }
 }
 

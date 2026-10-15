@@ -119,6 +119,7 @@ export class GameState {
       plan: { ...DEFAULT_PLAN },
       batchCounter: 1,
       designsFielded: [design.name],
+      harvesterQueue: 0,
     };
   }
 
@@ -167,6 +168,8 @@ export class GameState {
       maxHp,
       radius: type === 'command_center' ? 5 : type === 'factory' ? 4 : 3.2,
       job: null,
+      harvesterBuild: null,
+      paused: false,
       built: instant ? 1 : 0,
       buildTimeSec:
         type === 'factory' ? GAME_BALANCE.FACTORY_BUILD_SEC : type === 'power_plant' ? GAME_BALANCE.POWER_PLANT_BUILD_SEC : 1,
@@ -220,19 +223,65 @@ export class GameState {
     return { ok: true, text: `Строим ${type === 'factory' ? 'завод' : 'электростанцию'}` };
   }
 
-  public buyHarvester(team: Team): { ok: boolean; text: string } {
-    const econ = this.teams[team].economy;
-    const count = this.units.filter(u => u.team === team && u.kind === 'harvester').length;
-    if (count >= GAME_BALANCE.MAX_HARVESTERS) return { ok: false, text: `Предел добытчиков: ${GAME_BALANCE.MAX_HARVESTERS}` };
-    if (econ.metal < GAME_BALANCE.HARVESTER_COST_METAL) {
+  public harvesterCount(team: Team): number {
+    let n = 0;
+    for (const u of this.units) if (u.team === team && u.kind === 'harvester') n++;
+    return n;
+  }
+
+  /** Harvesters ordered but not yet out of the factory (queued + being assembled). */
+  public harvestersInProduction(team: Team): number {
+    let n = this.teams[team].harvesterQueue;
+    for (const b of this.buildings) if (b.team === team && b.harvesterBuild) n++;
+    return n;
+  }
+
+  /**
+   * Harvesters are built at a factory: the metal is paid when ordered, the machine rolls out
+   * after HARVESTER_BUILD_SEC of factory time — time the combat batch does not get.
+   */
+  public orderHarvester(team: Team): { ok: boolean; text: string } {
+    const t = this.teams[team];
+    const econ = t.economy;
+    if (this.harvesterCount(team) + this.harvestersInProduction(team) >= GAME_BALANCE.MAX_HARVESTERS) {
+      return { ok: false, text: `Предел добытчиков: ${GAME_BALANCE.MAX_HARVESTERS}` };
+    }
+    const hasFactory = this.buildings.some(b => b.team === team && b.type === 'factory');
+    if (!hasFactory && !this.getHQ(team)) {
+      return { ok: false, text: 'Нет ни завода, ни штаба — добытчика негде собрать' };
+    }
+    // No miners at all (none alive, none on order): the HQ issues an emergency harvester for free,
+    // otherwise "no metal → no harvester → no metal" would lock the economy forever.
+    const emergency = this.harvesterCount(team) + this.harvestersInProduction(team) === 0;
+    if (!emergency && econ.metal < GAME_BALANCE.HARVESTER_COST_METAL) {
       return { ok: false, text: `Нужно ${GAME_BALANCE.HARVESTER_COST_METAL} металла` };
     }
-    const hq = this.getHQ(team);
-    if (!hq) return { ok: false, text: 'Нет командного центра' };
-    econ.metal -= GAME_BALANCE.HARVESTER_COST_METAL;
-    const dx = team === 'player' ? 5 : -5;
-    this.spawnHarvester(team, { x: hq.pos.x + dx, y: hq.pos.y + (Math.random() - 0.5) * 6 });
-    return { ok: true, text: 'Добытчик выпущен' };
+    if (!emergency) econ.metal -= GAME_BALANCE.HARVESTER_COST_METAL;
+    t.harvesterQueue++;
+    if (emergency) this.pushEvent(team, 'info', 'Добытчиков не осталось — штаб выделил аварийного добытчика бесплатно', false);
+    if (!hasFactory) {
+      const sec = GAME_BALANCE.HARVESTER_BUILD_SEC * GAME_BALANCE.HQ_EMERGENCY_HARVESTER_FACTOR;
+      return { ok: true, text: `Завода нет — аварийный цех штаба соберёт добытчика за ~${sec} с` };
+    }
+    const paused = this.buildings.filter(b => b.team === team && b.type === 'factory').every(b => b.paused);
+    return {
+      ok: true,
+      text: paused
+        ? 'Добытчик заказан, но заводы на паузе — запустите производство'
+        : `Добытчик заказан: выйдет с завода через ~${GAME_BALANCE.HARVESTER_BUILD_SEC} с`,
+    };
+  }
+
+  /** Stop or resume one factory (null id = every factory of the team). */
+  public setFactoryPaused(team: Team, factoryId: string | null, paused: boolean): number {
+    let n = 0;
+    for (const b of this.buildings) {
+      if (b.team !== team || b.type !== 'factory') continue;
+      if (factoryId && b.id !== factoryId) continue;
+      b.paused = paused;
+      n++;
+    }
+    return n;
   }
 
   public applyProductionAction(team: Team, action: ProductionAction): string {
@@ -240,17 +289,29 @@ export class GameState {
     switch (action.type) {
       case 'build_harvester': {
         const n = Math.max(1, Math.min(4, Math.round(action.count || 1)));
-        let built = 0;
+        let ordered = 0;
         let lastFail = '';
         for (let i = 0; i < n; i++) {
-          const r = this.buyHarvester(team);
-          if (r.ok) built++;
+          const r = this.orderHarvester(team);
+          if (r.ok) ordered++;
           else {
             lastFail = r.text;
             break;
           }
         }
-        return built > 0 ? `Выпущено добытчиков: ${built}${lastFail ? ` (${lastFail})` : ''}` : `Добытчик не выпущен: ${lastFail}`;
+        if (!ordered) return `Добытчик не заказан: ${lastFail}`;
+        const factories = this.buildings.filter(b => b.team === team && b.type === 'factory');
+        const where = !factories.length
+          ? 'соберёт аварийный цех штаба'
+          : factories.every(b => b.paused)
+            ? 'ждут на остановленном заводе — запустите производство'
+            : `завод соберёт их за ~${ordered * GAME_BALANCE.HARVESTER_BUILD_SEC} с`;
+        return `Заказано добытчиков: ${ordered}, ${where}${lastFail ? ` (${lastFail})` : ''}`;
+      }
+      case 'set_production': {
+        const n = this.setFactoryPaused(team, null, action.paused);
+        if (!n) return 'Заводов нет';
+        return action.paused ? `Производство остановлено (заводов: ${n})` : `Производство возобновлено (заводов: ${n})`;
       }
       case 'build_power_plant':
         return this.buildStructure(team, 'power_plant').text;
@@ -366,7 +427,9 @@ export class GameState {
         if (b.team !== team || b.built < 1) continue;
         if (b.type === 'command_center') capacity += GAME_BALANCE.HQ_BUILTIN_POWER_KW;
         if (b.type === 'power_plant') capacity += GAME_BALANCE.POWER_PLANT_KW;
-        if (b.type === 'factory' && b.job && !this.isArmyCapped(team)) demand += GAME_BALANCE.POWER_FACTORY_KW;
+        if (b.type === 'factory' && !b.paused && (b.harvesterBuild || (b.job && !this.isArmyCapped(team)))) {
+          demand += GAME_BALANCE.POWER_FACTORY_KW;
+        }
       }
       if (econ.fabricatorActive) demand += GAME_BALANCE.POWER_FABRICATOR_KW;
       let repairing = false;
@@ -434,9 +497,11 @@ export class GameState {
   /** Factory status for the HUD */
   public factoryStatus(b: Building): string {
     if (b.built < 1) return `Строится ${Math.round(b.built * 100)}%`;
+    if (b.paused) return 'Остановлен';
+    if (b.harvesterBuild) return 'Добытчик';
     if (!b.job) return 'Ожидание ресурсов';
     if (this.isArmyCapped(b.team)) return 'Предел армии';
-    if (b.job.progressSec === 0 && !this.canAffordUnit(b.team, b.job.stats.metalCost, b.job.stats.componentCost)) {
+    if (!b.job.unitPaid && !this.canAffordUnit(b.team, b.job.stats.metalCost, b.job.stats.componentCost)) {
       return 'Ждёт металл/компоненты';
     }
     return 'Сборка';
@@ -448,11 +513,32 @@ export class GameState {
   }
 
   private updateProduction(dt: number) {
+    this.updateEmergencyHarvesterBay(dt);
     for (const b of this.buildings) {
-      if (b.type !== 'factory' || b.built < 1) continue;
+      if (b.type !== 'factory' || b.built < 1 || b.paused) continue;
       const t = this.teams[b.team];
       const econ = t.economy;
+      const dir = b.team === 'player' ? 1 : -1;
 
+      // 1. A harvester on the line is finished first
+      if (b.harvesterBuild) {
+        b.harvesterBuild.progressSec += dt * econ.powerEfficiency;
+        if (b.harvesterBuild.progressSec >= b.harvesterBuild.totalSec) {
+          b.harvesterBuild = null;
+          this.spawnHarvester(b.team, { x: b.pos.x + dir * (b.radius + 1.5), y: b.pos.y + (Math.random() - 0.5) * 3 });
+          this.pushEvent(b.team, 'info', 'Новый добытчик сошёл с конвейера', false);
+        }
+        continue;
+      }
+
+      // 2. Ordered harvesters go in between combat units (economy orders have priority)
+      if (t.harvesterQueue > 0 && (!b.job || !b.job.unitPaid)) {
+        t.harvesterQueue--;
+        b.harvesterBuild = { progressSec: 0, totalSec: GAME_BALANCE.HARVESTER_BUILD_SEC };
+        continue;
+      }
+
+      // 3. The combat batch
       if (!b.job) {
         const stats = RobotBuilder.calculateStats(t.design);
         if (!stats.isValid) continue;
@@ -465,6 +551,7 @@ export class GameState {
           batchSize: econ.batchSize,
           remaining: econ.batchSize,
           batchNumber: t.batchCounter++,
+          unitPaid: false,
         };
         this.pushEvent(b.team, 'batch_started', `Партия #${b.job.batchNumber}: «${t.design.name}» ×${econ.batchSize}`, false);
       }
@@ -473,24 +560,50 @@ export class GameState {
       if (this.isArmyCapped(b.team)) continue;
 
       // Pay for each unit when its assembly starts (keeps the factory busy without locking a whole batch)
-      if (job.progressSec === 0) {
+      if (!job.unitPaid) {
         if (!this.canAffordUnit(b.team, job.stats.metalCost, job.stats.componentCost)) continue;
         econ.metal -= job.stats.metalCost;
         econ.components -= job.stats.componentCost;
+        job.unitPaid = true;
       }
 
       job.progressSec += dt * econ.powerEfficiency;
       if (job.progressSec >= job.unitTimeSec) {
-        const dir = b.team === 'player' ? 1 : -1;
         const spawnPos = { x: b.pos.x + dir * (b.radius + 1.5), y: b.pos.y + (Math.random() - 0.5) * 3 };
         this.spawnCombatBot(b.team, spawnPos, job.design, job.batchNumber);
         job.remaining--;
         job.progressSec = 0;
+        job.unitPaid = false;
         if (job.remaining <= 0) {
           this.pushEvent(b.team, 'batch_complete', `Партия #${job.batchNumber} «${job.design.name}» вышла на передовую`, false);
           this.sound.batchReady(b.team);
           b.job = null;
         }
+      }
+    }
+  }
+
+  /** No factory at all: the HQ assembles ordered harvesters, slower, so the economy can always recover. */
+  private updateEmergencyHarvesterBay(dt: number) {
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const t = this.teams[team];
+      if (this.buildings.some(b => b.team === team && b.type === 'factory')) continue;
+      const hq = this.getHQ(team);
+      if (!hq) continue;
+      if (!hq.harvesterBuild) {
+        if (t.harvesterQueue <= 0) continue;
+        t.harvesterQueue--;
+        hq.harvesterBuild = {
+          progressSec: 0,
+          totalSec: GAME_BALANCE.HARVESTER_BUILD_SEC * GAME_BALANCE.HQ_EMERGENCY_HARVESTER_FACTOR,
+        };
+      }
+      hq.harvesterBuild.progressSec += dt * t.economy.powerEfficiency;
+      if (hq.harvesterBuild.progressSec >= hq.harvesterBuild.totalSec) {
+        hq.harvesterBuild = null;
+        const dir = team === 'player' ? 1 : -1;
+        this.spawnHarvester(team, { x: hq.pos.x + dir * (hq.radius + 1.5), y: hq.pos.y + (Math.random() - 0.5) * 4 });
+        this.pushEvent(team, 'info', 'Аварийный цех штаба собрал добытчика', false);
       }
     }
   }

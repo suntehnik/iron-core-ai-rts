@@ -147,10 +147,16 @@ export class AIDirector {
 
   private enemyBaselineMacro(state: GameState) {
     const econ = state.teams.enemy.economy;
-    const harvesters = state.units.filter(u => u.team === 'enemy' && u.kind === 'harvester').length;
+    // ordered harvesters count too: they are already paid and on the factory line
+    const harvesters = state.harvesterCount('enemy') + state.harvestersInProduction('enemy');
     // Economy first: grow mining over time so production does not starve harvesters
-    const targetHarvesters = Math.min(6, 3 + Math.floor(state.gameTime / 70));
-    if (harvesters < targetHarvesters && econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL) state.buyHarvester('enemy');
+    // Harvesters take factory time from the army, so grow mining gradually and not while defenceless
+    const army = state.combatCount('enemy');
+    const targetHarvesters = Math.min(6, 2 + Math.floor(state.gameTime / 75));
+    const canSpareFactory = army >= 3 || harvesters < 2 || !state.buildings.some(b => b.team === 'enemy' && b.type === 'factory');
+    if (harvesters < targetHarvesters && canSpareFactory && (econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL || harvesters === 0)) {
+      state.orderHarvester('enemy');
+    }
     if (econ.powerEfficiency < 0.9 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) {
       const building = state.buildings.some(b => b.team === 'enemy' && b.type === 'power_plant' && b.built < 1);
       if (!building) state.buildStructure('enemy', 'power_plant');
