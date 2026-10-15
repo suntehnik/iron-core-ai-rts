@@ -340,17 +340,17 @@ export class GameController {
       this.startTrial();
       return;
     }
-    if (agent === 'engineer') await this.director.sendEngineerOrder(this.state, t);
-    else await this.director.sendTacticalOrder(this.state, t);
-    const last = this.chat[this.chat.length - 1];
-    if (last && last.role !== 'commander' && last.role !== 'system') this.speak(last.text);
+    // Voice the reply to this very order: other messages (autonomous re-plans, bench verdicts,
+    // a restart) may land in the chat while the agent is thinking
+    const reply =
+      agent === 'engineer' ? await this.director.sendEngineerOrder(this.state, t) : await this.director.sendTacticalOrder(this.state, t);
+    if (reply) this.speak(reply.text);
   }
 
   confirmProposal() {
     sounds.playClick();
-    this.director.confirmProposal(this.state);
-    const last = this.chat[this.chat.length - 1];
-    if (last) this.speak(last.text);
+    const reply = this.director.confirmProposal(this.state);
+    if (reply) this.speak(reply.text);
   }
 
   cancelProposal() {
@@ -370,15 +370,16 @@ export class GameController {
     if (this.trial?.proposalId === p.id && this.trial.status === 'running') return;
     sounds.playClick();
     const plan = this.state.teams.player.plan;
+    const serial = this.state.teams.player.design;
     const opponent = pickTrialOpponent(this.state);
-    const key = trialKey(p.design, opponent.design, plan);
+    const key = trialKey(p.design, opponent.design, plan, serial);
     const cached = this.trialCache.get(key);
     const report =
       cached ??
       runDesignTrial(p.design, opponent.design, opponent.source, {
         count: GAME_BALANCE.TRIAL_SQUAD_SIZE,
         plan,
-        serial: this.state.teams.player.design,
+        serial,
       });
     this.trialCache.set(key, report);
     // A repeated bench run for the same pair gives no new information, so it is instant

@@ -268,12 +268,24 @@ export class RobotBuilder {
       notes.push('неизвестное шасси заменено на средний гусеничный');
     }
 
-    for (let iter = 0; iter < 14; iter++) {
+    const visited = new Set<string>();
+    for (let iter = 0; iter < 24; iter++) {
       const s = this.calculateStats(design);
       if (s.isValid) break;
       const chassis = CHASSIS_CATALOG[design.chassisId];
       const mods = design.modules.map(id => MODULES_CATALOG[id]);
       const hasWeapon = mods.some(m => m.category === 'weapon');
+
+      // Back in a state we already tried (e.g. the generator dropped for mass, re-added for power):
+      // the fixes fight each other on this chassis, so a heavier one is the way out
+      const state = designSignature(design);
+      if (visited.has(state) && design.chassisId !== 'heavy_quad') {
+        const next = CHASSIS_ORDER[CHASSIS_ORDER.indexOf(design.chassisId) + 1];
+        notes.push(`шасси усилено до «${CHASSIS_CATALOG[next].nameRu}» — иначе не уложиться в массу и энергию`);
+        design.chassisId = next;
+        continue;
+      }
+      visited.add(state);
 
       if (!hasWeapon) {
         if (design.modules.length >= chassis.maxSlots) design.modules.pop();
@@ -297,6 +309,13 @@ export class RobotBuilder {
         const next = CHASSIS_ORDER[CHASSIS_ORDER.indexOf(design.chassisId) + 1];
         notes.push(`шасси усилено до «${CHASSIS_CATALOG[next].nameRu}» — иначе орудие не удержать`);
         design.chassisId = next;
+        continue;
+      }
+      // Not even the heaviest chassis holds this battery: drop the gun with the strongest recoil
+      if (unstable) {
+        const idx = this.strongestRecoilIndex(design.modules);
+        notes.push(`снято орудие «${MODULES_CATALOG[design.modules[idx]].nameRu}» — его отдачу не удержит даже тяжёлое шасси`);
+        design.modules.splice(idx, 1);
         continue;
       }
 
@@ -344,12 +363,29 @@ export class RobotBuilder {
         notes.push(`снят модуль «${MODULES_CATALOG[design.modules[idx]].nameRu}»`);
         design.modules.splice(idx, 1);
       } else {
-        design.chassisId = 'light_biped';
-        design.modules = ['light_composite', 'autocannon_20mm'];
-        notes.push('проект сброшен к базовой конфигурации');
+        this.resetToBase(design, notes);
       }
     }
+    // Callers put the result straight into production, where an invalid design stops the factory
+    if (!this.calculateStats(design).isValid) this.resetToBase(design, notes);
     return { design, notes };
+  }
+
+  private static resetToBase(design: RobotDesign, notes: string[]) {
+    design.chassisId = 'light_biped';
+    design.modules = ['light_composite', 'autocannon_20mm'];
+    notes.push('проект сброшен к базовой конфигурации');
+  }
+
+  /** Index of the weapon with the strongest recoil, keeping the first weapon when recoil ties. */
+  private static strongestRecoilIndex(modules: string[]): number {
+    let best = -1;
+    modules.forEach((id, idx) => {
+      const m = MODULES_CATALOG[id];
+      if (m.category !== 'weapon') return;
+      if (best < 0 || (m.weaponRecoil || 0) >= (MODULES_CATALOG[modules[best]].weaponRecoil || 0)) best = idx;
+    });
+    return best;
   }
 
   private static leastImportantIndex(modules: string[]): number {
@@ -420,6 +456,11 @@ export class RobotBuilder {
       tradeoffsSummaryRu: 'Ошибка конфигурации',
     };
   }
+}
+
+/** Identity of a design for the game: chassis and parts, regardless of name, id or module order. */
+export function designSignature(d: Pick<RobotDesign, 'chassisId' | 'modules'>): string {
+  return `${d.chassisId}:${[...d.modules].sort().join('+')}`;
 }
 
 function clamp01(v: number): number {

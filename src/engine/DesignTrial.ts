@@ -2,7 +2,7 @@ import { GAME_BALANCE, INITIAL_ENEMY_DESIGN } from '../config/balance';
 import { CombatUnit, TacticalPlan, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { DEFAULT_PLAN, GameState } from './GameState';
-import { RobotBuilder } from './RobotBuilder';
+import { RobotBuilder, designSignature } from './RobotBuilder';
 
 /**
  * Design test bench (brief §9 open decision: "доступность испытания конструкции до производства").
@@ -70,9 +70,10 @@ export function pickTrialOpponent(state: GameState): { design: RobotDesign; sour
   return { design: INITIAL_ENEMY_DESIGN, source: 'baseline' };
 }
 
-export function trialKey(candidate: RobotDesign, opponent: RobotDesign, plan?: TacticalPlan): string {
-  const d = (x: RobotDesign) => `${x.chassisId}:${[...x.modules].sort().join('+')}`;
-  return `${d(candidate)}|${d(opponent)}|${plan?.engagementRange ?? 'balanced'}|${plan?.targetPriority ?? 'closest'}`;
+/** Cache key of a bench report: everything the report depends on, the serial model for the comparison included. */
+export function trialKey(candidate: RobotDesign, opponent: RobotDesign, plan?: TacticalPlan, serial?: RobotDesign | null): string {
+  const doctrine = `${plan?.engagementRange ?? 'balanced'}|${plan?.targetPriority ?? 'closest'}`;
+  return `${designSignature(candidate)}|${designSignature(opponent)}|${doctrine}|${serial ? designSignature(serial) : '-'}`;
 }
 
 /** One skirmish: `aCount` tested robots (player side) vs `bCount` opponents. */
@@ -161,8 +162,7 @@ export function runDesignTrial(candidate: RobotDesign, opponent: RobotDesign, op
   const cand = series(candidate, o.count, opponent, o.count, o);
 
   const serialDesign = opts.serial ?? null;
-  const sameAsCandidate =
-    !!serialDesign && serialDesign.chassisId === candidate.chassisId && [...serialDesign.modules].sort().join() === [...candidate.modules].sort().join();
+  const sameAsCandidate = !!serialDesign && designSignature(serialDesign) === designSignature(candidate);
   const serial = serialDesign && !sameAsCandidate ? series(serialDesign, o.count, opponent, o.count, o) : null;
 
   const budgetCount = Math.max(1, Math.min(8, Math.round((o.count * opponentCost) / Math.max(1, candidateCost))));
@@ -170,7 +170,7 @@ export function runDesignTrial(candidate: RobotDesign, opponent: RobotDesign, op
 
   const ended = typeof performance !== 'undefined' ? performance.now() : Date.now();
   return {
-    key: trialKey(candidate, opponent, o.plan),
+    key: trialKey(candidate, opponent, o.plan, serialDesign),
     opponent,
     opponentSource,
     opponentCount: o.count,

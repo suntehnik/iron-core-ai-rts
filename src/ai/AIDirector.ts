@@ -2,8 +2,8 @@ import { GAME_BALANCE } from '../config/balance';
 import { LLM_PROVIDERS } from '../config/llmProviders';
 import { estimateLLMCost } from '../config/tariffs';
 import { GameState } from '../engine/GameState';
-import { RobotBuilder } from '../engine/RobotBuilder';
-import { ChatMessage, LLMSettings, ProductionProposal, TacticalDecision } from '../types/agent';
+import { RobotBuilder, designSignature } from '../engine/RobotBuilder';
+import { AgentId, ChatMessage, LLMSettings, ProductionProposal, TacticalDecision } from '../types/agent';
 import { ProductionAction, TacticalPlan, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { AIBilling, AIParticipant, DecisionRateLimiter } from './AIBilling';
@@ -71,6 +71,7 @@ export class AIDirector {
 
   private settings: LLMSettings;
   private limiter = new DecisionRateLimiter(GAME_BALANCE.AI_AUTONOMOUS_MIN_INTERVAL_SEC);
+  /** Anti-spam for the player's own orders, in real seconds: game time stands still while paused. */
   private orderCooldown = new DecisionRateLimiter(GAME_BALANCE.AI_PLAYER_ORDER_COOLDOWN_SEC);
   private seenSignificant = { player: 0, enemy: 0 };
   private macroTimer = 0;
@@ -233,25 +234,19 @@ export class AIDirector {
 
   // ───────────────────────────── Production agent ─────────────────────────────
 
-  async sendEngineerOrder(state: GameState, order: string) {
+  /** Returns the engineer's reply to this order (null if the match was restarted meanwhile). */
+  async sendEngineerOrder(state: GameState, order: string): Promise<ChatMessage | null> {
     const text = order.trim();
-    if (!text) return;
+    if (!text) return null;
 
     // Voice-friendly confirmation shortcuts handled locally (no inference needed)
     if (this.pendingProposal) {
       const p = text.toLowerCase();
-      if (/^(да|подтвер|утвер|в серию|запуска|принято|ок\b|окей)/.test(p)) {
-        this.confirmProposal(state);
-        return;
-      }
-      if (/^(нет|отмен|отбой|стоп)/.test(p)) {
-        this.cancelProposal();
-        return;
-      }
+      if (/^(да|подтвер|утвер|в серию|запуска|принято|ок\b|окей)/.test(p)) return this.confirmProposal(state);
+      if (/^(нет|отмен|отбой|стоп)/.test(p)) return this.cancelProposal();
     }
-    if (this.busy.engineer) return;
-    if (!this.orderCooldown.ready('engineer', state.gameTime)) return;
-    this.orderCooldown.mark('engineer', state.gameTime);
+    const refusal = this.orderRefusal('engineer');
+    if (refusal) return refusal;
 
     this.busy.engineer = true;
     this.events.changed();
@@ -269,7 +264,7 @@ export class AIDirector {
       ENGINEER_SYSTEM,
       engineerUserPrompt(state, text, pending),
     );
-    if (gen !== this.generation) return;
+    if (gen !== this.generation) return null;
 
     if (res) {
       let totalCoins = coins;
@@ -303,7 +298,7 @@ export class AIDirector {
             ENGINEER_SYSTEM,
             `${engineerUserPrompt(state, text, pending)}\n\n${engineerRepairPrompt(errs)}`,
           );
-          if (gen !== this.generation) return;
+          if (gen !== this.generation) return null;
           if (retry.res) {
             totalCoins += retry.coins;
             latency += retry.res.latencyMs;
@@ -329,9 +324,7 @@ export class AIDirector {
       }
 
       // A "new" design identical to the serial one is not a proposal worth confirming
-      const sameAsCurrent = (d: RobotDesign | null) =>
-        !!d && d.chassisId === current.chassisId && [...d.modules].sort().join() === [...current.modules].sort().join();
-      const design = normalized && !sameAsCurrent(normalized.design) ? normalized.design : null;
+      const design = normalized && designSignature(normalized.design) !== designSignature(current) ? normalized.design : null;
       if (normalized && !design) warnings.push('Конструкция не изменилась — подтверждать нечего.');
       proposal = {
         id: newId('proposal'),
@@ -371,7 +364,7 @@ export class AIDirector {
     this.busy.engineer = false;
     const hasContent = !!proposal.design || proposal.actions.length > 0;
     this.pendingProposal = hasContent ? proposal : null;
-    this.events.chat({
+    const reply = this.say({
       id: newId('eng'),
       role: 'engineer',
       text: proposal.compromiseRu ? `${proposal.replyRu} Компромисс: ${proposal.compromiseRu.replace(/[.\s]+$/, '')}.` : proposal.replyRu,
@@ -382,11 +375,12 @@ export class AIDirector {
     });
     this.events.proposal(this.pendingProposal);
     this.events.changed();
+    return reply;
   }
 
-  confirmProposal(state: GameState) {
+  confirmProposal(state: GameState): ChatMessage | null {
     const p = this.pendingProposal;
-    if (!p) return;
+    if (!p) return null;
     const results: string[] = [];
     if (p.design) {
       state.setDesign('player', p.design);
@@ -395,34 +389,58 @@ export class AIDirector {
     for (const a of p.actions) results.push(state.applyProductionAction('player', a));
     this.pendingProposal = null;
     this.events.proposal(null);
-    this.events.chat({ id: newId('confirm'), role: 'engineer', text: `${results.join('. ')}.`, timestamp: Date.now(), source: 'local' });
+    const reply = this.say({ id: newId('confirm'), role: 'engineer', text: `${results.join('. ')}.`, timestamp: Date.now(), source: 'local' });
     this.events.changed();
+    return reply;
   }
 
-  cancelProposal() {
-    if (!this.pendingProposal) return;
+  cancelProposal(): ChatMessage | null {
+    if (!this.pendingProposal) return null;
     this.pendingProposal = null;
     this.events.proposal(null);
-    this.events.chat({ id: newId('cancel'), role: 'engineer', text: 'Отменил. Конвейер продолжает выпускать текущую модель.', timestamp: Date.now(), source: 'local' });
+    const reply = this.say({ id: newId('cancel'), role: 'engineer', text: 'Отменил. Конвейер продолжает выпускать текущую модель.', timestamp: Date.now(), source: 'local' });
     this.events.changed();
+    return reply;
+  }
+
+  /**
+   * A player order the agent cannot take right now gets an answer instead of vanishing:
+   * the commander's message is already in the chat and is waiting for a reply.
+   */
+  private orderRefusal(agent: AgentId): ChatMessage | null {
+    const now = performance.now() / 1000;
+    let text: string | null = null;
+    if (this.busy[agent]) text = 'Ещё разбираю прошлый приказ — повторите, как только отвечу.';
+    else if (!this.orderCooldown.ready(agent, now)) {
+      text = `Не так быстро, командир: приказы не чаще раза в ${GAME_BALANCE.AI_PLAYER_ORDER_COOLDOWN_SEC} с. Повторите через мгновение.`;
+    }
+    if (text) return this.say({ id: newId('wait'), role: agent, text, timestamp: Date.now(), source: 'local' });
+    this.orderCooldown.mark(agent, now);
+    return null;
+  }
+
+  private say(msg: ChatMessage): ChatMessage {
+    this.events.chat(msg);
+    return msg;
   }
 
   // ───────────────────────────── Combat-control agent ─────────────────────────────
 
-  async sendTacticalOrder(state: GameState, order: string) {
+  /** Returns the tactician's reply to this order (null if the match was restarted meanwhile). */
+  async sendTacticalOrder(state: GameState, order: string): Promise<ChatMessage | null> {
     const text = order.trim();
-    if (!text || this.busy.tactician) return;
-    if (!this.orderCooldown.ready('tactician', state.gameTime)) return;
-    this.orderCooldown.mark('tactician', state.gameTime);
+    if (!text) return null;
+    const refusal = this.orderRefusal('tactician');
+    if (refusal) return refusal;
     this.standingOrders = [...this.standingOrders, text].slice(-3);
-    await this.runTactical(state, text, null);
+    return this.runTactical(state, text, null);
   }
 
   private async autonomousTactical(state: GameState, trigger: string) {
     await this.runTactical(state, null, trigger);
   }
 
-  private async runTactical(state: GameState, order: string | null, trigger: string | null) {
+  private async runTactical(state: GameState, order: string | null, trigger: string | null): Promise<ChatMessage | null> {
     this.busy.tactician = true;
     this.events.changed();
     const gen = this.generation;
@@ -434,7 +452,7 @@ export class AIDirector {
       TACTICIAN_SYSTEM,
       tacticianUserPrompt(state, order, this.standingOrders, trigger),
     );
-    if (gen !== this.generation) return;
+    if (gen !== this.generation) return null;
     this.busy.tactician = false;
 
     let decision: TacticalDecision | null = null;
@@ -456,15 +474,16 @@ export class AIDirector {
       // Autonomous re-plan impossible: keep executing the last valid plan with the game AI
       this.lastCall.tactician = { source: 'fallback', latencyMs: 0, coins: 0, error, at: state.gameTime };
       this.events.changed();
-      return;
+      return null;
     }
 
     const changed = planChanged(prev, decision.plan);
+    let reply: ChatMessage | null = null;
     if (changed || order) {
       state.setPlan('player', decision.plan);
       this.lastTactical = decision;
       this.events.tactical(decision);
-      this.events.chat({
+      reply = this.say({
         id: newId('tac'),
         role: 'tactician',
         text: decision.autonomous ? `[Автономно] ${decision.replyRu}` : decision.replyRu,
@@ -475,6 +494,7 @@ export class AIDirector {
       });
     }
     this.events.changed();
+    return reply;
   }
 
   revertTactical(state: GameState) {
@@ -546,8 +566,7 @@ export class AIDirector {
       this.busy[key] = false;
       return;
     }
-    const d = current().design;
-    if (design && (design.chassisId !== d.chassisId || design.modules.join() !== d.modules.join())) state.setDesign(team, design);
+    if (design && designSignature(design) !== designSignature(current().design)) state.setDesign(team, design);
     if (plan) state.setPlan(team, plan);
     for (const a of actions) state.applyProductionAction(team, a);
     if (taunt) this.events.intercept(taunt, source, team);
