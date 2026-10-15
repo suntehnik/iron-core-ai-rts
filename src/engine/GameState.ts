@@ -76,14 +76,19 @@ export class GameState {
   private throttle: Record<string, number> = {};
   private seenDesigns: Record<Team, Set<string>> = { player: new Set(), enemy: new Set() };
   private sightingTimer = 0;
+  private combatTick = 0;
   private minedWindow: Record<Team, { t: number; amount: number }[]> = { player: [], enemy: [] };
 
-  constructor() {
+  /** Arena mode: an empty field without bases — used by the design test bench (DesignTrial). */
+  public readonly arena: boolean;
+
+  constructor(options: { arena?: boolean } = {}) {
+    this.arena = !!options.arena;
     this.teams = {
       player: this.createTeam('player', INITIAL_PLAYER_DESIGN),
       enemy: this.createTeam('enemy', INITIAL_ENEMY_DESIGN),
     };
-    this.initMap();
+    if (!this.arena) this.initMap();
   }
 
   private createTeam(team: Team, design: RobotDesign): TeamState {
@@ -625,7 +630,11 @@ export class GameState {
 
     this.updateWaves();
 
-    for (const u of this.units) {
+    // Alternate the processing order every tick: whoever acts first in a tick gets the first
+    // shot, so a fixed order (player units are older) would quietly favour one side.
+    this.combatTick++;
+    const order = this.combatTick % 2 === 0 ? this.units : [...this.units].reverse();
+    for (const u of order) {
       if (u.kind !== 'combat' || u.state === 'dead') continue;
       const team = this.teams[u.team];
       const plan = team.plan;
@@ -803,6 +812,11 @@ export class GameState {
       }
       default:
         break;
+    }
+    // Arena (test bench): no bases, close in on the nearest opponent
+    if (this.arena) {
+      const foe = this.nearestEnemyUnit(u.team, u.pos, Infinity);
+      return foe ? { x: foe.pos.x, y: foe.pos.y } : { x: u.pos.x + dir * 10, y: u.pos.y };
     }
     // advance (also the fallback): gather into a wave, then march in lanes toward the enemy HQ
     if (!u.committed && stance === 'advance') {
@@ -1143,6 +1157,7 @@ export class GameState {
   }
 
   private checkVictory() {
+    if (this.arena) return;
     const p = this.getHQ('player');
     const e = this.getHQ('enemy');
     if (!e || e.hp <= 0) this.gameOver = 'player_won';

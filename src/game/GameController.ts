@@ -2,6 +2,8 @@ import { AIDirector } from '../ai/AIDirector';
 import { VoiceService, voiceService } from '../ai/VoiceService';
 import { LLM_PROVIDERS, LLMProviderId } from '../config/llmProviders';
 import { AI_WALLET } from '../config/tariffs';
+import { GAME_BALANCE } from '../config/balance';
+import { TrialReport, pickTrialOpponent, runDesignTrial, trialKey, trialVerdict } from '../engine/DesignTrial';
 import { GameState, SoundSink } from '../engine/GameState';
 import { sounds } from '../engine/SoundEffects';
 import { SceneManager } from '../rendering/SceneManager';
@@ -29,6 +31,17 @@ export interface Intercept {
   time: number;
   source: 'llm' | 'fallback';
 }
+
+/** Design test bench run for the pending proposal (brief §9). */
+export interface TrialState {
+  proposalId: string;
+  status: 'running' | 'done';
+  startedAt: number; // game time
+  readyAt: number; // game time
+  report: TrialReport;
+}
+
+const TRIAL_COMMAND = /^(испыта|протестир|тест|на стенд|проверь в бою)/i;
 
 export interface ProxyStatus {
   configured: boolean;
@@ -64,6 +77,8 @@ export class GameController {
   public activeAgent: AgentId = 'engineer';
   public proxyStatus: ProxyStatus | null = null;
   public fps = 0;
+  public trial: TrialState | null = null;
+  private trialCache = new Map<string, TrialReport>();
 
   private scene: SceneManager | null = null;
   private raf = 0;
@@ -81,6 +96,7 @@ export class GameController {
       chat: m => this.pushChat(m),
       proposal: p => {
         this.proposal = p;
+        if (!p || this.trial?.proposalId !== p.id) this.trial = null;
         this.bump();
       },
       tactical: d => {
@@ -146,6 +162,7 @@ export class GameController {
     if (this.started) {
       this.state.update(dt);
       this.director.update(this.state, dt);
+      this.updateTrial();
     }
     this.scene?.render(this.state, dt);
 
@@ -181,6 +198,7 @@ export class GameController {
     this.scene?.reset();
     this.chat = [];
     this.proposal = null;
+    this.trial = null;
     this.lastTactical = null;
     this.intercepts = [];
     this.notices = [];
@@ -194,6 +212,7 @@ export class GameController {
     for (let t = 0; t < seconds && !this.state.gameOver; t += dt) {
       this.state.update(dt);
       this.director.update(this.state, dt);
+      this.updateTrial();
     }
     this.scene?.render(this.state, dt);
     this.bump();
@@ -277,6 +296,11 @@ export class GameController {
     if (!t) return;
     sounds.playClick();
     this.pushChat({ id: `cmd_${this.nextId++}`, role: 'commander', to: agent, text: t, timestamp: Date.now(), source: 'local' });
+    // "испытай" for a pending design runs the bench locally — no inference needed
+    if (agent === 'engineer' && this.proposal?.design && TRIAL_COMMAND.test(t)) {
+      this.startTrial();
+      return;
+    }
     if (agent === 'engineer') await this.director.sendEngineerOrder(this.state, t);
     else await this.director.sendTacticalOrder(this.state, t);
     const last = this.chat[this.chat.length - 1];
@@ -293,6 +317,45 @@ export class GameController {
   cancelProposal() {
     sounds.playClick();
     this.director.cancelProposal();
+  }
+
+  // ───────────────────────────── Design test bench ─────────────────────────────
+
+  /**
+   * Tests the pending design against the enemy model our scouts know. Free in AI coins
+   * (a game simulation, not inference); costs TRIAL_BENCH_SEC of game time before the verdict.
+   */
+  startTrial() {
+    const p = this.proposal;
+    if (!p?.design) return;
+    if (this.trial?.proposalId === p.id && this.trial.status === 'running') return;
+    sounds.playClick();
+    const plan = this.state.teams.player.plan;
+    const opponent = pickTrialOpponent(this.state);
+    const key = trialKey(p.design, opponent.design, plan);
+    const cached = this.trialCache.get(key);
+    const report =
+      cached ??
+      runDesignTrial(p.design, opponent.design, opponent.source, {
+        count: GAME_BALANCE.TRIAL_SQUAD_SIZE,
+        plan,
+        serial: this.state.teams.player.design,
+      });
+    this.trialCache.set(key, report);
+    // A repeated bench run for the same pair gives no new information, so it is instant
+    const delay = cached ? 0 : GAME_BALANCE.TRIAL_BENCH_SEC;
+    this.trial = { proposalId: p.id, status: 'running', startedAt: this.state.gameTime, readyAt: this.state.gameTime + delay, report };
+    if (!delay) this.updateTrial();
+    this.bump();
+  }
+
+  private updateTrial() {
+    const t = this.trial;
+    if (!t || t.status !== 'running' || this.state.gameTime < t.readyAt) return;
+    t.status = 'done';
+    const text = trialVerdict(t.report);
+    this.pushChat({ id: `trial_${this.nextId++}`, role: 'engineer', text, timestamp: Date.now(), source: 'local' });
+    this.speak(text);
   }
 
   revertTactical() {

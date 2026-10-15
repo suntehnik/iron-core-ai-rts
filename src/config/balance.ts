@@ -74,6 +74,11 @@ export const GAME_BALANCE = {
   WAVE_MAX_SIZE: 9,
   WAVE_MAX_WAIT_SEC: 35,
 
+  // Design test bench (brief §9): free in AI coins — it is a game simulation, not inference —
+  // but it costs game time: the verdict arrives after the bench run, so testing trades tempo for information.
+  TRIAL_BENCH_SEC: 5,
+  TRIAL_SQUAD_SIZE: 4,
+
   // AI decision pacing — identical for both participants (brief §10: no pay-to-win).
   AI_AUTONOMOUS_MIN_INTERVAL_SEC: 25,
   AI_PLAYER_ORDER_COOLDOWN_SEC: 2,

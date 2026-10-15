@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Check, Crosshair, Gauge, Mic, MicOff, Radar, Send, Shield, X } from 'lucide-react';
+import { AlertTriangle, Check, Crosshair, FlaskConical, Gauge, Mic, MicOff, Radar, Send, Shield, X } from 'lucide-react';
 import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
 import { describeAction } from '../ai/parsing';
 import { RobotBuilder } from '../engine/RobotBuilder';
@@ -8,6 +8,7 @@ import { AgentId } from '../types/agent';
 import { ModuleCategory } from '../types/robot';
 import { EngineerPortrait, TacticianPortrait } from './Portraits';
 import { RobotVisualizer } from './RobotVisualizer';
+import { TrialPanel } from './TrialPanel';
 import { StatBar, cx, fmtCoins } from './ui';
 
 const QUICK: Record<AgentId, string[]> = {
@@ -65,7 +66,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const slots = Array.from({ length: shownStats.maxSlots }, (_, i) => shown.modules[i]);
 
   return (
-    <div className="hud-panel pointer-events-auto w-[408px] flex flex-col overflow-hidden">
+    <div className="hud-panel pointer-events-auto w-[408px] flex flex-col overflow-x-hidden overflow-y-auto max-h-[calc(100vh-84px)]">
       {/* ── Design preview & comparison */}
       <div className="p-2.5 flex gap-2.5 border-b border-white/5">
         <div className="flex flex-col items-center gap-1">
@@ -153,6 +154,18 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
             >
               <Check className="w-3.5 h-3.5" /> {proposal.design ? 'В серию' : 'Выполнить'}
             </button>
+            {proposal.design && (
+              <button
+                type="button"
+                onClick={() => ctrl.startTrial()}
+                disabled={ctrl.trial?.proposalId === proposal.id && ctrl.trial.status === 'running'}
+                aria-label="Испытать"
+                title="Испытательный бой против модели врага до запуска в серию. Бесплатно по AI-монетам, вердикт через несколько секунд игрового времени"
+                className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-700/80 hover:bg-cyan-600 disabled:opacity-50 text-white text-xs font-semibold"
+              >
+                <FlaskConical className="w-3.5 h-3.5" /> Испытать
+              </button>
+            )}
             <button
               type="button"
               onClick={() => ctrl.cancelProposal()}
@@ -161,7 +174,10 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
               <X className="w-3.5 h-3.5" /> Отмена
             </button>
           </div>
-          <div className="text-[9px] text-slate-400 mt-1">Скажите «в серию» или «отмена», либо уточните приказ — инженер переделает проект.</div>
+          <TrialPanel ctrl={ctrl} />
+          <div className="text-[9px] text-slate-400 mt-1">
+            Скажите «в серию», «испытай» или «отмена», либо уточните приказ — инженер переделает проект.
+          </div>
         </div>
       )}
 
@@ -194,7 +210,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
           </div>
         </div>
 
-        <div ref={logRef} className="h-[104px] overflow-y-auto flex flex-col gap-1 pr-1">
+        <div ref={logRef} className={cx('overflow-y-auto flex flex-col gap-1 pr-1 shrink-0', proposal ? 'h-[60px]' : 'h-[104px]')}>
           {chat.map(m => (
             <div
               key={m.id}
