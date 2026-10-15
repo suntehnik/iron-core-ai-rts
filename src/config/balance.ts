@@ -26,8 +26,8 @@ export const GAME_BALANCE = {
   MAX_POWER_PLANTS: 3,
 
   // HQ self-defence turret (prevents instant loss to a single early rush)
-  HQ_TURRET_RANGE: 15,
-  HQ_TURRET_DAMAGE: 30,
+  HQ_TURRET_RANGE: 16.5, // +10% (was 15)
+  HQ_TURRET_DAMAGE: 36, // +20% (was 30): ~51 DPS at the 0.7 s interval
   HQ_TURRET_INTERVAL: 0.7,
 
   // Base power consumers (kW). When demand exceeds capacity every consumer slows down.
