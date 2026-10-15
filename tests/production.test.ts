@@ -73,6 +73,21 @@ describe('economy can always recover', () => {
     step(s, GAME_BALANCE.HARVESTER_BUILD_SEC * (GAME_BALANCE.HQ_EMERGENCY_HARVESTER_FACTOR - 1) + 1);
     expect(s.harvesterCount('player')).toBe(before + 1);
   });
+
+  it('an HQ harvester already on the line still rolls out after a new factory is founded', () => {
+    const s = new GameState();
+    s.buildings = s.buildings.filter(b => !(b.team === 'player' && b.type === 'factory'));
+    s.units = s.units.filter(u => u.team !== 'player');
+    s.teams.player.economy.metal = 5000;
+    s.teams.player.economy.components = 500;
+    expect(s.orderHarvester('player').ok).toBe(true);
+    step(s, GAME_BALANCE.HARVESTER_BUILD_SEC); // the HQ bay is part-way through
+    expect(s.getHQ('player')!.harvesterBuild).not.toBeNull();
+    expect(s.buildStructure('player', 'factory').ok).toBe(true);
+    step(s, GAME_BALANCE.HARVESTER_BUILD_SEC * GAME_BALANCE.HQ_EMERGENCY_HARVESTER_FACTOR + 1);
+    expect(s.harvesterCount('player')).toBe(1);
+    expect(s.harvestersInProduction('player')).toBe(0);
+  });
 });
 
 describe('production pause', () => {

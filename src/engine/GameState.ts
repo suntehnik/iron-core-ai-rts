@@ -27,7 +27,7 @@ import {
   VisualEffect,
 } from '../types/game';
 import { RobotDesign } from '../types/robot';
-import { RobotBuilder } from './RobotBuilder';
+import { RobotBuilder, designSignature } from './RobotBuilder';
 
 export const DEFAULT_PLAN: TacticalPlan = {
   stance: 'advance',
@@ -74,6 +74,7 @@ export class GameState {
   private nextEffectId = 1;
   private lossTimes: Record<Team, number[]> = { player: [], enemy: [] };
   private throttle: Record<string, number> = {};
+  /** Enemy designs each team has seen, by signature: a re-issued design with a new id or reordered parts is not new. */
   private seenDesigns: Record<Team, Set<string>> = { player: new Set(), enemy: new Set() };
   private sightingTimer = 0;
   private combatTick = 0;
@@ -587,11 +588,12 @@ export class GameState {
   private updateEmergencyHarvesterBay(dt: number) {
     for (const team of ['player', 'enemy'] as Team[]) {
       const t = this.teams[team];
-      if (this.buildings.some(b => b.team === team && b.type === 'factory')) continue;
       const hq = this.getHQ(team);
       if (!hq) continue;
       if (!hq.harvesterBuild) {
-        if (t.harvesterQueue <= 0) continue;
+        // Only a team without factories starts an HQ build; one already started always finishes,
+        // otherwise founding a factory would freeze it forever (a lost harvester holding a cap slot).
+        if (t.harvesterQueue <= 0 || this.buildings.some(b => b.team === team && b.type === 'factory')) continue;
         t.harvesterQueue--;
         hq.harvesterBuild = {
           progressSec: 0,
@@ -1249,12 +1251,13 @@ export class GameState {
       if (u.kind !== 'combat' || u.state === 'dead') continue;
       const observer = opposite(u.team);
       const seen = this.seenDesigns[observer];
-      if (seen.has(u.design.id)) continue;
+      const signature = designSignature(u.design);
+      if (seen.has(signature)) continue;
       const near =
         this.units.some(o => o.team === observer && dist(o.pos, u.pos) < 28) ||
         this.buildings.some(b => b.team === observer && dist(b.pos, u.pos) < 30);
       if (!near) continue;
-      seen.add(u.design.id);
+      seen.add(signature);
       const chassis = CHASSIS_CATALOG[u.design.chassisId]?.nameRu ?? u.design.chassisId;
       const weapons = u.design.modules
         .map(id => MODULES_CATALOG[id])
@@ -1339,10 +1342,12 @@ export class GameState {
     const seen = this.seenDesigns[team];
     const map = new Map<string, { design: RobotDesign; count: number }>();
     for (const u of this.units) {
-      if (u.team === team || u.kind !== 'combat' || !seen.has(u.design.id)) continue;
-      const entry = map.get(u.design.id);
+      if (u.team === team || u.kind !== 'combat') continue;
+      const signature = designSignature(u.design);
+      if (!seen.has(signature)) continue;
+      const entry = map.get(signature);
       if (entry) entry.count++;
-      else map.set(u.design.id, { design: u.design, count: 1 });
+      else map.set(signature, { design: u.design, count: 1 });
     }
     return [...map.values()].sort((a, b) => b.count - a.count);
   }

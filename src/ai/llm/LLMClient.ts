@@ -129,13 +129,12 @@ export async function listModels(conn: LLMConnection): Promise<string[]> {
   if (!preset || preset.protocol !== 'openai' || !conn.baseUrl.trim()) return [];
   const headers: Record<string, string> = {};
   if (conn.apiKey.trim()) headers.Authorization = `Bearer ${conn.apiKey.trim()}`;
-  const res = await fetchWithTimeout(`${conn.baseUrl.replace(/\/+$/, '')}/models`, { headers }, {
+  const json = await fetchJSON(`${conn.baseUrl.replace(/\/+$/, '')}/models`, { headers }, {
     system: '',
     user: '',
     maxTokens: 0,
     timeoutMs: 10000,
   });
-  const json = await readJson(res);
   const data: unknown[] = Array.isArray(json?.data) ? json.data : [];
   return data
     .map(m => (m && typeof m === 'object' ? String((m as { id?: unknown }).id ?? '') : ''))
@@ -180,8 +179,7 @@ async function callOpenAI(conn: LLMConnection, req: LLMRequest, minimal: boolean
     }
   }
 
-  const res = await fetchWithTimeout(url, { method: 'POST', headers, body: JSON.stringify(body) }, req);
-  const json = await readJson(res);
+  const json = await fetchJSON(url, { method: 'POST', headers, body: JSON.stringify(body) }, req);
   const msg = json?.choices?.[0]?.message;
   const text: string = typeof msg?.content === 'string' ? msg.content : '';
   const usage = json?.usage
@@ -192,7 +190,7 @@ async function callOpenAI(conn: LLMConnection, req: LLMRequest, minimal: boolean
 
 async function callAnthropic(conn: LLMConnection, req: LLMRequest): Promise<RawReply> {
   const url = `${conn.baseUrl.replace(/\/+$/, '')}/messages`;
-  const res = await fetchWithTimeout(
+  const json = await fetchJSON(
     url,
     {
       method: 'POST',
@@ -212,7 +210,6 @@ async function callAnthropic(conn: LLMConnection, req: LLMRequest): Promise<RawR
     },
     req,
   );
-  const json = await readJson(res);
   const text = Array.isArray(json?.content)
     ? json.content.filter((b: { type: string }) => b.type === 'text').map((b: { text: string }) => b.text).join('')
     : '';
@@ -222,7 +219,13 @@ async function callAnthropic(conn: LLMConnection, req: LLMRequest): Promise<RawR
   return { text, usage, model: json?.model };
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, req: LLMRequest): Promise<Response> {
+/**
+ * Sends the request and parses the JSON reply. The timeout and the caller's abort signal cover the whole
+ * exchange, body included: some providers (OpenRouter) send headers and keep-alive whitespace
+ * right away and the reply only later, so a timer stopped at the headers would never fire.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchJSON(url: string, init: RequestInit, req: LLMRequest): Promise<any> {
   const controller = new AbortController();
   const timeoutMs = req.timeoutMs ?? 25000;
   let timedOut = false;
@@ -243,7 +246,12 @@ async function fetchWithTimeout(url: string, init: RequestInit, req: LLMRequest)
       }
       throw new LLMError('http', `HTTP ${res.status}: ${detail}`, res.status);
     }
-    return res;
+    try {
+      return await res.json();
+    } catch (e) {
+      if (controller.signal.aborted) throw e; // reported below as timeout / aborted
+      throw new LLMError('parse', 'Provider returned non-JSON body');
+    }
   } catch (e) {
     if (e instanceof LLMError) throw e;
     if (timedOut) throw new LLMError('timeout', `No reply within ${timeoutMs} ms`);
@@ -252,15 +260,6 @@ async function fetchWithTimeout(url: string, init: RequestInit, req: LLMRequest)
   } finally {
     clearTimeout(timer);
     req.signal?.removeEventListener('abort', onAbort);
-  }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function readJson(res: Response): Promise<any> {
-  try {
-    return await res.json();
-  } catch {
-    throw new LLMError('parse', 'Provider returned non-JSON body');
   }
 }
 

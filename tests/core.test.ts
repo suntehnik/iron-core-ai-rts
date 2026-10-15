@@ -9,6 +9,8 @@ import { normalizeActions, normalizePlan } from '../src/ai/parsing';
 import { parseCostLimitPct } from '../src/ai/prompts';
 import { DEFAULT_PLAN } from '../src/engine/GameState';
 import { INITIAL_PLAYER_DESIGN } from '../src/config/balance';
+import { CHASSIS_CATALOG, MODULES_CATALOG } from '../src/config/catalog';
+import { RobotDesign } from '../src/types/robot';
 
 describe('extractJSONObject', () => {
   it('handles think blocks, fences and prose', () => {
@@ -70,6 +72,41 @@ describe('RobotBuilder', () => {
     expect(n?.design.chassisId).toBe('heavy_quad');
     expect(n?.design.modules).toEqual(['reinforced_steel', 'heavy_siege_cannon']);
     expect(n?.dropped).toEqual(['laser_of_doom']);
+  });
+
+  it('repair always ends with a valid design, for any mix of catalog parts', () => {
+    // fixed-seed LCG: the same 3000 designs every run
+    let seed = 12345;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+    const modules = Object.keys(MODULES_CATALOG);
+    const chassis = Object.keys(CHASSIS_CATALOG) as RobotDesign['chassisId'][];
+    for (let i = 0; i < 3000; i++) {
+      const input = { ...INITIAL_PLAYER_DESIGN, chassisId: pick(chassis), modules: Array.from({ length: Math.floor(rnd() * 10) }, () => pick(modules)) };
+      const { design } = RobotBuilder.repairDesign(input);
+      expect(RobotBuilder.calculateStats(design).validationErrors, `${input.chassisId}: ${input.modules.join(',')}`).toEqual([]);
+    }
+  });
+
+  it('repairs a battery no chassis can hold by dropping guns, not by resetting the design', () => {
+    const { design, notes } = RobotBuilder.repairDesign({
+      ...INITIAL_PLAYER_DESIGN,
+      chassisId: 'medium_tracked',
+      modules: ['sniper_railgun', 'heat_radiator', 'melee_buzzsaw', 'micro_turbine', 'light_composite', 'sniper_railgun', 'heavy_siege_cannon', 'sniper_railgun'],
+    });
+    expect(RobotBuilder.calculateStats(design).isValid).toBe(true);
+    expect(design.modules).toContain('sniper_railgun');
+    expect(notes).not.toContain('проект сброшен к базовой конфигурации');
+  });
+
+  it('does not take Object.prototype members for catalog parts', () => {
+    const n = RobotBuilder.normalizeDesign({ chassis: 'medium_tracked', modules: ['autocannon_20mm', 'constructor', 'toString', '__proto__'] }, INITIAL_PLAYER_DESIGN, 'p');
+    expect(n?.design.modules).toEqual(['autocannon_20mm']);
+    expect(n?.dropped).toEqual(['constructor', 'toString', '__proto__']);
+    const stats = RobotBuilder.calculateStats({ ...INITIAL_PLAYER_DESIGN, modules: ['autocannon_20mm', 'constructor'] });
+    expect(stats.slotsUsed).toBe(1);
+    expect(Number.isFinite(stats.metalCost)).toBe(true);
+    expect(Number.isFinite(stats.mass)).toBe(true);
   });
 
   it('heavier armour makes the robot slower (brief §4 trade-off)', () => {
@@ -156,5 +193,31 @@ describe('chatJSON against a mock OpenAI-compatible server', () => {
 
   it('reports unconfigured providers without a network call', async () => {
     await expect(chatJSON({ provider: 'openrouter', apiKey: '', model: 'x', baseUrl: 'https://x' }, { system: '', user: '', maxTokens: 1 })).rejects.toBeInstanceOf(LLMError);
+  });
+});
+
+describe('chatJSON timeout', () => {
+  let server: http.Server;
+  let base = '';
+
+  beforeAll(async () => {
+    // Headers and keep-alive whitespace go out at once, the reply only much later (as OpenRouter does)
+    server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.write(' ');
+      const late = setTimeout(() => res.end('{"choices":[{"message":{"content":"{\\"a\\":1}"}}]}'), 3000);
+      res.on('close', () => clearTimeout(late));
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  });
+  afterAll(() => server.close());
+
+  it('also covers a reply body that is slow to arrive', async () => {
+    const started = Date.now();
+    const err = await chatJSON({ provider: 'custom', apiKey: '', model: 'm', baseUrl: base }, { system: 's', user: 'u', maxTokens: 5, timeoutMs: 300 }).catch(e => e);
+    expect(err).toBeInstanceOf(LLMError);
+    expect((err as LLMError).kind).toBe('timeout');
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 });

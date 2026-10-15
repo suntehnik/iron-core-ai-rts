@@ -1,6 +1,14 @@
 import { ChassisConfig, RobotModule } from '../types/robot';
 
-export const CHASSIS_CATALOG: Record<string, ChassisConfig> = {
+/**
+ * Catalogs are looked up by ids that come from the LLM, so they have no prototype:
+ * "constructor" or "toString" must not resolve to Object.prototype members and pass as parts.
+ */
+function catalog<T>(entries: Record<string, T>): Record<string, T> {
+  return Object.assign(Object.create(null) as Record<string, T>, entries);
+}
+
+export const CHASSIS_CATALOG = catalog<ChassisConfig>({
   light_biped: {
     id: 'light_biped',
     name: 'Scout Bipedal',
@@ -52,9 +60,9 @@ export const CHASSIS_CATALOG: Record<string, ChassisConfig> = {
     buildTimeSec: 13,
     descriptionRu: 'Четырёхопорная осадная платформа. Огромный запас прочности и устойчивость при стрельбе, но медленно разгоняется.',
   },
-};
+});
 
-export const MODULES_CATALOG: Record<string, RobotModule> = {
+export const MODULES_CATALOG = catalog<RobotModule>({
   // --- БРОНЯ ---
   light_composite: {
     id: 'light_composite',
@@ -271,7 +279,7 @@ export const MODULES_CATALOG: Record<string, RobotModule> = {
     rangeMultiplier: 1.2,
     descriptionRu: '+20% дальности стрельбы и обнаружения.',
   },
-};
+});
 
 export const MODULE_IDS = Object.keys(MODULES_CATALOG);
 export const CHASSIS_IDS = Object.keys(CHASSIS_CATALOG);

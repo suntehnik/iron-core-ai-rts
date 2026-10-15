@@ -10,14 +10,27 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
  *   LLM_MODEL=qwen/qwen3-30b-a3b-instruct-2507
  * The game talks to /api/llm/* when the "Серверный прокси" provider is selected.
  */
-function llmProxy(env: Record<string, string>): Plugin {
+/**
+ * The only upstream calls the game makes through the proxy (see LLMClient), with their methods.
+ * Matched exactly, so the injected key can't be pointed at other provider endpoints
+ * (e.g. `/api/llm/../../keys`).
+ */
+const PROXY_ROUTES: Record<string, string> = {
+  '/models': 'GET',
+  '/chat/completions': 'POST',
+};
+/** Agent prompts are a few KB; anything this big is not a game request. */
+const MAX_BODY_BYTES = 1024 * 1024;
+
+export function llmProxy(env: Record<string, string>): Plugin {
   const target = (env.LLM_PROXY_TARGET || '').replace(/\/+$/, '');
   const apiKey = env.LLM_API_KEY || '';
   const model = env.LLM_MODEL || '';
 
   const handler: Connect.NextHandleFunction = (req: IncomingMessage, res: ServerResponse, next) => {
-    if (!req.url || !req.url.startsWith('/api/llm')) return next();
-    const path = req.url.slice('/api/llm'.length) || '/';
+    const pathname = (req.url || '').split('?')[0];
+    if (pathname !== '/api/llm' && !pathname.startsWith('/api/llm/')) return next();
+    const path = pathname.slice('/api/llm'.length) || '/';
 
     const send = (status: number, body: unknown) => {
       res.statusCode = status;
@@ -34,16 +47,31 @@ function llmProxy(env: Record<string, string>): Plugin {
       }
       return send(200, { configured: !!target, model, host });
     }
+    const method = PROXY_ROUTES[path];
+    if (!method) return send(404, { error: { message: `LLM proxy: unsupported endpoint ${path}` } });
+    if (req.method !== method) {
+      res.setHeader('Allow', method);
+      return send(405, { error: { message: `LLM proxy: ${path} accepts ${method} only` } });
+    }
     if (!target) return send(503, { error: { message: 'LLM proxy is not configured: set LLM_PROXY_TARGET in .env.local' } });
 
+    // Count every byte but keep only the first MAX_BODY_BYTES: an oversized upload is
+    // drained and rejected instead of buffered whole in memory.
     const chunks: Buffer[] = [];
-    req.on('data', c => chunks.push(c as Buffer));
+    let received = 0;
+    req.on('data', (c: Buffer) => {
+      received += c.length;
+      if (received <= MAX_BODY_BYTES) chunks.push(c);
+    });
     req.on('end', async () => {
+      if (received > MAX_BODY_BYTES) {
+        return send(413, { error: { message: `LLM proxy: request body over ${MAX_BODY_BYTES} bytes` } });
+      }
       try {
         let body: string | undefined;
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
+        if (method === 'POST') {
           body = Buffer.concat(chunks).toString('utf8');
-          if (path.startsWith('/chat/completions') && model) {
+          if (model) {
             const parsed = JSON.parse(body || '{}');
             if (!parsed.model) parsed.model = model;
             body = JSON.stringify(parsed);
@@ -51,7 +79,7 @@ function llmProxy(env: Record<string, string>): Plugin {
         }
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-        const upstream = await fetch(`${target}${path}`, { method: req.method, headers, body });
+        const upstream = await fetch(`${target}${path}`, { method, headers, body });
         res.statusCode = upstream.status;
         res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
         res.end(Buffer.from(await upstream.arrayBuffer()));
