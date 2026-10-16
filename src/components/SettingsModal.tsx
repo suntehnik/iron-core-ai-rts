@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Cpu, ListRestart, PlugZap, X } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
-import { LLM_PROVIDERS, LLMProviderId, PROVIDER_ORDER } from '../config/llmProviders';
+import { LLM_PROVIDERS, LLMProviderId, PROVIDER_ORDER, providerHint, providerLabel } from '../config/llmProviders';
 import { listModels } from '../ai/llm/LLMClient';
-import { hasNativeBridge, nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
+import { TranslationStatus, hasNativeBridge, nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
 import { GameController } from '../game/GameController';
 import { LLMSettings } from '../types/agent';
-import { cx } from './ui';
+import { LanguageSwitch, cx } from './ui';
+import { Lang, t } from '../i18n';
 
 export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void }> = ({ ctrl, onClose }) => {
   const [s, setS] = useState<LLMSettings>({ ...ctrl.settings });
@@ -42,9 +43,9 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
     try {
       const list = await listModels(conn);
       setModels(list);
-      if (!list.length) setModelsError('Сервер не вернул список моделей');
+      if (!list.length) setModelsError(t('set.noModels'));
     } catch (e) {
-      setModelsError(`Не удалось получить список: ${e instanceof Error ? e.message.slice(0, 120) : String(e)}`);
+      setModelsError(t('set.modelsFailed', { err: e instanceof Error ? e.message.slice(0, 120) : String(e) }));
     }
   };
 
@@ -58,16 +59,20 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
       <div className="hud-panel w-full max-w-[620px] max-h-[92vh] overflow-y-auto text-slate-100">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2 font-heading font-bold">
-            <Cpu className="w-5 h-5 text-teal-300" /> Облачный LLM для ботов
+            <Cpu className="w-5 h-5 text-teal-300" /> {t('set.title')}
           </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Закрыть">
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white" aria-label={t('common.close')}>
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-4 flex flex-col gap-4 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] uppercase tracking-wider text-slate-400">{t('brief.language')}</div>
+            <LanguageSwitch value={ctrl.language} onChange={lang => ctrl.setLanguage(lang)} />
+          </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">Провайдер</div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">{t('set.provider')}</div>
             <div className="grid grid-cols-3 gap-1.5">
               {providers.map(id => {
                 const p = LLM_PROVIDERS[id];
@@ -82,42 +87,34 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
                       s.provider === id ? 'bg-teal-600/30 border-teal-300/70' : 'bg-slate-800/60 border-white/10 hover:bg-slate-700/60',
                     )}
                   >
-                    <div className="font-semibold text-[11px]">{p.label}</div>
+                    <div className="font-semibold text-[11px]">{providerLabel(id)}</div>
                     <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">
                       {id === 'proxy'
                         ? ready
-                          ? `настроен: ${proxy?.host} · ${proxy?.model || 'модель по умолчанию'}`
-                          : 'не настроен (.env.local)'
+                          ? t('set.proxyReady', { host: proxy?.host ?? '', model: proxy?.model || t('set.defaultModel') })
+                          : t('set.proxyMissing')
                         : id === 'device'
                           ? device?.available
-                            ? 'готова · Neural Engine, без сети'
+                            ? t('set.deviceReady')
                             : nativeUnavailableText(device)
-                          : p.defaultModel || p.hint}
+                          : p.defaultModel || providerHint(id)}
                     </div>
                   </button>
                 );
               })}
             </div>
-            <div className="text-[10px] text-slate-400 mt-1.5">{preset.hint}</div>
+            <div className="text-[10px] text-slate-400 mt-1.5">{providerHint(s.provider)}</div>
           </div>
 
           {preset.protocol === 'native' && (
             <div className="rounded-lg bg-slate-800/60 border border-white/10 p-2.5 leading-relaxed">
               <div>
-                Модель: <b>{device?.available ? 'готова' : nativeUnavailableText(device)}</b>
-                {device?.contextSize ? `, окно ${device.contextSize} токенов` : ''}
+                {t('set.deviceModel')}<b>{device?.available ? t('set.ready') : nativeUnavailableText(device)}</b>
+                {device?.contextSize ? t('set.window', { n: device.contextSize }) : ''}
               </div>
               <div>
-                Перевод ru⇄en на устройстве:{' '}
-                <b>
-                  {device?.translation === 'installed'
-                    ? 'установлен'
-                    : device?.translation === 'supported'
-                      ? 'нужно скачать языки (система предложит при запуске)'
-                      : device?.translation === 'unsupported'
-                        ? 'недоступен — агенты будут отвечать по-английски'
-                        : 'неизвестно'}
-                </b>
+                {t('set.translation')}
+                <b>{translationText(ctrl.language, device?.translation)}</b>
               </div>
             </div>
           )}
@@ -131,25 +128,25 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
               )}
               {s.provider !== 'proxy' && (
                 <Field
-                  label={`API-ключ ${preset.needsKey ? '' : '(если сервер требует)'}`}
-                  hint={preset.keyUrl ? <a href={preset.keyUrl} target="_blank" rel="noreferrer" className="text-teal-300 underline">получить ключ</a> : undefined}
+                  label={preset.needsKey ? t('set.apiKey') : t('set.apiKeyOptional')}
+                  hint={preset.keyUrl ? <a href={preset.keyUrl} target="_blank" rel="noreferrer" className="text-teal-300 underline">{t('set.getKey')}</a> : undefined}
                 >
                   <input
                     type="password"
                     value={s.apiKey}
                     onChange={e => setS({ ...s, apiKey: e.target.value })}
-                    placeholder="Хранится только в этом браузере (localStorage)"
+                    placeholder={t('set.keyPlaceholder')}
                     className="field"
                     autoComplete="off"
                   />
                 </Field>
               )}
               <Field
-                label="Модель"
+                label={t('set.model')}
                 hint={
                   preset.protocol === 'openai' ? (
                     <button type="button" onClick={loadModels} className="flex items-center gap-1 text-teal-300 hover:text-teal-200">
-                      <ListRestart className="w-3 h-3" /> список моделей
+                      <ListRestart className="w-3 h-3" /> {t('set.modelList')}
                     </button>
                   ) : undefined
                 }
@@ -157,7 +154,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
                 <input
                   value={s.model}
                   onChange={e => setS({ ...s, model: e.target.value })}
-                  placeholder={s.provider === 'proxy' ? 'пусто = модель из LLM_MODEL на сервере' : preset.defaultModel}
+                  placeholder={s.provider === 'proxy' ? t('set.proxyModelPlaceholder') : preset.defaultModel}
                   className="field"
                   spellCheck={false}
                 />
@@ -187,7 +184,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
                   disabled={testing}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 font-semibold"
                 >
-                  <PlugZap className="w-3.5 h-3.5" /> {testing ? 'Проверяю…' : 'Проверить подключение'}
+                  <PlugZap className="w-3.5 h-3.5" /> {testing ? t('set.testing') : t('set.test')}
                 </button>
                 {test && <span className={cx('text-[11px]', test.ok ? 'text-emerald-300' : 'text-rose-300')}>{test.text}</span>}
               </div>
@@ -195,12 +192,12 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
           )}
 
           <div className="border-t border-white/10 pt-3 grid grid-cols-1 gap-2">
-            <Toggle checked={s.enemyUsesLLM} onChange={v => setS({ ...s, enemyUsesLLM: v })} label="AI-противник тоже думает облачным LLM" hint="иначе — классический игровой AI на правилах" />
-            <Toggle checked={s.autonomousTactics} onChange={v => setS({ ...s, autonomousTactics: v })} label="Автономные пересмотры тактики по значимым событиям" hint={`сразу по событию боя, но не чаще раза в ${GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC} с — одинаково для обоих участников`} />
-            <Toggle checked={s.chargeEnemyToPlayer} onChange={v => setS({ ...s, chargeEnemyToPlayer: v })} label="Включить AI-противника в мой тариф" hint="открытое решение брифа: по умолчанию не списывается" />
-            <Toggle checked={s.autoSpeakResponse} onChange={v => setS({ ...s, autoSpeakResponse: v })} label="Озвучивать ответы агентов (TTS)" />
+            <Toggle checked={s.enemyUsesLLM} onChange={v => setS({ ...s, enemyUsesLLM: v })} label={t('set.enemyLlm')} hint={t('set.enemyLlmHint')} />
+            <Toggle checked={s.autonomousTactics} onChange={v => setS({ ...s, autonomousTactics: v })} label={t('set.autoTactics')} hint={t('set.autoTacticsHint', { n: GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC })} />
+            <Toggle checked={s.chargeEnemyToPlayer} onChange={v => setS({ ...s, chargeEnemyToPlayer: v })} label={t('set.chargeEnemy')} hint={t('set.chargeEnemyHint')} />
+            <Toggle checked={s.autoSpeakResponse} onChange={v => setS({ ...s, autoSpeakResponse: v })} label={t('set.speak')} />
             <div className="flex items-center gap-2">
-              <span className="text-slate-300">Лимит AI-монет на матч</span>
+              <span className="text-slate-300">{t('set.coinLimit')}</span>
               <input
                 type="range"
                 min={0}
@@ -217,16 +214,23 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
 
         <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold">
-            Отмена
+            {t('common.cancel')}
           </button>
           <button type="button" onClick={save} className="px-5 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold">
-            Сохранить
+            {t('common.save')}
           </button>
         </div>
       </div>
     </div>
   );
 };
+
+const TRANSLATION_KEY = { installed: 'set.trInstalled', supported: 'set.trSupported', unsupported: 'set.trUnsupported', unknown: 'set.trUnknown' } as const;
+
+/** Only the Russian game translates for the on-device model; it speaks English and Italian itself. */
+function translationText(lang: Lang, status: TranslationStatus | undefined): string {
+  return lang === 'ru' ? t(TRANSLATION_KEY[status ?? 'unknown']) : t('set.trNotNeeded');
+}
 
 const Field: React.FC<React.PropsWithChildren<{ label: string; hint?: React.ReactNode }>> = ({ label, hint, children }) => (
   <label className="block">

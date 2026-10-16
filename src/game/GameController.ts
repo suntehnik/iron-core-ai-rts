@@ -1,7 +1,8 @@
 import { AIDirector, GameMode } from '../ai/AIDirector';
 import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
-import { hasNativeBridge, refreshNativeStatus } from '../ai/llm/nativeBridge';
-import { COMMANDERS } from '../config/commanders';
+import { cloudReady } from '../ai/llm/LLMClient';
+import { hasNativeBridge, nativePrepareTranslation, refreshNativeStatus } from '../ai/llm/nativeBridge';
+import { commanderName } from '../config/commanders';
 import { VoiceService, voiceService } from '../ai/VoiceService';
 import { LLM_PROVIDERS, LLMProviderId } from '../config/llmProviders';
 import { AI_WALLET } from '../config/tariffs';
@@ -12,9 +13,11 @@ import { sounds } from '../engine/SoundEffects';
 import { SceneManager } from '../rendering/SceneManager';
 import { AgentId, ChatMessage, LLMSettings, ProductionProposal, TacticalDecision } from '../types/agent';
 import { ProductionAction, TacticalPlan, Team } from '../types/game';
+import { LANGS, Lang, getLanguage, languageFromLocale, setLanguage, t } from '../i18n';
 
 const SETTINGS_KEY = 'ironcore_settings_v2';
 const ALLY_INSTRUCTIONS_KEY = 'ironcore_ally_instructions_v1';
+const LANGUAGE_KEY = 'ironcore_lang';
 
 export const DEFAULT_SETTINGS: LLMSettings = {
   provider: 'openrouter',
@@ -48,7 +51,8 @@ export interface TrialState {
   report: TrialReport;
 }
 
-const TRIAL_COMMAND = /^(испыта|протестир|тест|на стенд|проверь в бою)/i;
+/** "Test it" by voice or text, in any game language */
+const TRIAL_COMMAND = /^(испыта|протестир|тест|на стенд|проверь в бою|test|try it|bench|prova|testa|collauda)/i;
 
 export interface ProxyStatus {
   configured: boolean;
@@ -62,6 +66,23 @@ function loadAllyInstructions(): string {
   } catch {
     return '';
   }
+}
+
+/** The saved choice, else the browser or device language; outside a browser (tests) it stays Russian. */
+function loadLanguage(): Lang | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const saved = localStorage.getItem(LANGUAGE_KEY) as Lang | null;
+    if (saved && LANGS.includes(saved)) return saved;
+  } catch {
+    /* ignore */
+  }
+  return languageFromLocale(navigator.language);
+}
+
+function applyLanguage(lang: Lang) {
+  setLanguage(lang);
+  if (typeof document !== 'undefined') document.documentElement.lang = lang;
 }
 
 function loadSettings(): LLMSettings | null {
@@ -79,7 +100,7 @@ function loadSettings(): LLMSettings | null {
  * The game loop runs every animation frame; the UI is notified at ~8 Hz.
  */
 export class GameController {
-  public state = new GameState();
+  public state: GameState;
   public director: AIDirector;
   public settings: LLMSettings;
   public chat: ChatMessage[] = [];
@@ -110,6 +131,10 @@ export class GameController {
   private fpsAcc = { frames: 0, time: 0 };
 
   constructor() {
+    const lang = loadLanguage();
+    if (lang) applyLanguage(lang);
+    // Created after the language is known: unit and design names are in the game language
+    this.state = new GameState();
     this.settings = loadSettings() ?? { ...DEFAULT_SETTINGS };
     this.director = new AIDirector(this.settings, {
       chat: m => this.pushChat(m),
@@ -125,7 +150,7 @@ export class GameController {
       intercept: (text, source, team) => {
         this.intercepts.unshift({ id: this.nextId++, text, time: this.state.gameTime, source, team });
         this.intercepts = this.intercepts.slice(0, 10);
-        const label = this.mode === 'spectator' ? COMMANDERS[team].name : 'Перехват';
+        const label = this.mode === 'spectator' ? commanderName(team) : t('ctrl.intercept');
         this.state.pushEvent('player', 'intercept', `${label}: «${text}»`, false);
         this.bump();
       },
@@ -134,15 +159,47 @@ export class GameController {
     this.director.billing.onWarning = text => this.notify(text, 'warn');
     this.attachSound();
     sounds.setMuted(this.settings.soundMuted);
+    this.greet();
+    void this.detectProxy();
+    void this.detectDevice();
+  }
+
+  private greet() {
     this.pushChat({
       id: 'hello',
       role: 'engineer',
-      text: 'База развёрнута, командир! Первая партия «Вектор Mk-I» уже на конвейере. Голосом или текстом говорите, что поменять в конструкции, — а тактику армии обсуждайте с Коброй.',
+      text: t('ctrl.hello', { name: this.state.teams.player.design.name }),
       timestamp: Date.now(),
       source: 'local',
     });
-    void this.detectProxy();
-    void this.detectDevice();
+  }
+
+  get language(): Lang {
+    return getLanguage();
+  }
+
+  /**
+   * Switches the game language and remembers it. On the start screen the waiting match is rebuilt
+   * so its design names and the engineer's greeting follow; during a match only new texts change.
+   */
+  setLanguage(lang: Lang) {
+    if (lang === getLanguage()) return;
+    applyLanguage(lang);
+    try {
+      localStorage.setItem(LANGUAGE_KEY, lang);
+    } catch {
+      /* ignore */
+    }
+    if (!this.started) {
+      this.state = new GameState();
+      this.attachSound();
+      this.director.resetMatch();
+      this.scene?.reset();
+      this.chat = [];
+      this.greet();
+    }
+    if (lang === 'ru') void nativePrepareTranslation();
+    this.bump();
   }
 
   // ───────────────────────────── Subscription (useSyncExternalStore) ─────────────────────────────
@@ -266,7 +323,7 @@ export class GameController {
     this.intercepts = [];
     this.notices = [];
     if (mode === 'human') {
-      this.pushChat({ id: `restart_${Date.now()}`, role: 'engineer', text: 'Матч перезапущен. Конвейеры чисты, жду приказов!', timestamp: Date.now(), source: 'local' });
+      this.pushChat({ id: `restart_${Date.now()}`, role: 'engineer', text: t('ctrl.restarted'), timestamp: Date.now(), source: 'local' });
     }
     this.started = true;
     this.bump();
@@ -326,16 +383,20 @@ export class GameController {
   }
 
   /**
-   * Inside the iOS app: the on-device model (Apple Foundation Models). On first launch it becomes the
-   * default; while it is not ready yet (model downloading, Apple Intelligence off) it is re-checked.
+   * Inside the iOS app: the on-device model (Apple Foundation Models) is the default on first launch,
+   * even while it is not ready (Apple Intelligence off, model downloading) — the start screen then says
+   * what to turn on, and the status is re-checked until the model answers. Cloud presets need keys.
    */
   private async detectDevice() {
     if (!hasNativeBridge()) return;
     const status = await refreshNativeStatus();
     const saved = loadSettings();
-    if (status?.available && (!saved || saved.provider === 'proxy') && this.settings.provider !== 'device') {
+    // A saved cloud preset without a key (or the dev proxy, absent in the app) cannot answer here
+    const unusable = !saved || saved.provider === 'proxy' || !cloudReady(this.director.connection);
+    if (unusable && this.settings.provider !== 'device') {
       this.applySettings({ ...this.settings, provider: 'device', ...this.presetFor('device'), apiKey: '' }, false);
     }
+    if (getLanguage() === 'ru') void nativePrepareTranslation();
     this.bump();
     if (!status?.available) setTimeout(() => void this.detectDevice(), 10000);
   }
@@ -461,12 +522,12 @@ export class GameController {
     const f = this.state.buildings.find(b => b.id === id && b.team === 'player' && b.type === 'factory');
     if (!f) return;
     this.state.setFactoryPaused('player', id, !f.paused);
-    this.notify(f.paused ? 'Завод остановлен: металл копится, энергия свободна' : 'Завод снова в работе', 'info');
+    this.notify(f.paused ? t('ctrl.factoryStopped') : t('ctrl.factoryResumed'), 'info');
   }
 
   topUpTestBalance() {
     this.director.billing.topUpTestBalance();
-    this.notify('Тестовый баланс пополнен', 'info');
+    this.notify(t('ctrl.toppedUp'), 'info');
   }
 
   private pushChat(m: ChatMessage) {
@@ -490,11 +551,11 @@ export class GameController {
       return;
     }
     if (!voiceService.isSupported()) {
-      this.notify('Браузер не поддерживает распознавание речи — используйте текст', 'warn');
+      this.notify(t('ctrl.noAsr'), 'warn');
       return;
     }
     if (!this.director.billing.canAffordAudio('asr', 5)) {
-      this.notify('Недостаточно AI-монет для распознавания речи — используйте текстовый ввод', 'warn');
+      this.notify(t('ctrl.noAsrCoins'), 'warn');
       return;
     }
     this.voice = { ...this.voice, listening: true, transcript: '', error: '' };
@@ -511,7 +572,7 @@ export class GameController {
         this.bump();
       },
       err => {
-        this.voice.error = err === 'not-allowed' ? 'Нет доступа к микрофону' : `Ошибка распознавания: ${err}`;
+        this.voice.error = err === 'not-allowed' ? t('ctrl.micDenied') : t('ctrl.asrError', { err });
         this.voice.listening = false;
         this.bump();
       },

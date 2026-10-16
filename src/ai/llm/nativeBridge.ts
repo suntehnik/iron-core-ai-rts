@@ -5,6 +5,8 @@
  * Outside the iOS app the handler does not exist and the "device" provider stays hidden.
  */
 
+import { t } from '../../i18n';
+
 export type TranslationStatus = 'installed' | 'supported' | 'unsupported' | 'unknown';
 
 export interface NativeStatus {
@@ -81,6 +83,23 @@ export async function nativeTranslate(texts: string[], from: string, to: string)
   return out.texts;
 }
 
+let translationAsked = false;
+
+/**
+ * Asks the app to download the ru⇄en translation languages (a system sheet), once per launch;
+ * only the Russian game needs them, so the app does not offer the download by itself.
+ */
+export async function nativePrepareTranslation(): Promise<void> {
+  const h = handler();
+  if (!h || translationAsked || status?.translation !== 'supported') return;
+  translationAsked = true;
+  try {
+    await h.postMessage({ op: 'prepareTranslation' });
+  } catch {
+    /* an older app build without the op: translation stays unavailable */
+  }
+}
+
 // ───────────────────────────── Translation marks ─────────────────────────────
 
 /**
@@ -135,15 +154,45 @@ export async function translateReadableFields(data: Record<string, unknown>, tra
 
 /** Why the on-device model cannot answer, for the player. */
 export function nativeUnavailableText(s: NativeStatus | null): string {
-  if (!s) return 'мост к модели устройства не найден';
+  if (!s) return t('device.noBridge');
   switch (s.reason) {
     case 'deviceNotEligible':
-      return 'устройство не поддерживает Apple Intelligence (нужен iPhone 15 Pro или новее)';
+      return t('device.notEligible');
     case 'appleIntelligenceNotEnabled':
-      return 'включите Apple Intelligence в Настройках';
+      return t('device.aiOff');
     case 'modelNotReady':
-      return 'модель Apple ещё загружается';
+      return t('device.modelNotReady');
     default:
-      return s.reason ? `недоступна (${s.reason})` : 'недоступна';
+      return s.reason ? t('device.unavailableWhy', { why: s.reason }) : t('device.unavailable');
+  }
+}
+
+/**
+ * The iOS side reports failures as codes (`context`, `guardrail`, `simulator:-1`, …) so the text
+ * follows the game language; anything else is shown as it came.
+ */
+export function deviceErrorText(code: string): string {
+  const [kind, detail = ''] = code.split(':');
+  switch (kind) {
+    case 'context':
+      return t('device.err.context');
+    case 'guardrail':
+      return t('device.err.guardrail');
+    case 'refusal':
+      return t('device.err.refusal');
+    case 'language':
+      return t('device.err.language');
+    case 'assets':
+      return t('device.err.assets');
+    case 'busy':
+      return t('device.err.busy');
+    case 'timeout':
+      return t('device.err.timeout');
+    case 'simulator':
+      return t('device.err.simulator', { code: detail });
+    case 'translation':
+      return t('device.err.translation');
+    default:
+      return code;
   }
 }

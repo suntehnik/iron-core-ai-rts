@@ -7,11 +7,14 @@ import WebKit
 ///   {op: "status"}                                          → {available, reason?, translation, contextSize?}
 ///   {op: "generate", system, user, maxTokens, temperature, timeoutMs} → {text, tokensIn, tokensOut, estimated}
 ///   {op: "translate", texts, from, to}                     → {texts}
+///   {op: "prepareTranslation"}                              → shows the system sheet that downloads ru⇄en
 /// A thrown error rejects the JavaScript promise with its message.
 @MainActor
 final class OnDeviceBridge: NSObject, WKScriptMessageHandlerWithReply {
     let generator = OnDeviceGenerator()
     let translator = OnDeviceTranslator()
+    /// Set by the screen: offers the translation download (only the Russian game asks for it)
+    var onPrepareTranslation: (() -> Void)?
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
         guard let body = message.body as? [String: Any], let op = body["op"] as? String else {
@@ -37,6 +40,9 @@ final class OnDeviceBridge: NSObject, WKScriptMessageHandlerWithReply {
                     to: body["to"] as? String ?? "en"
                 )
                 return (["texts": texts], nil)
+            case "prepareTranslation":
+                onPrepareTranslation?()
+                return (["ok": true], nil)
             default:
                 return (nil, "unknown op \(op)")
             }
@@ -67,26 +73,24 @@ final class OnDeviceBridge: NSObject, WKScriptMessageHandlerWithReply {
         return out
     }
 
-    /// Short Russian text for the game UI (shown as «модель на устройстве: …»).
+    /// An error code for the game, which shows it in its own language (src/ai/llm/nativeBridge.ts: deviceErrorText).
     private static func describe(_ error: any Error) -> String {
         if let e = error as? LanguageModelSession.GenerationError {
             return switch e {
-            case .exceededContextWindowSize: "сводка не поместилась в окно модели"
-            case .guardrailViolation: "ответ заблокирован фильтром безопасности Apple"
-            case .refusal: "модель отказалась отвечать"
-            case .unsupportedLanguageOrLocale: "язык запроса не поддерживается"
-            case .assetsUnavailable: "модель Apple сейчас недоступна"
-            case .rateLimited, .concurrentRequests: "модель занята, попробуйте позже"
-            default: "\(e) — \(e.localizedDescription)"
+            case .exceededContextWindowSize: "context"
+            case .guardrailViolation: "guardrail"
+            case .refusal: "refusal"
+            case .unsupportedLanguageOrLocale: "language"
+            case .assetsUnavailable: "assets"
+            case .rateLimited, .concurrentRequests: "busy"
+            default: e.localizedDescription
             }
         }
-        if error is TimeoutError { return "не ответила вовремя" }
+        if error is TimeoutError { return "timeout" }
+        if error is TranslationError { return "translation" }
         let ns = error as NSError
-        if ns.domain.hasPrefix("FoundationModels") {
-            // e.g. -1 in the Simulator when the Mac itself has Apple Intelligence off: the model assets do not load
-            return "модель Apple не смогла ответить (код \(ns.code)); в симуляторе нужна Apple Intelligence на Mac"
-        }
-        if let e = error as? TranslationError { return "перевод недоступен (\(e))" }
+        // e.g. -1 in the Simulator when the Mac itself has Apple Intelligence off: the model assets do not load
+        if ns.domain.hasPrefix("FoundationModels") { return "simulator:\(ns.code)" }
         return error.localizedDescription
     }
 }
@@ -154,10 +158,6 @@ actor OnDeviceTranslator {
         case .unsupported: "unsupported"
         @unknown default: "unknown"
         }
-    }
-
-    func needsDownload() async -> Bool {
-        await status() == "supported"
     }
 
     func translate(_ texts: [String], from: String, to: String) async throws -> [String] {

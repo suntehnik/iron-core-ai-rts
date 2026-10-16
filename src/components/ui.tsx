@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Languages } from 'lucide-react';
+import { LANGS, LANG_LABEL, Lang, t } from '../i18n';
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -16,6 +17,29 @@ export function useCompactHud(): boolean {
     return () => m.removeEventListener('change', update);
   }, []);
   return compact;
+}
+
+/**
+ * True for `ms` after the player last touched, clicked, scrolled or typed anywhere — panels that
+ * would cover the battlefield on a phone fade out while the player just watches.
+ */
+export function useRecentInteraction(ms = 4000): boolean {
+  const [active, setActive] = useState(true);
+  useEffect(() => {
+    let timer = setTimeout(() => setActive(false), ms);
+    const poke = () => {
+      setActive(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setActive(false), ms);
+    };
+    const events = ['pointerdown', 'wheel', 'keydown'] as const;
+    for (const e of events) window.addEventListener(e, poke, { passive: true, capture: true });
+    return () => {
+      clearTimeout(timer);
+      for (const e of events) window.removeEventListener(e, poke, { capture: true });
+    };
+  }, [ms]);
+  return active;
 }
 
 /** Open state of a collapsible panel: follows the screen size until the player toggles it. */
@@ -125,6 +149,29 @@ export const Chip: React.FC<React.PropsWithChildren<{ active?: boolean; onClick?
   >
     {children}
   </button>
+);
+
+/** RU / EN / IT switch; `short` shows language codes instead of the names. */
+export const LanguageSwitch: React.FC<{ value: Lang; onChange: (lang: Lang) => void; short?: boolean }> = ({ value, onChange, short }) => (
+  <div className="flex items-center gap-1" role="radiogroup" aria-label={t('brief.language')}>
+    <Languages className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
+    {LANGS.map(lang => (
+      <button
+        key={lang}
+        type="button"
+        role="radio"
+        aria-checked={value === lang}
+        title={LANG_LABEL[lang]}
+        onClick={() => onChange(lang)}
+        className={cx(
+          'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold border transition whitespace-nowrap',
+          value === lang ? 'bg-teal-500/30 border-teal-300/70 text-white' : 'bg-slate-800/60 border-white/10 text-slate-300 hover:bg-slate-700/70',
+        )}
+      >
+        {short ? lang.toUpperCase() : LANG_LABEL[lang]}
+      </button>
+    ))}
+  </div>
 );
 
 export function formatTime(secs: number): string {

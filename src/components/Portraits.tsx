@@ -1,9 +1,11 @@
 import React from 'react';
+import { t } from '../i18n';
+import { commanderName } from '../config/commanders';
 
 /** Cartoon agent portraits (concept art: friendly robot with headphones). */
 
 export const EngineerPortrait: React.FC<{ size?: number; talking?: boolean }> = ({ size = 56, talking }) => (
-  <svg width={size} height={size} viewBox="0 0 64 64" aria-label="Инженер Болт">
+  <svg width={size} height={size} viewBox="0 0 64 64" aria-label={t('portrait.engineer')}>
     <rect x="8" y="10" width="48" height="42" rx="14" fill="#f4ecdb" stroke="#2b2622" strokeWidth="2.5" />
     <rect x="14" y="18" width="36" height="22" rx="9" fill="#1d2a33" stroke="#2b2622" strokeWidth="2" />
     <ellipse cx="25" cy="29" rx="4.5" ry={talking ? 3.5 : 5} fill="#5eead4" />
@@ -18,7 +20,7 @@ export const EngineerPortrait: React.FC<{ size?: number; talking?: boolean }> = 
 );
 
 export const TacticianPortrait: React.FC<{ size?: number; talking?: boolean }> = ({ size = 56, talking }) => (
-  <svg width={size} height={size} viewBox="0 0 64 64" aria-label="Тактик Кобра">
+  <svg width={size} height={size} viewBox="0 0 64 64" aria-label={t('portrait.tactician')}>
     <line x1="44" y1="10" x2="50" y2="1" stroke="#2b2622" strokeWidth="2.5" />
     <circle cx="50" cy="2.5" r="2.5" fill="#f2b134" stroke="#2b2622" strokeWidth="1.5" />
     <path d="M8 34 Q8 8 32 8 Q56 8 56 34 L56 46 Q56 56 46 56 L18 56 Q8 56 8 46 Z" fill="#14b8a6" stroke="#2b2622" strokeWidth="2.5" />
@@ -30,15 +32,15 @@ export const TacticianPortrait: React.FC<{ size?: number; talking?: boolean }> =
 );
 
 const COMMANDER_COLORS = {
-  enemy: { face: '#f97316', cap: '#7c2d12', eye: '#ff6a3d', label: 'Генерал Ржавый' },
-  player: { face: '#14b8a6', cap: '#115e59', eye: '#7ef0ff', label: 'Командор Бирюзов' },
+  enemy: { face: '#f97316', cap: '#7c2d12', eye: '#ff6a3d' },
+  player: { face: '#14b8a6', cap: '#115e59', eye: '#7ef0ff' },
 } as const;
 
 /** AI commander portrait: orange general (enemy) or teal commander (AI-vs-AI player side). */
 export const CommanderPortrait: React.FC<{ team: 'player' | 'enemy'; size?: number }> = ({ team, size = 40 }) => {
   const c = COMMANDER_COLORS[team];
   return (
-    <svg width={size} height={size} viewBox="0 0 64 64" aria-label={c.label}>
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-label={commanderName(team)}>
       <rect x="10" y="16" width="44" height="40" rx="10" fill={c.face} stroke="#2b2622" strokeWidth="2.5" />
       <path d="M6 20 L58 20 L52 8 L12 8 Z" fill={c.cap} stroke="#2b2622" strokeWidth="2.5" />
       <circle cx="32" cy="14" r="3" fill="#f2b134" stroke="#2b2622" strokeWidth="1.5" />

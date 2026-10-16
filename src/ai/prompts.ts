@@ -131,17 +131,22 @@ export function engineerRepairPrompt(errors: string[]): string {
   return `Твоя конфигурация нарушает ограничения: ${errors.join('; ')}. Исправь её, сохранив замысел командира (если всё сразу невозможно — выбери компромисс и назови его), и верни тот же JSON.`;
 }
 
-/** Cost cap stated in the order ("не дороже чем на четверть", "не больше 30%"). */
+/**
+ * Cost cap stated in the order, in any game language: «не дороже чем на четверть», «не больше 30%»,
+ * "no more than a quarter dearer", "non più caro di un terzo".
+ */
 export function parseCostLimitPct(order: string): number | null {
   const p = order.toLowerCase();
-  if (!/(стоимост|дорож|цен|бюджет|металл)/.test(p)) return null;
-  const pct = p.match(/(\d{1,3})\s*(%|процент)/);
+  if (!/(стоимост|дорож|цен|бюджет|металл|cost|price|budget|expensive|dearer|pricier|metal|prezz|costo|caro|metallo)/.test(p)) return null;
+  const pct = p.match(/(\d{1,3})\s*(%|процент|percent|per cento|percento)/);
   if (pct) return Number(pct[1]);
-  if (/четверт/.test(p)) return 25;
-  if (/трет/.test(p)) return 33;
-  if (/половин|полтора/.test(p)) return 50;
-  if (/вдвое|в два раза|в 2 раза/.test(p)) return 100;
+  if (/четверт|quarter|quarto/.test(p)) return 25;
+  if (/трет|third|terzo/.test(p)) return 33;
+  if (/половин|полтора|half|metà|meta\b/.test(p)) return 50;
+  if (/вдвое|в два раза|в 2 раза|double|twice|doppio/.test(p)) return 100;
   if (/не дороже(?! чем на)|той же цен|не повыша|не увеличива[а-я]* стоимост[а-я]*$/.test(p)) return 0;
+  if (/no (more )?(expensive|dearer)(?! than)|same (cost|price)|(don't|do not) raise the (cost|price)/.test(p)) return 0;
+  if (/non più car[oa](?! di)|stesso (costo|prezzo)|senza aumentare/.test(p)) return 0;
   return null;
 }
 

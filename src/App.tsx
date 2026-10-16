@@ -11,6 +11,7 @@ import { SpectatorPanel } from './components/SpectatorPanel';
 import { TacticalPanel } from './components/TacticalPanel';
 import { TopBar } from './components/TopBar';
 import { VictoryModal } from './components/VictoryModal';
+import { t } from './i18n';
 
 const controller = new GameController();
 // Dev tools and the iOS app's debug harness (ios/IronCore, -autotest) drive the game through this handle
@@ -69,7 +70,7 @@ export const App: React.FC = () => {
 
       {ctrl.state.isPaused && ctrl.started && !ctrl.state.gameOver && (
         <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
-          <div className="hud-panel px-6 py-3 font-heading text-xl font-bold tracking-widest text-slate-100">ПАУЗА</div>
+          <div className="hud-panel px-6 py-3 font-heading text-xl font-bold tracking-widest text-slate-100">{t('app.paused')}</div>
         </div>
       )}
 

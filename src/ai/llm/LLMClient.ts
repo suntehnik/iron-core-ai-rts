@@ -1,6 +1,7 @@
 import { LLM_PROVIDERS, LLMProviderId } from '../../config/llmProviders';
 import { estimateTokens, extractJSONObject } from './jsonExtract';
-import { nativeGenerate, nativeStatus, nativeTranslate, resolveMarked, translateReadableFields } from './nativeBridge';
+import { deviceErrorText, nativeGenerate, nativeStatus, nativeTranslate, resolveMarked, translateReadableFields } from './nativeBridge';
+import { getLanguage, t } from '../../i18n';
 
 export interface LLMConnection {
   provider: LLMProviderId;
@@ -47,21 +48,21 @@ export class LLMError extends Error {
   get userMessage(): string {
     switch (this.kind) {
       case 'not_configured':
-        return 'облачный LLM не настроен';
+        return t('llm.notConfigured');
       case 'timeout':
-        return 'облачный LLM не ответил вовремя';
+        return t('llm.timeout');
       case 'network':
-        return 'нет связи с облачным LLM (сеть или CORS)';
+        return t('llm.network');
       case 'parse':
-        return 'модель вернула неразборчивый ответ';
+        return t('llm.parse');
       case 'aborted':
-        return 'запрос отменён';
+        return t('llm.aborted');
       case 'device':
-        return `модель на устройстве: ${this.message}`;
+        return t('llm.device', { msg: deviceErrorText(this.message) });
       default:
-        if (this.status === 401 || this.status === 403) return 'ключ API отклонён провайдером';
-        if (this.status === 429) return 'провайдер ограничил частоту запросов';
-        return `ошибка провайдера (HTTP ${this.status ?? '?'})`;
+        if (this.status === 401 || this.status === 403) return t('llm.keyRejected');
+        if (this.status === 429) return t('llm.rateLimited');
+        return t('llm.http', { status: this.status ?? '?' });
     }
   }
 }
@@ -136,7 +137,9 @@ export async function chatJSON(conn: LLMConnection, req: LLMRequest): Promise<LL
 async function chatOnDevice(req: LLMRequest): Promise<LLMResponse> {
   const started = performance.now();
   const timeoutMs = req.timeoutMs ?? 25000;
-  const [system, user] = await resolveMarked([req.system, req.user], f => nativeTranslate(f, 'ru', 'en'));
+  // Only the Russian game needs translation: the model itself speaks English and Italian
+  const translate = getLanguage() === 'ru';
+  const [system, user] = translate ? await resolveMarked([req.system, req.user], f => nativeTranslate(f, 'ru', 'en')) : [req.system, req.user];
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new LLMError('timeout', `No reply within ${timeoutMs} ms`)), timeoutMs);
@@ -155,7 +158,7 @@ async function chatOnDevice(req: LLMRequest): Promise<LLMResponse> {
   }
   const data = extractJSONObject(reply.text);
   if (!data) throw new LLMError('parse', `Model reply is not JSON: ${reply.text.slice(0, 160)}`);
-  await translateReadableFields(data, texts => nativeTranslate(texts, 'en', 'ru'));
+  if (translate) await translateReadableFields(data, texts => nativeTranslate(texts, 'en', 'ru'));
   return {
     data,
     text: reply.text,

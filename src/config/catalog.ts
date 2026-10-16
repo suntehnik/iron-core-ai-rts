@@ -1,4 +1,5 @@
 import { ChassisConfig, RobotModule } from '../types/robot';
+import { MessageKey, t } from '../i18n';
 
 /**
  * Catalogs are looked up by ids that come from the LLM, so they have no prototype:
@@ -12,7 +13,6 @@ export const CHASSIS_CATALOG = catalog<ChassisConfig>({
   light_biped: {
     id: 'light_biped',
     name: 'Scout Bipedal',
-    nameRu: 'Лёгкий шагоход',
     baseHp: 200,
     baseMass: 200,
     maxMass: 650,
@@ -24,12 +24,10 @@ export const CHASSIS_CATALOG = catalog<ChassisConfig>({
     metalCost: 60,
     componentCost: 10,
     buildTimeSec: 5,
-    descriptionRu: 'Быстрое двухногое шасси для фланговых атак и налётов на добычу. Плохо переносит отдачу тяжёлых орудий.',
   },
   medium_tracked: {
     id: 'medium_tracked',
     name: 'Medium Tracked',
-    nameRu: 'Средний гусеничный',
     baseHp: 400,
     baseMass: 420,
     maxMass: 1400,
@@ -41,12 +39,10 @@ export const CHASSIS_CATALOG = catalog<ChassisConfig>({
     metalCost: 130,
     componentCost: 25,
     buildTimeSec: 8,
-    descriptionRu: 'Надёжная гусеничная база. Баланс скорости, бронирования и грузоподъёмности.',
   },
   heavy_quad: {
     id: 'heavy_quad',
     name: 'Heavy Quad-Walker',
-    nameRu: 'Тяжёлый квадропод',
     baseHp: 760,
     baseMass: 780,
     maxMass: 2600,
@@ -58,7 +54,6 @@ export const CHASSIS_CATALOG = catalog<ChassisConfig>({
     metalCost: 240,
     componentCost: 50,
     buildTimeSec: 13,
-    descriptionRu: 'Четырёхопорная осадная платформа. Огромный запас прочности и устойчивость при стрельбе, но медленно разгоняется.',
   },
 });
 
@@ -67,7 +62,6 @@ export const MODULES_CATALOG = catalog<RobotModule>({
   light_composite: {
     id: 'light_composite',
     name: 'Kevlar Composite',
-    nameRu: 'Лёгкий композит',
     category: 'armor',
     mass: 60,
     powerDraw: 0,
@@ -78,12 +72,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     buildTimeSec: 1,
     hpBonus: 90,
     armorRating: 0.1,
-    descriptionRu: '+90 HP, 10% поглощения урона. Почти не утяжеляет машину.',
   },
   reinforced_steel: {
     id: 'reinforced_steel',
     name: 'Reinforced Steel Plates',
-    nameRu: 'Усиленная стальная броня',
     category: 'armor',
     mass: 190,
     powerDraw: 0,
@@ -94,12 +86,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     buildTimeSec: 3,
     hpBonus: 230,
     armorRating: 0.22,
-    descriptionRu: '+230 HP, 22% брони. Заметная масса, снижает скорость.',
   },
   sloped_reactive: {
     id: 'sloped_reactive',
     name: 'Heavy Reactive Armor',
-    nameRu: 'Тяжёлая динамическая броня',
     category: 'armor',
     mass: 400,
     powerDraw: 10,
@@ -110,14 +100,12 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     buildTimeSec: 5,
     hpBonus: 460,
     armorRating: 0.4,
-    descriptionRu: '+460 HP, 40% поглощения. Огромная масса: машина становится крепостью, но ползёт.',
   },
 
   // --- ОРУЖИЕ ---
   autocannon_20mm: {
     id: 'autocannon_20mm',
     name: 'Twin Rapid Autocannon',
-    nameRu: 'Автопушка 20мм',
     category: 'weapon',
     mass: 90,
     powerDraw: 20,
@@ -131,12 +119,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     weaponFireRate: 3.5,
     weaponType: 'kinetic',
     weaponRecoil: 0.2,
-    descriptionRu: 'Скорострельная, дешёвая, эффективна против лёгких роботов и добытчиков.',
   },
   plasma_blasters: {
     id: 'plasma_blasters',
     name: 'Dual Plasma Repeater',
-    nameRu: 'Спаренные плазмомёты',
     category: 'weapon',
     mass: 140,
     powerDraw: 55,
@@ -151,12 +137,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     weaponType: 'energy',
     weaponRecoil: 0.3,
     armorPierce: 0.5,
-    descriptionRu: 'Энергетический урон игнорирует половину брони, но сильно греет корпус — нужен радиатор.',
   },
   heavy_siege_cannon: {
     id: 'heavy_siege_cannon',
     name: '120mm Heavy Siege Cannon',
-    nameRu: 'Осадная пушка 120мм',
     category: 'weapon',
     mass: 420,
     powerDraw: 35,
@@ -172,12 +156,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     weaponRecoil: 0.9,
     requiresDeploy: true,
     splashRadius: 3,
-    descriptionRu: 'Огромный урон по площади и дальность. Стреляет только после остановки и развёртывания; требует устойчивого шасси.',
   },
   sniper_railgun: {
     id: 'sniper_railgun',
     name: 'Hyper-Velocity Railgun',
-    nameRu: 'Снайперский рельсотрон',
     category: 'weapon',
     mass: 260,
     powerDraw: 90,
@@ -193,12 +175,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     weaponRecoil: 0.7,
     requiresDeploy: true,
     armorPierce: 0.6,
-    descriptionRu: 'Сверхдальний бронебойный выстрел. Требует развёртывания и огромной мощности — без генератора не потянет.',
   },
   melee_buzzsaw: {
     id: 'melee_buzzsaw',
     name: 'Titanium Rotary Saw',
-    nameRu: 'Циркулярная пила',
     category: 'weapon',
     mass: 80,
     powerDraw: 15,
@@ -213,14 +193,12 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     weaponType: 'melee',
     weaponRecoil: 0.05,
     armorPierce: 0.2,
-    descriptionRu: 'Ближний бой: огромный урон в упор, дёшево и легко. Нужно добежать до цели.',
   },
 
   // --- ДВИГАТЕЛИ И ЭНЕРГИЯ ---
   micro_turbine: {
     id: 'micro_turbine',
     name: 'Turbine Overdrive',
-    nameRu: 'Форсажная турбина',
     category: 'engine',
     mass: 90,
     powerDraw: 40,
@@ -231,12 +209,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     buildTimeSec: 2,
     speedMultiplier: 1.35,
     accelBonus: 4,
-    descriptionRu: '+35% скорости и быстрый разгон. Греется и требует энергии — не бесплатное исправление.',
   },
   diesel_electric: {
     id: 'diesel_electric',
     name: 'Diesel-Electric Gen Drive',
-    nameRu: 'Дизель-генератор',
     category: 'engine',
     mass: 160,
     powerDraw: 0,
@@ -246,14 +222,12 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     componentCost: 30,
     buildTimeSec: 3,
     powerOutput: 90,
-    descriptionRu: '+90 кВт бортовой энергии для мощных орудий. Добавляет массу.',
   },
 
   // --- СИСТЕМЫ ---
   heat_radiator: {
     id: 'heat_radiator',
     name: 'Liquid Cooling Radiator',
-    nameRu: 'Радиатор охлаждения',
     category: 'utility',
     mass: 50,
     powerDraw: 10,
@@ -262,12 +236,10 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     metalCost: 30,
     componentCost: 25,
     buildTimeSec: 1,
-    descriptionRu: 'Рассеивает 18 ед. тепла/с. Занимает слот и добавляет массу.',
   },
   radar_sensor: {
     id: 'radar_sensor',
     name: 'Targeting Fire-Control Radar',
-    nameRu: 'Радар управления огнём',
     category: 'utility',
     mass: 30,
     powerDraw: 25,
@@ -277,9 +249,14 @@ export const MODULES_CATALOG = catalog<RobotModule>({
     componentCost: 55,
     buildTimeSec: 2,
     rangeMultiplier: 1.2,
-    descriptionRu: '+20% дальности стрельбы и обнаружения.',
   },
 });
+
+/** Localized names and descriptions (src/i18n/dict/catalog.ts holds every id in every language). */
+export const chassisName = (id: string): string => t(`chassis.${id}` as MessageKey);
+export const chassisDescription = (id: string): string => t(`chassis.${id}.desc` as MessageKey);
+export const partName = (id: string): string => t(`part.${id}` as MessageKey);
+export const partDescription = (id: string): string => t(`part.${id}.desc` as MessageKey);
 
 export const MODULE_IDS = Object.keys(MODULES_CATALOG);
 export const CHASSIS_IDS = Object.keys(CHASSIS_CATALOG);

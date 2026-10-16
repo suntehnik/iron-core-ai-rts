@@ -1,4 +1,5 @@
 import { AI_TARIFFS } from '../config/tariffs';
+import { SPEECH_LOCALE, getLanguage } from '../i18n';
 
 export interface ASRResult {
   text: string;
@@ -30,7 +31,6 @@ export class VoiceService {
     this.recognition = new SpeechRecognition();
     this.recognition.continuous = false;
     this.recognition.interimResults = true;
-    this.recognition.lang = 'ru-RU';
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.recognition.onresult = (event: any) => {
@@ -66,6 +66,7 @@ export class VoiceService {
     this.onError = onError || null;
     this.onEnd = onEnd || null;
     try {
+      this.recognition.lang = SPEECH_LOCALE[getLanguage()];
       this.recognition.start();
       this.listening = true;
       this.startedAt = performance.now();
@@ -93,11 +94,12 @@ export class VoiceService {
     if (typeof window === 'undefined' || !window.speechSynthesis) return false;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'ru-RU';
+    const lang = getLanguage();
+    utterance.lang = SPEECH_LOCALE[lang];
     utterance.rate = 1.08;
     utterance.pitch = 0.95;
-    const ruVoice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('ru'));
-    if (ruVoice) utterance.voice = ruVoice;
+    const voice = window.speechSynthesis.getVoices().find(v => v.lang.toLowerCase().startsWith(lang));
+    if (voice) utterance.voice = voice;
     let started = 0;
     utterance.onstart = () => {
       started = performance.now();

@@ -4,6 +4,7 @@ import { GAME_BALANCE } from '../config/balance';
 import { GameController, TIME_SCALES } from '../game/GameController';
 import { CoinPanel } from './CoinPanel';
 import { IconButton, cx, fmtCoins, formatTime } from './ui';
+import { t } from '../i18n';
 
 const Resource: React.FC<{ icon: React.ReactNode; value: React.ReactNode; title: string; warn?: boolean; sub?: React.ReactNode }> = ({
   icon,
@@ -34,22 +35,22 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
     <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3 pointer-events-none z-20">
       {/* Resources (concept: metal • components • power • army) */}
       <div className="hud-panel pointer-events-auto flex items-center divide-x divide-white/10 py-1.5">
-        <Resource icon={<Box className="w-4 h-4" />} value={Math.floor(e.metal)} title="Металл: корпуса, броня, здания" sub={`+${e.miningRatePerMin}/мин`} />
+        <Resource icon={<Box className="w-4 h-4" />} value={Math.floor(e.metal)} title={t('top.metal')} sub={t('top.perMin', { n: e.miningRatePerMin })} />
         <Resource
           icon={<Cog className="w-4 h-4" />}
           value={Math.floor(e.components)}
-          title="Компоненты: из металла на фабрикаторе штаба; двигатели, оружие, сенсоры"
-          sub={e.fabricatorActive ? 'фабрикатор ▲' : `резерв ${e.componentReserve}`}
+          title={t('top.components')}
+          sub={e.fabricatorActive ? t('top.fabricatorOn') : t('top.reserve', { n: e.componentReserve })}
         />
         <Resource
           icon={<Zap className="w-4 h-4" />}
           value={`${Math.round(e.powerDemand)}/${e.powerCapacity}`}
-          title="Энергия базы, кВт: заводы, добыча, фабрикатор и ремонт"
+          title={t('top.power')}
           warn={e.powerEfficiency < 0.99}
-          sub={e.powerEfficiency < 0.99 ? `дефицит ${Math.round((1 - e.powerEfficiency) * 100)}%` : 'кВт'}
+          sub={e.powerEfficiency < 0.99 ? t('top.deficit', { n: Math.round((1 - e.powerEfficiency) * 100) }) : t('unit.kw')}
         />
-        <Resource icon={<Users className="w-4 h-4" />} value={`${army}/${GAME_BALANCE.MAX_ACTIVE_COMBAT_BOTS}`} title="Боевые машины / предел армии" sub="армия" />
-        <div className="flex items-center gap-1.5 px-2.5 text-slate-300" title="Время матча">
+        <Resource icon={<Users className="w-4 h-4" />} value={`${army}/${GAME_BALANCE.MAX_ACTIVE_COMBAT_BOTS}`} title={t('top.army')} sub={t('top.armySub')} />
+        <div className="flex items-center gap-1.5 px-2.5 text-slate-300" title={t('top.time')}>
           <Clock className="w-3.5 h-3.5" />
           <span className="font-heading font-bold tabular-nums text-sm">{formatTime(s.gameTime)}</span>
         </div>
@@ -57,9 +58,9 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
 
       {/* Base health */}
       <div className="hud-panel pointer-events-auto hidden xl:flex items-center gap-3 px-3 py-2">
-        <BaseHp label="Наш штаб" pct={s.baseHpPct('player')} color="#2dd4bf" />
+        <BaseHp label={t('top.ourHq')} pct={s.baseHpPct('player')} color="#2dd4bf" />
         <span className="text-slate-500 font-heading text-xs">VS</span>
-        <BaseHp label="Штаб врага" pct={s.baseHpPct('enemy')} color="#fb923c" />
+        <BaseHp label={t('top.enemyHq')} pct={s.baseHpPct('enemy')} color="#fb923c" />
       </div>
 
       {/* AI coins, model status, controls */}
@@ -73,50 +74,50 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
               billing.status === 'low' && 'ring-1 ring-amber-400/70',
               billing.status === 'exhausted' && 'ring-1 ring-rose-400/80',
             )}
-            title="AI-монеты: баланс и расходы на облачные сервисы"
+            title={t('top.coins')}
           >
             <Coins className="w-4 h-4 text-amber-300" />
             <div className="leading-none text-left">
               <div className="font-heading font-bold text-[15px] text-amber-200 tabular-nums">{fmtCoins(billing.wallet)}</div>
               <div className="text-[9px] text-slate-400 mt-0.5">
-                матч {fmtCoins(billing.spentThisMatch)}/{billing.matchLimit}
+                {t('top.matchSpend', { spent: fmtCoins(billing.spentThisMatch), limit: billing.matchLimit })}
               </div>
             </div>
           </button>
           <div
             className={cx('hud-panel hidden xl:flex items-center gap-1.5 px-2.5 py-2 max-w-[260px]', cloud ? 'text-emerald-200' : 'text-amber-200')}
-            title={cloud ? 'Агенты думают облачным LLM' : 'Облачный LLM не настроен — работают локальные эвристики'}
+            title={cloud ? t('top.cloudOn') : t('top.cloudOff')}
           >
             <Cpu className={cx('w-3.5 h-3.5 shrink-0', (busy.engineer || busy.tactician || busy.enemy) && 'animate-pulse text-cyan-300')} />
             <span className="text-[11px] font-semibold truncate">{ctrl.director.providerLabel()}</span>
           </div>
           {ctrl.mode === 'spectator' && (
-            <div className="hud-panel flex items-center gap-1 p-1" title="Режим наблюдения: скорость игры">
+            <div className="hud-panel flex items-center gap-1 p-1" title={t('top.spectatorSpeed')}>
               <span className="flex items-center gap-1 px-1.5 text-[11px] font-semibold text-cyan-200 whitespace-nowrap">
                 <Eye className="w-3.5 h-3.5" />
-                <span className="hidden lg:inline">ИИ vs ИИ</span>
+                <span className="hidden lg:inline">{t('top.aiVsAi')}</span>
               </span>
               {TIME_SCALES.map(k => (
-                <IconButton key={k} onClick={() => ctrl.setTimeScale(k)} active={ctrl.timeScale === k} title={`Скорость ×${k}`}>
+                <IconButton key={k} onClick={() => ctrl.setTimeScale(k)} active={ctrl.timeScale === k} title={t('top.speed', { k })}>
                   <span className="font-heading font-bold text-[11px]">×{k}</span>
                 </IconButton>
               ))}
             </div>
           )}
           <div className="hud-panel flex items-center gap-1 p-1">
-            <IconButton onClick={() => ctrl.backToMenu()} title="В меню: выбрать режим игры">
+            <IconButton onClick={() => ctrl.backToMenu()} title={t('top.menu')}>
               <Home className="w-4 h-4" />
             </IconButton>
-            <IconButton onClick={() => ctrl.togglePause()} title={s.isPaused ? 'Продолжить' : 'Пауза'}>
+            <IconButton onClick={() => ctrl.togglePause()} title={s.isPaused ? t('top.resume') : t('top.pause')}>
               {s.isPaused ? <Play className="w-4 h-4 text-emerald-300" /> : <Pause className="w-4 h-4" />}
             </IconButton>
-            <IconButton onClick={() => ctrl.restart()} title="Перезапустить матч">
+            <IconButton onClick={() => ctrl.restart()} title={t('top.restart')}>
               <RotateCcw className="w-4 h-4" />
             </IconButton>
-            <IconButton onClick={() => ctrl.toggleMute()} title={ctrl.settings.soundMuted ? 'Включить звук' : 'Выключить звук'}>
+            <IconButton onClick={() => ctrl.toggleMute()} title={ctrl.settings.soundMuted ? t('top.soundOn') : t('top.soundOff')}>
               {ctrl.settings.soundMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </IconButton>
-            <IconButton onClick={onOpenSettings} title="Настройки LLM и AI-расходов">
+            <IconButton onClick={onOpenSettings} title={t('top.settings')}>
               <Settings className="w-4 h-4" />
             </IconButton>
           </div>

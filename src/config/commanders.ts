@@ -1,16 +1,31 @@
 import { Team } from '../types/game';
+import { MessageKey, t } from '../i18n';
 
 /** AI commanders. The enemy one always plays; the teal one takes the player's side in AI-vs-AI mode. */
 export interface CommanderProfile {
   name: string;
   armyRu: string; // genitive: "армия оранжевых роботов"
-  designPrefix: string;
   persona: string;
-  taunts: string[];
   /** for the English prompts of the on-device model (it has no Russian) */
   nameEn: string;
   armyEn: string;
   personaEn: string;
+}
+
+/** The commander's name in the game language (`name` is the Russian original used by the Russian prompts). */
+export function commanderName(team: Team): string {
+  return t(team === 'enemy' ? 'commander.enemy' : 'commander.player');
+}
+
+/** A random radio jab of the rule-based commander, in the game language. */
+export function commanderTaunt(team: Team, random: number): string {
+  const n = 1 + Math.floor(random * 6);
+  return t(`taunt.${team}.${n}` as MessageKey);
+}
+
+/** Name of a design the rule-based commander invents, e.g. «Ржавый Гончая Mk-2» / «Segugio Arrugginito Mk-2». */
+export function commanderDesignName(team: Team, name: string, version: number): string {
+  return t('design.localName', { prefix: t(team === 'enemy' ? 'commander.enemy.prefix' : 'commander.player.prefix'), name, n: version });
 }
 
 export const COMMANDERS: Record<Team, CommanderProfile> = {
@@ -20,16 +35,7 @@ export const COMMANDERS: Record<Team, CommanderProfile> = {
     armyRu: 'оранжевых',
     armyEn: 'orange',
     personaEn: 'Boastful and sarcastic',
-    designPrefix: 'Ржавый',
     persona: 'Хвастливый и язвительный',
-    taunts: [
-      'Ваши железки скрипят громче, чем стреляют!',
-      'Мои конвейеры уже знают ваши слабые места.',
-      'Сдавайтесь, пока у вас ещё есть металлолом.',
-      'Это была разведка боем. Настоящий бой впереди!',
-      'Ржавчина — это не возраст, это стиль.',
-      'Ваш инженер собирает роботов по инструкции от тостера?',
-    ],
   },
   player: {
     name: 'Командор Бирюзов',
@@ -37,15 +43,6 @@ export const COMMANDERS: Record<Team, CommanderProfile> = {
     armyRu: 'бирюзовых',
     armyEn: 'teal',
     personaEn: 'An imperturbable pedant with dry irony',
-    designPrefix: 'Бирюзовый',
     persona: 'Невозмутимый педант с сухой иронией',
-    taunts: [
-      'Ржавчина — не стиль, а диагноз.',
-      'Мои расчёты точнее ваших залпов.',
-      'Бирюзовый — цвет победы. Запишите.',
-      'Ваша броня скрипит. Слышно даже отсюда.',
-      'Инженерия побеждает хвастовство.',
-      'Предлагаю сдаться до следующей партии.',
-    ],
   },
 };

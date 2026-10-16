@@ -11,7 +11,8 @@ struct IronCoreApp: App {
 }
 
 /// The web game full screen, plus the one-time download of the ru⇄en translation languages
-/// the on-device agents need (Apple's model has no Russian).
+/// the on-device agents need in the Russian game (Apple's model has no Russian). The game asks
+/// for it through the bridge, so English and Italian players never see the sheet.
 struct GameScreen: View {
     @State private var bridge = OnDeviceBridge()
     @State private var translationSetup: TranslationSession.Configuration?
@@ -23,9 +24,13 @@ struct GameScreen: View {
             .background(Color(red: 0.91, green: 0.84, blue: 0.67))
             .statusBarHidden()
             .persistentSystemOverlays(.hidden)
-            .task {
-                if await bridge.translator.needsDownload() {
-                    translationSetup = .init(source: OnDeviceTranslator.russian, target: OnDeviceTranslator.english)
+            .onAppear {
+                bridge.onPrepareTranslation = {
+                    if translationSetup == nil {
+                        translationSetup = .init(source: OnDeviceTranslator.russian, target: OnDeviceTranslator.english)
+                    } else {
+                        translationSetup?.invalidate()
+                    }
                 }
             }
             .translationTask(translationSetup) { session in
