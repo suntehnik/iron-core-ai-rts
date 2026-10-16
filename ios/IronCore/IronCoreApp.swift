@@ -1,8 +1,16 @@
+import AVFAudio
 import SwiftUI
 import Translation
 
 @main
 struct IronCoreApp: App {
+    init() {
+        // The game's sounds and the agents' speech play in silent mode too (Web Audio in a web view
+        // otherwise follows the silent switch; the game has its own mute button). Music from other
+        // apps keeps playing underneath.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+    }
+
     var body: some Scene {
         WindowGroup {
             GameScreen()

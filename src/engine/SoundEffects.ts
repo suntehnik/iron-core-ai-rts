@@ -2,6 +2,16 @@ class SoundEffectsManager {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
 
+  constructor() {
+    if (typeof window === 'undefined') return;
+    // iOS starts audio only inside a user gesture, and suspends it again after the app was in the
+    // background: any tap (re)unlocks it, also when the match was started without one.
+    const unlock = () => {
+      if (!this.isMuted) this.initCtx();
+    };
+    for (const type of ['touchend', 'click', 'keydown']) window.addEventListener(type, unlock, { capture: true, passive: true });
+  }
+
   private initCtx() {
     if (!this.ctx && typeof window !== 'undefined') {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -9,7 +19,8 @@ class SoundEffectsManager {
         this.ctx = new AudioCtx();
       }
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
+    // WebKit also has an "interrupted" state (a call, the app in the background)
+    if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
       this.ctx.resume().catch(() => {});
     }
   }
