@@ -1,5 +1,5 @@
 import { GAME_BALANCE } from '../config/balance';
-import { LLM_PROVIDERS } from '../config/llmProviders';
+import { LLM_PROVIDERS, LLMProviderId, providerLabel } from '../config/llmProviders';
 import { estimateLLMCost } from '../config/tariffs';
 import { GameState } from '../engine/GameState';
 import { RobotBuilder, designSignature } from '../engine/RobotBuilder';
@@ -9,20 +9,11 @@ import { RobotDesign } from '../types/robot';
 import { AIBilling, AIParticipant, DecisionRateLimiter } from './AIBilling';
 import { localCommanderDecision, localEngineer, localTactician } from './fallbacks';
 import { LLMConnection, LLMError, LLMResponse, chatJSON, cloudReady } from './llm/LLMClient';
+import { nativeStatus, nativeUnavailableText } from './llm/nativeBridge';
 import { asString, describeAction, normalizeActions, normalizePlan } from './parsing';
-import {
-  COMMANDER_INSTRUCTIONS_MAX,
-  commanderReplanPrompt,
-  commanderReplanSystem,
-  commanderSystem,
-  commanderUserPrompt,
-  ENGINEER_SYSTEM,
-  TACTICIAN_SYSTEM,
-  engineerRepairPrompt,
-  engineerUserPrompt,
-  parseCostLimitPct,
-  tacticianUserPrompt,
-} from './prompts';
+import { COMMANDER_INSTRUCTIONS_MAX, PROMPTS_RU, PromptSet, parseCostLimitPct } from './prompts';
+import { PROMPTS_EN, englishPrompts } from './promptsEn';
+import { getLanguage, t } from '../i18n';
 
 /** 'ally' = the teal AI commander that replaces the human in AI-vs-AI mode. */
 export type AgentKey = 'engineer' | 'tactician' | 'enemy' | 'ally';
@@ -58,6 +49,10 @@ const BUDGET = {
 const COMMANDER_TIMEOUT_MS = 45000;
 /** A re-plan on a battle event that arrives later than this is stale: the game AI keeps the last plan. */
 const REPLAN_TIMEOUT_MS = 20000;
+
+/** Voice-friendly answers to a pending proposal, in every game language */
+const CONFIRM_COMMAND = /^(да|подтвер|утвер|в серию|запуска|принято|ок\b|окей|yes|yep|confirm|approve|go ahead|ok\b|okay|sì|si\b|conferma|approva|in produzione|va bene)/;
+const CANCEL_COMMAND = /^(нет|отмен|отбой|стоп|no\b|nope|cancel|stop|abort|annulla|ferma)/;
 
 let msgCounter = 0;
 const newId = (p: string) => `${p}_${Date.now().toString(36)}_${(msgCounter++).toString(36)}`;
@@ -111,14 +106,21 @@ export class AIDirector {
     return { provider: this.settings.provider, apiKey: this.settings.apiKey, model: this.settings.model, baseUrl: this.settings.baseUrl };
   }
 
+  /** Prompts in the language of the configured model (the on-device one has no Russian). */
+  private get prompts(): PromptSet {
+    return promptsFor(this.settings.provider);
+  }
+
   cloudEnabled(): boolean {
     return cloudReady(this.connection);
   }
 
   providerLabel(): string {
     const p = LLM_PROVIDERS[this.settings.provider];
-    if (!this.cloudEnabled()) return p.protocol === 'none' ? 'локальные эвристики' : `${p.label}: нужен ключ`;
-    return `${p.label} · ${this.settings.model || 'модель сервера'}`;
+    const label = providerLabel(this.settings.provider);
+    if (p.protocol === 'native') return this.cloudEnabled() ? label : `${label}: ${nativeUnavailableText(nativeStatus())}`;
+    if (!this.cloudEnabled()) return p.protocol === 'none' ? t('dir.localHeuristics') : t('dir.needKey', { label });
+    return `${label} · ${this.settings.model || t('dir.serverModel')}`;
   }
 
   /** Called when a match restarts: in-flight replies from the old match are ignored. */
@@ -254,7 +256,12 @@ export class AIDirector {
     user: string,
     timeoutMs: number = service === 'tactical' ? 18000 : 25000,
   ): Promise<{ res: LLMResponse | null; coins: number; error?: string }> {
-    if (!this.cloudEnabled()) return { res: null, coins: 0, error: LLM_PROVIDERS[this.settings.provider].protocol === 'none' ? undefined : 'облачный LLM не настроен' };
+    if (!this.cloudEnabled()) {
+      const protocol = LLM_PROVIDERS[this.settings.provider].protocol;
+      const error =
+        protocol === 'none' ? undefined : protocol === 'native' ? t('llm.device', { msg: nativeUnavailableText(nativeStatus()) }) : t('llm.notConfigured');
+      return { res: null, coins: 0, error };
+    }
     const afford = this.billing.canAfford(participant, estimateLLMCost(budget.in, budget.out));
     if (!afford.ok) return { res: null, coins: 0, error: afford.reason };
 
@@ -288,8 +295,8 @@ export class AIDirector {
     // Voice-friendly confirmation shortcuts handled locally (no inference needed)
     if (this.pendingProposal) {
       const p = text.toLowerCase();
-      if (/^(да|подтвер|утвер|в серию|запуска|принято|ок\b|окей)/.test(p)) return this.confirmProposal(state);
-      if (/^(нет|отмен|отбой|стоп)/.test(p)) return this.cancelProposal();
+      if (CONFIRM_COMMAND.test(p)) return this.confirmProposal(state);
+      if (CANCEL_COMMAND.test(p)) return this.cancelProposal();
     }
     const refusal = this.orderRefusal('engineer');
     if (refusal) return refusal;
@@ -307,8 +314,8 @@ export class AIDirector {
       'player',
       'production',
       BUDGET.engineer,
-      ENGINEER_SYSTEM,
-      engineerUserPrompt(state, text, pending),
+      this.prompts.engineerSystem,
+      this.prompts.engineerUser(state, text, pending),
     );
     if (gen !== this.generation) return null;
 
@@ -327,7 +334,7 @@ export class AIDirector {
       const constraintErrors = (stats: ReturnType<typeof RobotBuilder.calculateStats>) => {
         const errs = [...stats.validationErrors];
         if (stats.metalCost > maxCost) {
-          errs.push(`стоимость ${stats.metalCost} металла превышает лимит командира ${maxCost} (+${costLimitPct}% к текущим ${prevStats.metalCost})`);
+          errs.push(t('dir.costOverCap', { cost: stats.metalCost, max: maxCost, pct: costLimitPct ?? 0, current: prevStats.metalCost }));
         }
         return errs;
       };
@@ -341,8 +348,8 @@ export class AIDirector {
             'player',
             'production',
             BUDGET.engineer,
-            ENGINEER_SYSTEM,
-            `${engineerUserPrompt(state, text, pending)}\n\n${engineerRepairPrompt(errs)}`,
+            this.prompts.engineerSystem,
+            `${this.prompts.engineerUser(state, text, pending)}\n\n${this.prompts.engineerRepair(errs)}`,
           );
           if (gen !== this.generation) return null;
           if (retry.res) {
@@ -360,22 +367,22 @@ export class AIDirector {
           const fix = RobotBuilder.repairDesign(normalized.design);
           normalized = { design: fix.design, dropped: normalized.dropped };
           repaired = true;
-          if (fix.notes.length) warnings.push(`Игра скорректировала проект: ${fix.notes.join('; ')}`);
+          if (fix.notes.length) warnings.push(t('dir.gameFixed', { notes: fix.notes.join('; ') }));
         }
-        if (normalized.dropped.length) warnings.push(`Отброшены неизвестные детали: ${normalized.dropped.join(', ')}`);
+        if (normalized.dropped.length) warnings.push(t('dir.droppedParts', { parts: normalized.dropped.join(', ') }));
         const cost = RobotBuilder.calculateStats(normalized.design).metalCost;
         if (cost > maxCost) {
-          warnings.push(`Стоимость ${cost} металла выше вашего лимита ${maxCost} (+${costLimitPct}%). Подтвердите или уточните приказ.`);
+          warnings.push(t('dir.costAboveCap', { cost, max: maxCost, pct: costLimitPct ?? 0 }));
         }
       }
 
       // A "new" design identical to the serial one is not a proposal worth confirming
       const design = normalized && designSignature(normalized.design) !== designSignature(current) ? normalized.design : null;
-      if (normalized && !design) warnings.push('Конструкция не изменилась — подтверждать нечего.');
+      if (normalized && !design) warnings.push(t('dir.unchanged'));
       proposal = {
         id: newId('proposal'),
         order: text,
-        replyRu: asString(data.reply, 'Готово, командир.'),
+        replyRu: asString(data.reply, t('dir.done')),
         compromiseRu: asString(data.compromise) || undefined,
         design,
         stats: design ? RobotBuilder.calculateStats(design) : null,
@@ -399,7 +406,7 @@ export class AIDirector {
         prevDesign: current,
         prevStats,
         actions: draft.actions,
-        warnings: error ? [`Облачный ИИ недоступен (${error}) — ответил локальный сопроцессор`] : [],
+        warnings: error ? [t('dir.cloudDown', { why: error })] : [],
         source: 'fallback',
         repaired: false,
       };
@@ -413,7 +420,9 @@ export class AIDirector {
     const reply = this.say({
       id: newId('eng'),
       role: 'engineer',
-      text: proposal.compromiseRu ? `${proposal.replyRu} Компромисс: ${proposal.compromiseRu.replace(/[.\s]+$/, '')}.` : proposal.replyRu,
+      text: proposal.compromiseRu
+        ? t('dir.compromise', { reply: proposal.replyRu, compromise: proposal.compromiseRu.replace(/[.\s]+$/, '') })
+        : proposal.replyRu,
       timestamp: Date.now(),
       source: proposal.source,
       latencyMs: call.latencyMs,
@@ -430,7 +439,7 @@ export class AIDirector {
     const results: string[] = [];
     if (p.design) {
       state.setDesign('player', p.design);
-      results.push(`«${p.design.name}» утверждён в серию — следующая партия выйдет в этом исполнении`);
+      results.push(t('dir.approved', { name: p.design.name }));
     }
     for (const a of p.actions) results.push(state.applyProductionAction('player', a));
     this.pendingProposal = null;
@@ -444,7 +453,7 @@ export class AIDirector {
     if (!this.pendingProposal) return null;
     this.pendingProposal = null;
     this.events.proposal(null);
-    const reply = this.say({ id: newId('cancel'), role: 'engineer', text: 'Отменил. Конвейер продолжает выпускать текущую модель.', timestamp: Date.now(), source: 'local' });
+    const reply = this.say({ id: newId('cancel'), role: 'engineer', text: t('dir.cancelled'), timestamp: Date.now(), source: 'local' });
     this.events.changed();
     return reply;
   }
@@ -456,9 +465,9 @@ export class AIDirector {
   private orderRefusal(agent: AgentId): ChatMessage | null {
     const now = performance.now() / 1000;
     let text: string | null = null;
-    if (this.busy[agent]) text = 'Ещё разбираю прошлый приказ — повторите, как только отвечу.';
+    if (this.busy[agent]) text = t('dir.busy');
     else if (!this.orderCooldown.ready(agent, now)) {
-      text = `Не так быстро, командир: приказы не чаще раза в ${GAME_BALANCE.AI_PLAYER_ORDER_COOLDOWN_SEC} с. Повторите через мгновение.`;
+      text = t('dir.cooldown', { n: GAME_BALANCE.AI_PLAYER_ORDER_COOLDOWN_SEC });
     }
     if (text) return this.say({ id: newId('wait'), role: agent, text, timestamp: Date.now(), source: 'local' });
     this.orderCooldown.mark(agent, now);
@@ -495,8 +504,8 @@ export class AIDirector {
       'player',
       'tactical',
       BUDGET.tactician,
-      TACTICIAN_SYSTEM,
-      tacticianUserPrompt(state, order, this.standingOrders, trigger),
+      this.prompts.tacticianSystem,
+      this.prompts.tacticianUser(state, order, this.standingOrders, trigger),
     );
     if (gen !== this.generation) return null;
     this.busy.tactician = false;
@@ -504,12 +513,12 @@ export class AIDirector {
     let decision: TacticalDecision | null = null;
     if (res) {
       const plan = normalizePlan(res.data.plan, prev, order ? 'player' : 'agent');
-      decision = { replyRu: asString(res.data.reply, 'План обновлён.'), plan, previous: prev, source: 'llm', autonomous: !order };
+      decision = { replyRu: asString(res.data.reply, t('dir.planUpdated')), plan, previous: prev, source: 'llm', autonomous: !order };
       this.lastCall.tactician = { source: 'llm', latencyMs: res.latencyMs, coins, model: res.model, at: state.gameTime };
     } else if (order) {
       const local = localTactician(order, prev);
       decision = {
-        replyRu: error ? `${local.reply} (облако недоступно: ${error})` : local.reply,
+        replyRu: error ? t('dir.cloudDownShort', { reply: local.reply, why: error }) : local.reply,
         plan: local.plan,
         previous: prev,
         source: 'fallback',
@@ -532,7 +541,7 @@ export class AIDirector {
       reply = this.say({
         id: newId('tac'),
         role: 'tactician',
-        text: decision.autonomous ? `[Автономно] ${decision.replyRu}` : decision.replyRu,
+        text: decision.autonomous ? t('dir.autonomous', { reply: decision.replyRu }) : decision.replyRu,
         timestamp: Date.now(),
         source: decision.source,
         latencyMs: this.lastCall.tactician?.latencyMs,
@@ -548,7 +557,7 @@ export class AIDirector {
     if (!d) return;
     state.setPlan('player', { ...d.previous, source: 'player' });
     this.lastTactical = null;
-    this.events.chat({ id: newId('revert'), role: 'tactician', text: 'Вернул прежний план.', timestamp: Date.now(), source: 'local' });
+    this.events.chat({ id: newId('revert'), role: 'tactician', text: t('dir.reverted'), timestamp: Date.now(), source: 'local' });
     this.events.changed();
   }
 
@@ -581,8 +590,8 @@ export class AIDirector {
         participant,
         'tactical',
         BUDGET.enemy,
-        commanderSystem(team, vsAI, this.commanderInstructions[team]),
-        commanderUserPrompt(state, team, this.commanderInstructions[team]),
+        this.prompts.commanderSystem(team, vsAI, this.commanderInstructions[team]),
+        this.prompts.commanderUser(state, team, this.commanderInstructions[team]),
         COMMANDER_TIMEOUT_MS,
       );
       if (gen !== this.generation) return;
@@ -633,8 +642,8 @@ export class AIDirector {
       participant,
       'tactical',
       BUDGET.replan,
-      commanderReplanSystem(team, this.mode === 'spectator', this.commanderInstructions[team]),
-      commanderReplanPrompt(state, team, trigger, this.commanderInstructions[team]),
+      this.prompts.replanSystem(team, this.mode === 'spectator', this.commanderInstructions[team]),
+      this.prompts.replanUser(state, team, trigger, this.commanderInstructions[team]),
       REPLAN_TIMEOUT_MS,
     );
     if (gen !== this.generation) return;
@@ -653,24 +662,44 @@ export class AIDirector {
 
   /** Small connectivity test for the settings dialog. */
   async testConnection(conn: LLMConnection): Promise<{ ok: boolean; text: string }> {
-    if (!cloudReady(conn)) return { ok: false, text: 'Заполните провайдера, ключ и модель' };
+    if (!cloudReady(conn)) return { ok: false, text: t('dir.fillProvider') };
     try {
+      const english = promptsFor(conn.provider) !== PROMPTS_RU;
       const res = await chatJSON(conn, {
-        system: 'Ты проверка связи игры. Ответь только JSON {"status":"ok","reply":"короткое приветствие командиру"}.',
-        user: 'Проверка связи.',
+        system: english
+          ? 'You are the game\'s connection check. Answer with JSON only: {"status":"ok","reply":"a short greeting to the commander"}.'
+          : 'Ты проверка связи игры. Ответь только JSON {"status":"ok","reply":"короткое приветствие командиру"}.',
+        user: english ? 'Connection check.' : 'Проверка связи.',
         maxTokens: 60,
         temperature: 0,
         timeoutMs: 20000,
       });
       return {
         ok: true,
-        text: `Связь есть: ${res.model}, ${res.latencyMs} мс, ${res.usage.tokensIn}+${res.usage.tokensOut} токенов${res.usage.estimated ? ' (оценка)' : ''}`,
+        text: t('dir.connected', {
+          model: res.model,
+          ms: res.latencyMs,
+          inp: res.usage.tokensIn,
+          out: res.usage.tokensOut,
+          est: res.usage.estimated ? t('dir.estimate') : '',
+        }),
       };
     } catch (e) {
       const err = e instanceof LLMError ? e : new LLMError('network', String(e));
-      return { ok: false, text: `Ошибка: ${err.userMessage}. ${err.message.slice(0, 140)}` };
+      return { ok: false, text: t('dir.error', { msg: err.userMessage, details: err.message.slice(0, 140) }) };
     }
   }
+}
+
+/**
+ * Agent prompts for the game language and the model: the Russian game talks to cloud models in
+ * Russian and to the on-device model in English with on-device translation; the English and
+ * Italian games use the English prompts and get the readable fields in their own language.
+ */
+function promptsFor(provider: LLMProviderId): PromptSet {
+  const lang = getLanguage();
+  if (lang === 'ru') return LLM_PROVIDERS[provider].promptLanguage === 'en' ? PROMPTS_EN : PROMPTS_RU;
+  return englishPrompts({ replyLanguage: lang === 'it' ? 'Italian' : 'English', markForTranslation: false });
 }
 
 function planChanged(a: TacticalPlan, b: TacticalPlan): boolean {

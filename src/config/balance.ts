@@ -1,5 +1,6 @@
 import { RobotDesign } from '../types/robot';
 import { Team, Vector2D } from '../types/game';
+import { t } from '../i18n';
 
 export const GAME_BALANCE = {
   // Map dimensions (world units). Player base on the left, enemy on the right.
@@ -99,6 +100,13 @@ export const GAME_BALANCE = {
   BASE_THREAT_RADIUS: 30, // attackers this close to the HQ count as a raid on the base
   BASE_DEFENSE_RECALL_RADIUS: 32, // machines this close to the HQ respond (covers the rally point)
 };
+
+/** A team's starting design with its name in the game language. */
+export function initialDesign(team: Team): RobotDesign {
+  return team === 'enemy'
+    ? { ...INITIAL_ENEMY_DESIGN, name: t('design.enemyInitial') }
+    : { ...INITIAL_PLAYER_DESIGN, name: t('design.playerInitial') };
+}
 
 /** Fixed building slots per team (mirrored for the enemy). */
 const PLAYER_SLOTS = {

@@ -2,6 +2,8 @@ import React from 'react';
 import { GameController } from '../game/GameController';
 import { GeneralPortrait } from './Portraits';
 import { cx } from './ui';
+import { t } from '../i18n';
+import { commanderName } from '../config/commanders';
 
 /** Intercepted radio from the LLM-driven enemy commander (humour allowed by the brief §7). */
 export const InterceptPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
@@ -14,16 +16,16 @@ export const InterceptPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => 
       <GeneralPortrait size={38} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between text-[10px]">
-          <span className="font-heading font-bold text-orange-300 tracking-wide">ГЕНЕРАЛ РЖАВЫЙ · перехват</span>
+          <span className="font-heading font-bold text-orange-300 tracking-wide">{t('intercept.title', { name: commanderName('enemy').toUpperCase() })}</span>
           {call && (
             <span className={cx(call.source === 'llm' ? 'text-emerald-300' : 'text-amber-300')}>
-              {call.source === 'llm' ? 'LLM' : 'правила'}
+              {call.source === 'llm' ? 'LLM' : t('source.rules')}
             </span>
           )}
         </div>
         {last && <div className="text-[11px] text-slate-100 leading-snug mt-0.5">«{last.text}»</div>}
         <div className="text-[10px] text-slate-400 mt-0.5 truncate" title={enemy.plan.summaryRu}>
-          Серия: {enemy.design.name} · {enemy.plan.summaryRu}
+          {t('hud.series', { name: enemy.design.name })} · {enemy.plan.summaryRu}
         </div>
       </div>
     </div>

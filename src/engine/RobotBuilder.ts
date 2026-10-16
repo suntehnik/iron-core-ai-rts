@@ -1,5 +1,6 @@
-import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
+import { CHASSIS_CATALOG, MODULES_CATALOG, chassisName, partName } from '../config/catalog';
 import { CalculatedRobotStats, ChassisType, DesignBars, RobotDesign, RobotModule, TacticalRole } from '../types/robot';
+import { t as tr } from '../i18n';
 
 const CHASSIS_ORDER: ChassisType[] = ['light_biped', 'medium_tracked', 'heavy_quad'];
 const ROLES: TacticalRole[] = ['frontline', 'skirmisher', 'artillery', 'anti_armor', 'balanced'];
@@ -12,7 +13,7 @@ export class RobotBuilder {
   public static calculateStats(design: RobotDesign): CalculatedRobotStats {
     const chassis = CHASSIS_CATALOG[design.chassisId];
     if (!chassis) {
-      return this.createErrorStats(['Неизвестное шасси: ' + design.chassisId]);
+      return this.createErrorStats([tr('rb.unknownChassis', { id: design.chassisId })]);
     }
 
     const errors: string[] = [];
@@ -21,17 +22,17 @@ export class RobotBuilder {
 
     // 1. Volume: limited slots for engine, ammo, battery and cooling
     if (modules.length > chassis.maxSlots) {
-      errors.push(`Не хватает места в корпусе: ${modules.length} модулей при ${chassis.maxSlots} слотах`);
+      errors.push(tr('rb.noRoom', { n: modules.length, max: chassis.maxSlots }));
     }
     if (weapons.length === 0) {
-      errors.push('Нет ни одного оружия — робот бесполезен в бою');
+      errors.push(tr('rb.noWeapon'));
     }
 
     // 2. Mass
     let totalMass = chassis.baseMass;
     for (const mod of modules) totalMass += mod.mass;
     if (totalMass > chassis.maxMass) {
-      errors.push(`Перегруз: ${Math.round(totalMass)} кг при допустимых ${chassis.maxMass} кг`);
+      errors.push(tr('rb.overweight', { mass: Math.round(totalMass), max: chassis.maxMass }));
     }
 
     // 3. Power of the robot's own source (not the base grid)
@@ -44,7 +45,7 @@ export class RobotBuilder {
     }
     const isPowerSurplus = powerGen >= powerDraw;
     if (!isPowerSurplus) {
-      errors.push(`Дефицит бортовой энергии: нужно ${powerDraw} кВт, источник даёт ${powerGen} кВт`);
+      errors.push(tr('rb.powerDeficit', { need: powerDraw, have: powerGen }));
     }
 
     // 4. Survivability
@@ -95,13 +96,13 @@ export class RobotBuilder {
     const armorPierce = dps > 0 ? pierceWeighted / dps : 0;
 
     let recoilStability = 1.0;
+    let recoilUnstable = false;
     if (weapons.length > 0 && totalRecoil > chassis.recoilResistance) {
       recoilStability = Math.max(0.3, chassis.recoilResistance / totalRecoil);
       dps *= 0.6 + 0.4 * recoilStability;
       if (recoilStability < 0.55) {
-        errors.push(
-          `Нестабильная платформа: отдача ${totalRecoil.toFixed(2)} превышает жёсткость шасси ${chassis.recoilResistance}`,
-        );
+        recoilUnstable = true;
+        errors.push(tr('rb.unstable', { recoil: totalRecoil.toFixed(2), limit: chassis.recoilResistance }));
       }
     }
 
@@ -144,6 +145,7 @@ export class RobotBuilder {
       armorPierce: Number(armorPierce.toFixed(2)),
       armorRating: Number(armorRating.toFixed(2)),
       recoilStability: Number(recoilStability.toFixed(2)),
+      recoilUnstable,
       metalCost,
       componentCost,
       buildTimeSec,
@@ -157,14 +159,14 @@ export class RobotBuilder {
 
   private static describeTradeoffs(s: CalculatedRobotStats): string {
     const parts: string[] = [];
-    parts.push(s.armorRating >= 0.35 ? 'тяжёлая броня' : s.armorRating >= 0.2 ? 'средняя броня' : 'лёгкая броня');
-    if (s.effectiveSpeed >= 4.5) parts.push('высокая мобильность');
-    else if (s.effectiveSpeed <= 2.4) parts.push('медленный ход');
-    if (s.effectiveRange >= 26) parts.push('дальнобойное орудие');
-    else if (s.effectiveRange <= 5) parts.push('только ближний бой');
-    if (s.requiresDeploy) parts.push('стреляет после развёртывания');
-    if (s.heatDissipationNet < 0) parts.push('перегревается при долгой стрельбе');
-    return `${parts.join(', ')}. ${s.metalCost} металла, ${s.componentCost} компонентов, сборка ${s.buildTimeSec} с.`;
+    parts.push(tr(s.armorRating >= 0.35 ? 'rb.trade.heavyArmour' : s.armorRating >= 0.2 ? 'rb.trade.mediumArmour' : 'rb.trade.lightArmour'));
+    if (s.effectiveSpeed >= 4.5) parts.push(tr('rb.trade.fast'));
+    else if (s.effectiveSpeed <= 2.4) parts.push(tr('rb.trade.slow'));
+    if (s.effectiveRange >= 26) parts.push(tr('rb.trade.longRange'));
+    else if (s.effectiveRange <= 5) parts.push(tr('rb.trade.melee'));
+    if (s.requiresDeploy) parts.push(tr('rb.trade.deploy'));
+    if (s.heatDissipationNet < 0) parts.push(tr('rb.trade.overheats'));
+    return `${parts.join(', ')}. ${tr('rb.trade.cost', { metal: s.metalCost, comp: s.componentCost, sec: s.buildTimeSec })}`;
   }
 
   /** 0..1 bars for the constructor panel. */
@@ -187,16 +189,16 @@ export class RobotBuilder {
       const fb = b.toFixed(digits);
       out.push(`${label}: ${fa}${unit} → ${fb}${unit}`);
     };
-    line('Прочность', prev.hp, next.hp);
-    line('Броня', prev.armorRating * 100, next.armorRating * 100, '%');
-    line('Огневая мощь', prev.dps, next.dps, ' DPS');
-    line('Дальность', prev.effectiveRange, next.effectiveRange, ' м', 1);
-    line('Скорость', prev.effectiveSpeed, next.effectiveSpeed, ' м/с', 1);
+    line(tr('rb.diff.hp'), prev.hp, next.hp);
+    line(tr('rb.diff.armour'), prev.armorRating * 100, next.armorRating * 100, '%');
+    line(tr('rb.diff.dps'), prev.dps, next.dps, ' DPS');
+    line(tr('rb.diff.range'), prev.effectiveRange, next.effectiveRange, tr('unit.m'), 1);
+    line(tr('rb.diff.speed'), prev.effectiveSpeed, next.effectiveSpeed, tr('unit.mps'), 1);
     const costDelta = prev.metalCost > 0 ? Math.round(((next.metalCost - prev.metalCost) / prev.metalCost) * 100) : 0;
     if (next.metalCost !== prev.metalCost) {
-      out.push(`Стоимость: ${prev.metalCost} → ${next.metalCost} металла (${costDelta >= 0 ? '+' : ''}${costDelta}%)`);
+      out.push(tr('rb.diff.cost', { a: prev.metalCost, b: next.metalCost, delta: `${costDelta >= 0 ? '+' : ''}${costDelta}` }));
     }
-    line('Сборка', prev.buildTimeSec, next.buildTimeSec, ' с');
+    line(tr('rb.diff.build'), prev.buildTimeSec, next.buildTimeSec, tr('unit.secSuffix'));
     return out;
   }
 
@@ -214,11 +216,11 @@ export class RobotBuilder {
     const chassisRaw = String(r.chassis ?? r.chassisId ?? base.chassisId).toLowerCase();
     const chassisId =
       (CHASSIS_ORDER.find(c => c === chassisRaw) ??
-        (chassisRaw.includes('heavy') || chassisRaw.includes('тяж') || chassisRaw.includes('quad')
+        (['heavy', 'тяж', 'quad', 'pesant', 'quadrup'].some(w => chassisRaw.includes(w))
           ? 'heavy_quad'
-          : chassisRaw.includes('light') || chassisRaw.includes('лёг') || chassisRaw.includes('лег') || chassisRaw.includes('biped')
+          : ['light', 'лёг', 'лег', 'biped', 'legger', 'bipede'].some(w => chassisRaw.includes(w))
             ? 'light_biped'
-            : chassisRaw.includes('medium') || chassisRaw.includes('сред') || chassisRaw.includes('track')
+            : ['medium', 'сред', 'track', 'medi', 'cingol'].some(w => chassisRaw.includes(w))
               ? 'medium_tracked'
               : base.chassisId)) as ChassisType;
 
@@ -265,7 +267,7 @@ export class RobotBuilder {
     const notes: string[] = [];
     if (!CHASSIS_CATALOG[design.chassisId]) {
       design.chassisId = 'medium_tracked';
-      notes.push('неизвестное шасси заменено на средний гусеничный');
+      notes.push(tr('rb.note.unknownChassis'));
     }
 
     const visited = new Set<string>();
@@ -281,7 +283,7 @@ export class RobotBuilder {
       const state = designSignature(design);
       if (visited.has(state) && design.chassisId !== 'heavy_quad') {
         const next = CHASSIS_ORDER[CHASSIS_ORDER.indexOf(design.chassisId) + 1];
-        notes.push(`шасси усилено до «${CHASSIS_CATALOG[next].nameRu}» — иначе не уложиться в массу и энергию`);
+        notes.push(tr('rb.note.chassisMassPower', { name: chassisName(next) }));
         design.chassisId = next;
         continue;
       }
@@ -290,31 +292,31 @@ export class RobotBuilder {
       if (!hasWeapon) {
         if (design.modules.length >= chassis.maxSlots) design.modules.pop();
         design.modules.push('autocannon_20mm');
-        notes.push('добавлена автопушка: без оружия робот бесполезен');
+        notes.push(tr('rb.note.addedCannon'));
         continue;
       }
 
       if (design.modules.length > chassis.maxSlots) {
         const idx = this.leastImportantIndex(design.modules);
-        notes.push(`снят модуль «${MODULES_CATALOG[design.modules[idx]].nameRu}» — не хватает места`);
+        notes.push(tr('rb.note.noRoom', { name: partName(design.modules[idx]) }));
         design.modules.splice(idx, 1);
         continue;
       }
 
       // Recoil instability or overweight weapon → heavier chassis is the honest fix
-      const unstable = s.validationErrors.some(e => e.startsWith('Нестабильная'));
+      const unstable = s.recoilUnstable;
       const heaviestWeapon = Math.max(...mods.filter(m => m.category === 'weapon').map(m => m.mass));
       const weaponTooHeavy = chassis.baseMass + heaviestWeapon > chassis.maxMass;
       if ((unstable || weaponTooHeavy) && design.chassisId !== 'heavy_quad') {
         const next = CHASSIS_ORDER[CHASSIS_ORDER.indexOf(design.chassisId) + 1];
-        notes.push(`шасси усилено до «${CHASSIS_CATALOG[next].nameRu}» — иначе орудие не удержать`);
+        notes.push(tr('rb.note.chassisGun', { name: chassisName(next) }));
         design.chassisId = next;
         continue;
       }
       // Not even the heaviest chassis holds this battery: drop the gun with the strongest recoil
       if (unstable) {
         const idx = this.strongestRecoilIndex(design.modules);
-        notes.push(`снято орудие «${MODULES_CATALOG[design.modules[idx]].nameRu}» — его отдачу не удержит даже тяжёлое шасси`);
+        notes.push(tr('rb.note.recoilGun', { name: partName(design.modules[idx]) }));
         design.modules.splice(idx, 1);
         continue;
       }
@@ -326,7 +328,7 @@ export class RobotBuilder {
           continue;
         }
         const idx = this.leastImportantIndex(design.modules);
-        notes.push(`снят модуль «${MODULES_CATALOG[design.modules[idx]].nameRu}» из-за перегруза`);
+        notes.push(tr('rb.note.overweight', { name: partName(design.modules[idx]) }));
         design.modules.splice(idx, 1);
         continue;
       }
@@ -334,25 +336,25 @@ export class RobotBuilder {
       if (!s.isPowerSurplus) {
         if (!design.modules.includes('diesel_electric') && design.modules.length < chassis.maxSlots) {
           design.modules.push('diesel_electric');
-          notes.push('добавлен дизель-генератор — иначе не хватает энергии');
+          notes.push(tr('rb.note.addedDiesel'));
           continue;
         }
         const hungry = ['radar_sensor', 'micro_turbine', 'heat_radiator'].find(id => design.modules.includes(id));
         if (hungry) {
           design.modules.splice(design.modules.indexOf(hungry), 1);
-          notes.push(`снят «${MODULES_CATALOG[hungry].nameRu}» ради энергии`);
+          notes.push(tr('rb.note.hungry', { name: partName(hungry) }));
           continue;
         }
         if (!design.modules.includes('diesel_electric')) {
           const idx = this.leastImportantIndex(design.modules);
           design.modules[idx] = 'diesel_electric';
-          notes.push('модуль заменён дизель-генератором ради энергии');
+          notes.push(tr('rb.note.swappedDiesel'));
           continue;
         }
         if (design.chassisId !== 'heavy_quad') {
           const next = CHASSIS_ORDER[CHASSIS_ORDER.indexOf(design.chassisId) + 1];
           design.chassisId = next;
-          notes.push(`шасси усилено до «${CHASSIS_CATALOG[next].nameRu}» ради мощности`);
+          notes.push(tr('rb.note.chassisPower', { name: chassisName(next) }));
           continue;
         }
       }
@@ -360,7 +362,7 @@ export class RobotBuilder {
       // Last resort: drop the least important module
       if (design.modules.length > 1) {
         const idx = this.leastImportantIndex(design.modules);
-        notes.push(`снят модуль «${MODULES_CATALOG[design.modules[idx]].nameRu}»`);
+        notes.push(tr('rb.note.removed', { name: partName(design.modules[idx]) }));
         design.modules.splice(idx, 1);
       } else {
         this.resetToBase(design, notes);
@@ -374,7 +376,7 @@ export class RobotBuilder {
   private static resetToBase(design: RobotDesign, notes: string[]) {
     design.chassisId = 'light_biped';
     design.modules = ['light_composite', 'autocannon_20mm'];
-    notes.push('проект сброшен к базовой конфигурации');
+    notes.push(tr('rb.note.reset'));
   }
 
   /** Index of the weapon with the strongest recoil, keeping the first weapon when recoil ties. */
@@ -416,7 +418,7 @@ export class RobotBuilder {
       const idx = modules.indexOf(heavy);
       if (idx >= 0) {
         modules[idx] = chain[heavy];
-        return `броня «${MODULES_CATALOG[heavy].nameRu}» заменена на «${MODULES_CATALOG[chain[heavy]].nameRu}» из-за массы`;
+        return tr('rb.note.armourDowngrade', { from: partName(heavy), to: partName(chain[heavy]) });
       }
     }
     return null;
@@ -448,12 +450,13 @@ export class RobotBuilder {
       armorPierce: 0,
       armorRating: 0,
       recoilStability: 1,
+      recoilUnstable: false,
       metalCost: 999,
       componentCost: 999,
       buildTimeSec: 99,
       isValid: false,
       validationErrors: errors,
-      tradeoffsSummaryRu: 'Ошибка конфигурации',
+      tradeoffsSummaryRu: tr('rb.configError'),
     };
   }
 }

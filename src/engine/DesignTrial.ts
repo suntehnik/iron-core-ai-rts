@@ -1,8 +1,9 @@
-import { GAME_BALANCE, INITIAL_ENEMY_DESIGN } from '../config/balance';
+import { GAME_BALANCE, initialDesign } from '../config/balance';
 import { CombatUnit, TacticalPlan, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { DEFAULT_PLAN, GameState } from './GameState';
 import { RobotBuilder, designSignature } from './RobotBuilder';
+import { t as tr } from '../i18n';
 
 /**
  * Design test bench (brief §9 open decision: "доступность испытания конструкции до производства").
@@ -67,7 +68,7 @@ export function unitCost(design: RobotDesign): number {
 export function pickTrialOpponent(state: GameState): { design: RobotDesign; source: 'observed' | 'baseline' } {
   const seen = state.observedEnemyDesigns('player');
   if (seen.length) return { design: seen[0].design, source: 'observed' };
-  return { design: INITIAL_ENEMY_DESIGN, source: 'baseline' };
+  return { design: initialDesign('enemy'), source: 'baseline' };
 }
 
 /** Cache key of a bench report: everything the report depends on, the serial model for the comparison included. */
@@ -186,19 +187,19 @@ export function runDesignTrial(candidate: RobotDesign, opponent: RobotDesign, op
 /** One-line verdict for chat and voice. */
 export function trialVerdict(r: TrialReport): string {
   const pct = (v: number) => `${Math.round(v * 100)}%`;
-  const parts = [`Стенд: «${r.candidate.design.name}» против «${r.opponent.name}» — побед ${pct(r.candidate.winRate)}`];
+  const parts = [tr('trial.verdict', { candidate: r.candidate.design.name, opponent: r.opponent.name, pct: pct(r.candidate.winRate) })];
   if (r.serial) {
     const diff = r.candidate.winRate - r.serial.winRate;
     parts.push(
       Math.abs(diff) < 0.1
-        ? `на уровне текущей серии (${pct(r.serial.winRate)})`
+        ? tr('trial.verdict.same', { pct: pct(r.serial.winRate) })
         : diff > 0
-          ? `лучше текущей серии (${pct(r.serial.winRate)})`
-          : `хуже текущей серии (${pct(r.serial.winRate)})`,
+          ? tr('trial.verdict.better', { pct: pct(r.serial.winRate) })
+          : tr('trial.verdict.worse', { pct: pct(r.serial.winRate) }),
     );
   }
   if (r.equalBudget) {
-    parts.push(`на равный бюджет (${r.equalBudget.count} против ${r.opponentCount}) — ${pct(r.equalBudget.winRate)}`);
+    parts.push(tr('trial.verdict.budget', { count: r.equalBudget.count, n: r.opponentCount, pct: pct(r.equalBudget.winRate) }));
   }
   return `${parts.join(', ')}.`;
 }

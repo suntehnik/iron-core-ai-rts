@@ -1,38 +1,15 @@
 import { GAME_BALANCE } from '../config/balance';
 import { EngagementRange, ProductionAction, Stance, TacticalPlan, TargetPriority } from '../types/game';
+import { MessageKey, t } from '../i18n';
 
-const STANCES: Stance[] = ['advance', 'hold_center', 'defend_base', 'raid_economy'];
-const RANGES: EngagementRange[] = ['max_range', 'balanced', 'close_brawl'];
-const PRIORITIES: TargetPriority[] = ['closest', 'high_threat_heavies', 'scouts_harvesters', 'focus_fire', 'buildings'];
+export const STANCES: Stance[] = ['advance', 'hold_center', 'defend_base', 'raid_economy'];
+export const RANGES: EngagementRange[] = ['max_range', 'balanced', 'close_brawl'];
+export const PRIORITIES: TargetPriority[] = ['closest', 'high_threat_heavies', 'scouts_harvesters', 'focus_fire', 'buildings'];
 
-export const STANCE_RU: Record<Stance, string> = {
-  advance: 'Наступление',
-  hold_center: 'Держать центр',
-  defend_base: 'Оборона базы',
-  raid_economy: 'Рейд на добычу',
-};
-export const RANGE_RU: Record<EngagementRange, string> = {
-  max_range: 'Макс. дистанция',
-  balanced: 'Сбалансированно',
-  close_brawl: 'Ближний бой',
-};
-export const PRIORITY_RU: Record<TargetPriority, string> = {
-  closest: 'Ближайшие',
-  high_threat_heavies: 'Опасные тяжёлые',
-  scouts_harvesters: 'Добытчики и скауты',
-  focus_fire: 'Фокус огня',
-  buildings: 'Постройки',
-};
-
-export const STANCE_SHORT: Record<Stance, string> = { advance: 'Наступать', hold_center: 'Центр', defend_base: 'Оборона', raid_economy: 'Рейд' };
-export const RANGE_SHORT: Record<EngagementRange, string> = { max_range: 'Макс. дист.', balanced: 'Баланс', close_brawl: 'Вплотную' };
-export const PRIORITY_SHORT: Record<TargetPriority, string> = {
-  closest: 'Ближние',
-  high_threat_heavies: 'Тяжёлые',
-  scouts_harvesters: 'Добыча',
-  focus_fire: 'Фокус',
-  buildings: 'Здания',
-};
+/** Plan labels in the game language: full for summaries and hints, short for the plan chips. */
+export const stanceLabel = (k: Stance, short = false) => t(`stance.${k}${short ? '.short' : ''}` as MessageKey);
+export const rangeLabel = (k: EngagementRange, short = false) => t(`range.${k}${short ? '.short' : ''}` as MessageKey);
+export const priorityLabel = (k: TargetPriority, short = false) => t(`priority.${k}${short ? '.short' : ''}` as MessageKey);
 
 /** Only whitelisted plan values survive; anything else keeps the previous value. */
 export function normalizePlan(raw: unknown, prev: TacticalPlan, source: TacticalPlan['source']): TacticalPlan {
@@ -56,9 +33,13 @@ export function normalizePlan(raw: unknown, prev: TacticalPlan, source: Tactical
 }
 
 export function describePlan(p: TacticalPlan): string {
-  const parts = [STANCE_RU[p.stance], RANGE_RU[p.engagementRange].toLowerCase(), `цели: ${PRIORITY_RU[p.targetPriority].toLowerCase()}`];
-  if (p.retreatHpThreshold > 0) parts.push(`ремонт при <${p.retreatHpThreshold}%`);
-  if (p.guardHarvesters) parts.push('прикрытие добычи');
+  const parts = [
+    stanceLabel(p.stance),
+    rangeLabel(p.engagementRange).toLowerCase(),
+    t('plan.targets', { x: priorityLabel(p.targetPriority).toLowerCase() }),
+  ];
+  if (p.retreatHpThreshold > 0) parts.push(t('plan.repairBelow', { n: p.retreatHpThreshold }));
+  if (p.guardHarvesters) parts.push(t('plan.guard'));
   return parts.join(', ');
 }
 
@@ -108,17 +89,17 @@ export function normalizeActions(raw: unknown): ProductionAction[] {
 export function describeAction(a: ProductionAction): string {
   switch (a.type) {
     case 'build_harvester':
-      return `Заказать добытчиков на заводе: ${a.count} (по ${GAME_BALANCE.HARVESTER_COST_METAL} металла, ~${GAME_BALANCE.HARVESTER_BUILD_SEC} с каждый)`;
+      return t('action.harvesters', { n: a.count, metal: GAME_BALANCE.HARVESTER_COST_METAL, sec: GAME_BALANCE.HARVESTER_BUILD_SEC });
     case 'build_power_plant':
-      return `Построить электростанцию (${GAME_BALANCE.POWER_PLANT_COST_METAL} металла, +${GAME_BALANCE.POWER_PLANT_KW} кВт)`;
+      return t('action.powerPlant', { metal: GAME_BALANCE.POWER_PLANT_COST_METAL, kw: GAME_BALANCE.POWER_PLANT_KW });
     case 'build_factory':
-      return `Построить второй завод (${GAME_BALANCE.FACTORY_COST_METAL} металла, ${GAME_BALANCE.FACTORY_COST_COMPONENTS} компонентов)`;
+      return t('action.factory', { metal: GAME_BALANCE.FACTORY_COST_METAL, comp: GAME_BALANCE.FACTORY_COST_COMPONENTS });
     case 'set_batch_size':
-      return `Размер партии: ${a.size}`;
+      return t('action.batch', { n: a.size });
     case 'set_component_reserve':
-      return `Резерв компонентов: ${a.amount}`;
+      return t('action.reserve', { n: a.amount });
     case 'set_production':
-      return a.paused ? 'Остановить производство на всех заводах' : 'Возобновить производство на всех заводах';
+      return t(a.paused ? 'action.stopAll' : 'action.resumeAll');
   }
 }
 

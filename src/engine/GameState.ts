@@ -1,11 +1,10 @@
 import {
   GAME_BALANCE,
-  INITIAL_ENEMY_DESIGN,
-  INITIAL_PLAYER_DESIGN,
+  initialDesign,
   MAX_SLOTS,
   buildingSlot,
 } from '../config/balance';
-import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
+import { CHASSIS_CATALOG, MODULES_CATALOG, chassisName, partName } from '../config/catalog';
 import {
   ArmySummary,
   Building,
@@ -28,6 +27,7 @@ import {
 } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { RobotBuilder, designSignature } from './RobotBuilder';
+import { t as tr } from '../i18n';
 
 export const DEFAULT_PLAN: TacticalPlan = {
   stance: 'advance',
@@ -35,7 +35,7 @@ export const DEFAULT_PLAN: TacticalPlan = {
   targetPriority: 'closest',
   retreatHpThreshold: 0,
   guardHarvesters: false,
-  summaryRu: 'Стандартное наступление: идём на базу противника, бьём ближайшие цели.',
+  summaryRu: '', // set in the game language when a team is created
   source: 'default',
   updatedAt: 0,
 };
@@ -86,8 +86,8 @@ export class GameState {
   constructor(options: { arena?: boolean } = {}) {
     this.arena = !!options.arena;
     this.teams = {
-      player: this.createTeam('player', INITIAL_PLAYER_DESIGN),
-      enemy: this.createTeam('enemy', INITIAL_ENEMY_DESIGN),
+      player: this.createTeam('player', initialDesign('player')),
+      enemy: this.createTeam('enemy', initialDesign('enemy')),
     };
     if (!this.arena) this.initMap();
   }
@@ -117,7 +117,7 @@ export class GameState {
       team,
       economy,
       design: { ...design, createdAt: Date.now() },
-      plan: { ...DEFAULT_PLAN },
+      plan: { ...DEFAULT_PLAN, summaryRu: tr('plan.default') },
       batchCounter: 1,
       designsFielded: [design.name],
       harvesterQueue: 0,
@@ -193,18 +193,18 @@ export class GameState {
     const econ = this.teams[team].economy;
     const max = type === 'factory' ? GAME_BALANCE.MAX_FACTORIES : GAME_BALANCE.MAX_POWER_PLANTS;
     if (this.buildingCount(team, type) >= Math.min(max, MAX_SLOTS[type])) {
-      return { ok: false, reason: type === 'factory' ? 'Достигнут предел заводов' : 'Нет места под электростанцию' };
+      return { ok: false, reason: type === 'factory' ? tr('build.factoryLimit') : tr('build.noPlantSlot') };
     }
     const metal = type === 'factory' ? GAME_BALANCE.FACTORY_COST_METAL : GAME_BALANCE.POWER_PLANT_COST_METAL;
     const comps = type === 'factory' ? GAME_BALANCE.FACTORY_COST_COMPONENTS : 0;
-    if (econ.metal < metal) return { ok: false, reason: `Нужно ${metal} металла` };
-    if (econ.components < comps) return { ok: false, reason: `Нужно ${comps} компонентов` };
+    if (econ.metal < metal) return { ok: false, reason: tr('build.needMetal', { n: metal }) };
+    if (econ.components < comps) return { ok: false, reason: tr('build.needComponents', { n: comps }) };
     return { ok: true };
   }
 
   public buildStructure(team: Team, type: 'factory' | 'power_plant'): { ok: boolean; text: string } {
     const check = this.canBuild(team, type);
-    if (!check.ok) return { ok: false, text: check.reason || 'Невозможно построить' };
+    if (!check.ok) return { ok: false, text: check.reason || tr('build.impossible') };
     const occupied = this.buildings.filter(b => b.team === team && b.type === type).map(b => b.pos);
     let slot: Vector2D | null = null;
     for (let i = 0; i < MAX_SLOTS[type]; i++) {
@@ -214,14 +214,13 @@ export class GameState {
         break;
       }
     }
-    if (!slot) return { ok: false, text: 'Нет свободной площадки' };
+    if (!slot) return { ok: false, text: tr('build.noSlot') };
     const econ = this.teams[team].economy;
     econ.metal -= type === 'factory' ? GAME_BALANCE.FACTORY_COST_METAL : GAME_BALANCE.POWER_PLANT_COST_METAL;
     econ.components -= type === 'factory' ? GAME_BALANCE.FACTORY_COST_COMPONENTS : 0;
     this.addBuilding(team, type, slot, false);
-    const label = type === 'factory' ? 'завода' : 'электростанции';
-    this.pushEvent(team, 'info', `Начато строительство ${label}`, false);
-    return { ok: true, text: `Строим ${type === 'factory' ? 'завод' : 'электростанцию'}` };
+    this.pushEvent(team, 'info', tr(type === 'factory' ? 'build.startedFactory' : 'build.startedPlant'), false);
+    return { ok: true, text: tr(type === 'factory' ? 'build.buildingFactory' : 'build.buildingPlant') };
   }
 
   public harvesterCount(team: Team): number {
@@ -245,31 +244,31 @@ export class GameState {
     const t = this.teams[team];
     const econ = t.economy;
     if (this.harvesterCount(team) + this.harvestersInProduction(team) >= GAME_BALANCE.MAX_HARVESTERS) {
-      return { ok: false, text: `Предел добытчиков: ${GAME_BALANCE.MAX_HARVESTERS}` };
+      return { ok: false, text: tr('harv.limit', { n: GAME_BALANCE.MAX_HARVESTERS }) };
     }
     const hasFactory = this.buildings.some(b => b.team === team && b.type === 'factory');
     if (!hasFactory && !this.getHQ(team)) {
-      return { ok: false, text: 'Нет ни завода, ни штаба — добытчика негде собрать' };
+      return { ok: false, text: tr('harv.nowhere') };
     }
     // No miners at all (none alive, none on order): the HQ issues an emergency harvester for free,
     // otherwise "no metal → no harvester → no metal" would lock the economy forever.
     const emergency = this.harvesterCount(team) + this.harvestersInProduction(team) === 0;
     if (!emergency && econ.metal < GAME_BALANCE.HARVESTER_COST_METAL) {
-      return { ok: false, text: `Нужно ${GAME_BALANCE.HARVESTER_COST_METAL} металла` };
+      return { ok: false, text: tr('build.needMetal', { n: GAME_BALANCE.HARVESTER_COST_METAL }) };
     }
     if (!emergency) econ.metal -= GAME_BALANCE.HARVESTER_COST_METAL;
     t.harvesterQueue++;
-    if (emergency) this.pushEvent(team, 'info', 'Добытчиков не осталось — штаб выделил аварийного добытчика бесплатно', false);
+    if (emergency) this.pushEvent(team, 'info', tr('harv.emergencyEvent'), false);
     if (!hasFactory) {
       const sec = GAME_BALANCE.HARVESTER_BUILD_SEC * GAME_BALANCE.HQ_EMERGENCY_HARVESTER_FACTOR;
-      return { ok: true, text: `Завода нет — аварийный цех штаба соберёт добытчика за ~${sec} с` };
+      return { ok: true, text: tr('harv.hqBay', { n: sec }) };
     }
     const paused = this.buildings.filter(b => b.team === team && b.type === 'factory').every(b => b.paused);
     return {
       ok: true,
       text: paused
-        ? 'Добытчик заказан, но заводы на паузе — запустите производство'
-        : `Добытчик заказан: выйдет с завода через ~${GAME_BALANCE.HARVESTER_BUILD_SEC} с`,
+        ? tr('harv.orderedPaused')
+        : tr('harv.ordered', { n: GAME_BALANCE.HARVESTER_BUILD_SEC }),
     };
   }
 
@@ -300,19 +299,19 @@ export class GameState {
             break;
           }
         }
-        if (!ordered) return `Добытчик не заказан: ${lastFail}`;
+        if (!ordered) return tr('act.harvNotOrdered', { why: lastFail });
         const factories = this.buildings.filter(b => b.team === team && b.type === 'factory');
         const where = !factories.length
-          ? 'соберёт аварийный цех штаба'
+          ? tr('act.harvByHq')
           : factories.every(b => b.paused)
-            ? 'ждут на остановленном заводе — запустите производство'
-            : `завод соберёт их за ~${ordered * GAME_BALANCE.HARVESTER_BUILD_SEC} с`;
-        return `Заказано добытчиков: ${ordered}, ${where}${lastFail ? ` (${lastFail})` : ''}`;
+            ? tr('act.harvWaitPaused')
+            : tr('act.harvByFactory', { n: ordered * GAME_BALANCE.HARVESTER_BUILD_SEC });
+        return `${tr('act.harvOrdered', { n: ordered, where })}${lastFail ? ` (${lastFail})` : ''}`;
       }
       case 'set_production': {
         const n = this.setFactoryPaused(team, null, action.paused);
-        if (!n) return 'Заводов нет';
-        return action.paused ? `Производство остановлено (заводов: ${n})` : `Производство возобновлено (заводов: ${n})`;
+        if (!n) return tr('act.noFactories');
+        return tr(action.paused ? 'act.productionStopped' : 'act.productionResumed', { n });
       }
       case 'build_power_plant':
         return this.buildStructure(team, 'power_plant').text;
@@ -320,11 +319,11 @@ export class GameState {
         return this.buildStructure(team, 'factory').text;
       case 'set_batch_size': {
         econ.batchSize = Math.max(GAME_BALANCE.BATCH_SIZE_MIN, Math.min(GAME_BALANCE.BATCH_SIZE_MAX, Math.round(action.size)));
-        return `Размер партии: ${econ.batchSize}`;
+        return tr('act.batchSize', { n: econ.batchSize });
       }
       case 'set_component_reserve': {
         econ.componentReserve = Math.max(0, Math.min(600, Math.round(action.amount)));
-        return `Резерв компонентов: ${econ.componentReserve}`;
+        return tr('act.componentReserve', { n: econ.componentReserve });
       }
     }
   }
@@ -335,7 +334,7 @@ export class GameState {
     const t = this.teams[team];
     t.design = { ...design };
     if (!t.designsFielded.includes(design.name)) t.designsFielded.push(design.name);
-    this.pushEvent(team, 'design_changed', `Новая конструкция «${design.name}» пойдёт в следующую партию`, false);
+    this.pushEvent(team, 'design_changed', tr('event.designChanged', { name: design.name }), false);
   }
 
   public setPlan(team: Team, plan: TacticalPlan) {
@@ -447,7 +446,7 @@ export class GameState {
         this.pushEvent(
           team,
           'power_shortage',
-          `Дефицит энергии базы: ${Math.round(demand)} из ${capacity} кВт — заводы и добыча замедлены`,
+          tr('event.powerShortage', { demand: Math.round(demand), capacity }),
           false,
         );
       }
@@ -462,7 +461,7 @@ export class GameState {
       b.hp = Math.min(b.maxHp, b.hp + (b.built - before) * b.maxHp * 0.85);
       if (b.built >= 1) {
         this.addEffect('build_complete', b.pos, b.team, b.radius);
-        this.pushEvent(b.team, 'build_complete', b.type === 'factory' ? 'Новый завод запущен' : 'Электростанция подключена к сети', false);
+        this.pushEvent(b.team, 'build_complete', tr(b.type === 'factory' ? 'event.factoryOnline' : 'event.plantOnline'), false);
       }
     }
   }
@@ -497,15 +496,15 @@ export class GameState {
 
   /** Factory status for the HUD */
   public factoryStatus(b: Building): string {
-    if (b.built < 1) return `Строится ${Math.round(b.built * 100)}%`;
-    if (b.paused) return 'Остановлен';
-    if (b.harvesterBuild) return 'Добытчик';
-    if (!b.job) return 'Ожидание ресурсов';
-    if (this.isArmyCapped(b.team)) return 'Предел армии';
+    if (b.built < 1) return tr('factory.building', { pct: Math.round(b.built * 100) });
+    if (b.paused) return tr('factory.paused');
+    if (b.harvesterBuild) return tr('factory.harvester');
+    if (!b.job) return tr('factory.waitingResources');
+    if (this.isArmyCapped(b.team)) return tr('factory.armyCap');
     if (!b.job.unitPaid && !this.canAffordUnit(b.team, b.job.stats.metalCost, b.job.stats.componentCost)) {
-      return 'Ждёт металл/компоненты';
+      return tr('factory.needResources');
     }
-    return 'Сборка';
+    return tr('factory.assembling');
   }
 
   private canAffordUnit(team: Team, metal: number, comps: number) {
@@ -527,7 +526,7 @@ export class GameState {
         if (b.harvesterBuild.progressSec >= b.harvesterBuild.totalSec) {
           b.harvesterBuild = null;
           this.spawnHarvester(b.team, { x: b.pos.x + dir * (b.radius + 1.5), y: b.pos.y + (Math.random() - 0.5) * 3 });
-          this.pushEvent(b.team, 'info', 'Новый добытчик сошёл с конвейера', false);
+          this.pushEvent(b.team, 'info', tr('event.harvesterBuilt'), false);
         }
         continue;
       }
@@ -554,7 +553,7 @@ export class GameState {
           batchNumber: t.batchCounter++,
           unitPaid: false,
         };
-        this.pushEvent(b.team, 'batch_started', `Партия #${b.job.batchNumber}: «${t.design.name}» ×${econ.batchSize}`, false);
+        this.pushEvent(b.team, 'batch_started', tr('event.batchStarted', { n: b.job.batchNumber, name: t.design.name, size: econ.batchSize }), false);
       }
 
       const job = b.job;
@@ -576,7 +575,7 @@ export class GameState {
         job.progressSec = 0;
         job.unitPaid = false;
         if (job.remaining <= 0) {
-          this.pushEvent(b.team, 'batch_complete', `Партия #${job.batchNumber} «${job.design.name}» вышла на передовую`, false);
+          this.pushEvent(b.team, 'batch_complete', tr('event.batchComplete', { n: job.batchNumber, name: job.design.name }), false);
           this.sound.batchReady(b.team);
           b.job = null;
         }
@@ -605,7 +604,7 @@ export class GameState {
         hq.harvesterBuild = null;
         const dir = team === 'player' ? 1 : -1;
         this.spawnHarvester(team, { x: hq.pos.x + dir * (hq.radius + 1.5), y: hq.pos.y + (Math.random() - 0.5) * 4 });
-        this.pushEvent(team, 'info', 'Аварийный цех штаба собрал добытчика', false);
+        this.pushEvent(team, 'info', tr('event.hqBayBuilt'), false);
       }
     }
   }
@@ -909,7 +908,7 @@ export class GameState {
       const waitedTooLong = this.gameTime - oldest > GAME_BALANCE.WAVE_MAX_WAIT_SEC && gathered.length >= 2;
       if (enough || waitedTooLong) {
         for (const u of waiting) u.committed = true;
-        this.pushEvent(team, 'info', `Волна из ${waiting.length} машин пошла в наступление`, false);
+        this.pushEvent(team, 'info', tr('event.waveLaunched', { count: waiting.length }), false);
       }
     }
   }
@@ -1201,7 +1200,7 @@ export class GameState {
       target.hp -= Math.max(1, dmg);
       target.lastDamagedAt = this.gameTime;
       if (target.kind === 'harvester' && this.throttled(`harv_attack_${target.team}`, 25)) {
-        this.pushEvent(target.team, 'harvester_attacked', 'Наших добытчиков атакуют!', true);
+        this.pushEvent(target.team, 'harvester_attacked', tr('event.harvestersAttacked'), true);
       }
       if (target.hp <= 0) this.killUnit(target, sourceTeam, sourceId);
       return;
@@ -1213,16 +1212,15 @@ export class GameState {
     b.hp -= Math.max(1, raw * (1 - GAME_BALANCE.BUILDING_ARMOR * (1 - pierce)));
     b.lastDamagedAt = this.gameTime;
     if (this.throttled(`base_attack_${b.team}`, 25)) {
-      const what = b.type === 'command_center' ? 'командный центр' : b.type === 'factory' ? 'завод' : 'электростанцию';
-      this.pushEvent(b.team, 'base_attack', `Противник атакует ${what}!`, true);
+      const what = b.type === 'command_center' ? 'event.attackHq' : b.type === 'factory' ? 'event.attackFactory' : 'event.attackPlant';
+      this.pushEvent(b.team, 'base_attack', tr(what), true);
     }
     if (b.hp <= 0) {
       this.addEffect('big_explosion', b.pos, b.team, b.radius * 1.4);
       this.sound.explosion(true);
       if (b.type !== 'command_center') {
         this.buildings = this.buildings.filter(x => x.id !== b.id);
-        const what = b.type === 'factory' ? 'Завод' : 'Электростанция';
-        this.pushEvent(b.team, 'base_attack', `${what} уничтожен(а)!`, true);
+        this.pushEvent(b.team, 'base_attack', tr(b.type === 'factory' ? 'event.factoryDestroyed' : 'event.plantDestroyed'), true);
       }
     }
   }
@@ -1242,14 +1240,14 @@ export class GameState {
     const econ = this.teams[u.team].economy;
     if (u.kind === 'harvester') {
       econ.totals.harvestersLost++;
-      this.pushEvent(u.team, 'loss', 'Потерян добытчик', false);
+      this.pushEvent(u.team, 'loss', tr('event.harvesterLost'), false);
     } else {
       econ.totals.unitsLost++;
       const times = this.lossTimes[u.team];
       times.push(this.gameTime);
       while (times.length && this.gameTime - times[0] > 20) times.shift();
       if (times.length >= 4 && this.throttled(`heavy_losses_${u.team}`, 20)) {
-        this.pushEvent(u.team, 'heavy_losses', `Тяжёлые потери: ${times.length} машин за 20 секунд`, true);
+        this.pushEvent(u.team, 'heavy_losses', tr('event.heavyLosses', { count: times.length }), true);
       }
     }
   }
@@ -1270,19 +1268,19 @@ export class GameState {
         this.buildings.some(b => b.team === observer && dist(b.pos, u.pos) < 30);
       if (!near) continue;
       seen.add(signature);
-      const chassis = CHASSIS_CATALOG[u.design.chassisId]?.nameRu ?? u.design.chassisId;
+      const chassis = CHASSIS_CATALOG[u.design.chassisId] ? chassisName(u.design.chassisId) : u.design.chassisId;
       const weapons = u.design.modules
         .map(id => MODULES_CATALOG[id])
         .filter(m => m && m.category === 'weapon')
-        .map(m => m.nameRu)
+        .map(m => partName(m.id))
         .join(', ');
       const first = seen.size === 1;
       this.pushEvent(
         observer,
         'enemy_new_design',
         first
-          ? `Разведка: противник выставил «${u.design.name}» (${chassis}, ${weapons || 'без оружия'})`
-          : `Противник вывел новую модель «${u.design.name}»: ${chassis}, ${weapons || 'без оружия'}`,
+          ? tr('event.firstSighting', { name: u.design.name, chassis, weapons: weapons || tr('event.noWeapons') })
+          : tr('event.newEnemyModel', { name: u.design.name, chassis, weapons: weapons || tr('event.noWeapons') }),
         !first,
       );
     }

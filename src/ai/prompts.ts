@@ -90,7 +90,7 @@ function eventsLine(state: GameState, team: Team): string {
   return ev.length ? ev.map(e => `[${Math.round(e.time)}с] ${e.text}`).join('; ') : 'нет';
 }
 
-function planLine(p: TacticalPlan): string {
+export function planLine(p: TacticalPlan): string {
   return `stance=${p.stance}, engagementRange=${p.engagementRange}, targetPriority=${p.targetPriority}, retreatHpThreshold=${p.retreatHpThreshold}, guardHarvesters=${p.guardHarvesters}`;
 }
 
@@ -131,17 +131,22 @@ export function engineerRepairPrompt(errors: string[]): string {
   return `Твоя конфигурация нарушает ограничения: ${errors.join('; ')}. Исправь её, сохранив замысел командира (если всё сразу невозможно — выбери компромисс и назови его), и верни тот же JSON.`;
 }
 
-/** Cost cap stated in the order ("не дороже чем на четверть", "не больше 30%"). */
+/**
+ * Cost cap stated in the order, in any game language: «не дороже чем на четверть», «не больше 30%»,
+ * "no more than a quarter dearer", "non più caro di un terzo".
+ */
 export function parseCostLimitPct(order: string): number | null {
   const p = order.toLowerCase();
-  if (!/(стоимост|дорож|цен|бюджет|металл)/.test(p)) return null;
-  const pct = p.match(/(\d{1,3})\s*(%|процент)/);
+  if (!/(стоимост|дорож|цен|бюджет|металл|cost|price|budget|expensive|dearer|pricier|metal|prezz|costo|caro|metallo)/.test(p)) return null;
+  const pct = p.match(/(\d{1,3})\s*(%|процент|percent|per cento|percento)/);
   if (pct) return Number(pct[1]);
-  if (/четверт/.test(p)) return 25;
-  if (/трет/.test(p)) return 33;
-  if (/половин|полтора/.test(p)) return 50;
-  if (/вдвое|в два раза|в 2 раза/.test(p)) return 100;
+  if (/четверт|quarter|quarto/.test(p)) return 25;
+  if (/трет|third|terzo/.test(p)) return 33;
+  if (/половин|полтора|half|metà|meta\b/.test(p)) return 50;
+  if (/вдвое|в два раза|в 2 раза|double|twice|doppio/.test(p)) return 100;
   if (/не дороже(?! чем на)|той же цен|не повыша|не увеличива[а-я]* стоимост[а-я]*$/.test(p)) return 0;
+  if (/no (more )?(expensive|dearer)(?! than)|same (cost|price)|(don't|do not) raise the (cost|price)/.test(p)) return 0;
+  if (/non più car[oa](?! di)|stesso (costo|prezzo)|senza aumentare/.test(p)) return 0;
   return null;
 }
 
@@ -202,7 +207,7 @@ function instructionsReminder(instructions: string | undefined): string[] {
   return text ? [`УКАЗАНИЯ ШТАБА — выполни их в этом решении (план, конструкция, экономика): «${text}»`] : [];
 }
 
-function cleanInstructions(instructions: string | undefined): string {
+export function cleanInstructions(instructions: string | undefined): string {
   return (instructions ?? '').trim().slice(0, COMMANDER_INSTRUCTIONS_MAX);
 }
 
@@ -267,3 +272,28 @@ export const ENEMY_SYSTEM = commanderSystem('enemy', false);
 export function enemyUserPrompt(state: GameState): string {
   return commanderUserPrompt(state, 'enemy');
 }
+
+/** One language of agent prompts; the director picks it by the provider (see LLMProviderPreset.promptLanguage). */
+export interface PromptSet {
+  engineerSystem: string;
+  engineerUser(state: GameState, order: string, pending: ProductionProposal | null): string;
+  engineerRepair(errors: string[]): string;
+  tacticianSystem: string;
+  tacticianUser(state: GameState, order: string | null, standingOrders: string[], trigger: string | null): string;
+  commanderSystem(team: Team, vsAI: boolean, instructions?: string): string;
+  commanderUser(state: GameState, team: Team, instructions?: string): string;
+  replanSystem(team: Team, vsAI: boolean, instructions?: string): string;
+  replanUser(state: GameState, team: Team, trigger: string, instructions?: string): string;
+}
+
+export const PROMPTS_RU: PromptSet = {
+  engineerSystem: ENGINEER_SYSTEM,
+  engineerUser: engineerUserPrompt,
+  engineerRepair: engineerRepairPrompt,
+  tacticianSystem: TACTICIAN_SYSTEM,
+  tacticianUser: tacticianUserPrompt,
+  commanderSystem,
+  commanderUser: commanderUserPrompt,
+  replanSystem: commanderReplanSystem,
+  replanUser: commanderReplanPrompt,
+};

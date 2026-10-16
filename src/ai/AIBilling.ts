@@ -1,4 +1,5 @@
 import { AI_TARIFFS, AI_WALLET, llmCost } from '../config/tariffs';
+import { t } from '../i18n';
 
 /** The four billed services from brief §10. */
 export type AIService = 'tactical' | 'production' | 'asr' | 'tts';
@@ -133,8 +134,8 @@ export class AIBilling {
       return {
         ok: false,
         reason: byLimit
-          ? 'исчерпан лимит AI-расходов на матч'
-          : 'недостаточно AI-монет на балансе',
+          ? t('bill.limitReached')
+          : t('bill.noCoins'),
       };
     }
     return { ok: true };
@@ -207,12 +208,12 @@ export class AIBilling {
     if (st === 'low' && !this.lowWarned) {
       this.lowWarned = true;
       this.warn(
-        `AI-монеты на исходе: осталось ${this.remaining().toFixed(1)}. Скоро новые AI-запросы станут недоступны — армия продолжит последний утверждённый план обычным игровым AI.`,
+        t('bill.low', { n: this.remaining().toFixed(1) }),
       );
     }
     if (st === 'exhausted' && !this.exhaustedWarned) {
       this.exhaustedWarned = true;
-      this.warn('Лимит AI-расходов исчерпан: агенты больше не обращаются к облаку, исполняется последний допустимый план.');
+      this.warn(t('bill.exhausted'));
     }
   }
 

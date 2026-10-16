@@ -1,12 +1,13 @@
 import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { Home, RotateCcw, Skull, Trophy } from 'lucide-react';
-import { COMMANDERS } from '../config/commanders';
+import { commanderName } from '../config/commanders';
 import { TEAM_COLORS } from '../config/balance';
 import { GameController } from '../game/GameController';
 import { Team } from '../types/game';
 import { CommanderPortrait } from './Portraits';
 import { fmtCoins, formatTime } from './ui';
+import { t } from '../i18n';
 
 export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const s = ctrl.state;
@@ -23,7 +24,7 @@ export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
 
   if (spectator) return <SpectatorResult ctrl={ctrl} winner={winner} />;
 
-  const t = s.teams.player.economy.totals;
+  const totals = s.teams.player.economy.totals;
   const b = ctrl.director.billing.snapshot();
   const aiCalls = b.services.production.calls + b.services.tactical.calls;
 
@@ -33,22 +34,22 @@ export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
         <div className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center ${won ? 'bg-amber-400/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'}`}>
           {won ? <Trophy className="w-9 h-9" /> : <Skull className="w-9 h-9" />}
         </div>
-        <h1 className="font-heading text-3xl font-bold mt-3">{won ? 'Победа!' : 'Штаб потерян'}</h1>
+        <h1 className="font-heading text-3xl font-bold mt-3">{won ? t('victory.won') : t('victory.lost')}</h1>
         <p className="text-sm text-slate-300 mt-1">
-          {won ? 'Командный центр противника уничтожен. Инженерные решения сработали.' : 'Противник прорвал оборону. Попробуйте другую конструкцию или тактику.'}
+          {won ? t('victory.wonText') : t('victory.lostText')}
         </p>
         <div className="grid grid-cols-3 gap-2 mt-4 text-xs">
-          <Stat label="Время матча" value={formatTime(s.gameTime)} />
-          <Stat label="Добыто металла" value={Math.round(t.metalMined + t.scrapReclaimed)} />
-          <Stat label="Выпущено машин" value={t.unitsBuilt} />
-          <Stat label="Уничтожено врагов" value={t.kills} />
-          <Stat label="Потеряно машин" value={t.unitsLost} />
-          <Stat label="Финальная модель" value={s.teams.player.design.name} />
-          <Stat label="AI-вызовов" value={aiCalls} />
-          <Stat label="Монет за матч" value={fmtCoins(b.spentThisMatch)} />
-          <Stat label="Токенов вх/вых" value={`${b.services.production.tokensIn + b.services.tactical.tokensIn}/${b.services.production.tokensOut + b.services.tactical.tokensOut}`} />
+          <Stat label={t('stat.matchTime')} value={formatTime(s.gameTime)} />
+          <Stat label={t('stat.metal')} value={Math.round(totals.metalMined + totals.scrapReclaimed)} />
+          <Stat label={t('stat.built')} value={totals.unitsBuilt} />
+          <Stat label={t('stat.kills')} value={totals.kills} />
+          <Stat label={t('stat.lost')} value={totals.unitsLost} />
+          <Stat label={t('stat.finalModel')} value={s.teams.player.design.name} />
+          <Stat label={t('stat.aiCalls')} value={aiCalls} />
+          <Stat label={t('stat.coins')} value={fmtCoins(b.spentThisMatch)} />
+          <Stat label={t('stat.tokens')} value={`${b.services.production.tokensIn + b.services.tactical.tokensIn}/${b.services.production.tokensOut + b.services.tactical.tokensOut}`} />
         </div>
-        <Buttons ctrl={ctrl} again="Следующий матч" />
+        <Buttons ctrl={ctrl} again={t('victory.next')} />
       </div>
     </div>
   );
@@ -66,10 +67,10 @@ const SpectatorResult: React.FC<{ ctrl: GameController; winner: Team }> = ({ ctr
           <CommanderPortrait team={winner} size={64} />
         </div>
         <h1 className="font-heading text-3xl font-bold mt-2" style={{ color: color.light }}>
-          Победа: {COMMANDERS[winner].name}
+          {t('victory.spectatorWinner', { name: commanderName(winner) })}
         </h1>
         <p className="text-sm text-slate-300 mt-1">
-          Матч ИИ против ИИ завершён за {formatTime(s.gameTime)}: штаб {winner === 'player' ? 'оранжевых' : 'бирюзовых'} уничтожен.
+          {t('victory.spectatorText', { time: formatTime(s.gameTime), loser: winner === 'player' ? t('army.orangeGen') : t('army.tealGen') })}
         </p>
         <table className="w-full mt-4 text-xs tabular-nums">
           <thead className="text-[10px] uppercase tracking-wider text-slate-400">
@@ -77,23 +78,23 @@ const SpectatorResult: React.FC<{ ctrl: GameController; winner: Team }> = ({ ctr
               <th className="text-left font-semibold pb-1" />
               {(['player', 'enemy'] as Team[]).map(team => (
                 <th key={team} className="text-right font-semibold pb-1" style={{ color: TEAM_COLORS[team].light }}>
-                  {COMMANDERS[team].name}
+                  {commanderName(team)}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            <Row label="Добыто металла" v={team => Math.round(s.teams[team].economy.totals.metalMined + s.teams[team].economy.totals.scrapReclaimed)} />
-            <Row label="Выпущено машин" v={team => s.teams[team].economy.totals.unitsBuilt} />
-            <Row label="Уничтожено врагов" v={team => s.teams[team].economy.totals.kills} />
-            <Row label="Потеряно машин" v={team => s.teams[team].economy.totals.unitsLost} />
-            <Row label="Финальная модель" v={team => s.teams[team].design.name} />
-            <Row label="Решений LLM / ошибок" v={team => `${usage[team].calls} / ${usage[team].errors}`} />
-            <Row label="Токенов вх/вых" v={team => `${usage[team].tokensIn}/${usage[team].tokensOut}`} />
+            <Row label={t('stat.metal')} v={team => Math.round(s.teams[team].economy.totals.metalMined + s.teams[team].economy.totals.scrapReclaimed)} />
+            <Row label={t('stat.built')} v={team => s.teams[team].economy.totals.unitsBuilt} />
+            <Row label={t('stat.kills')} v={team => s.teams[team].economy.totals.kills} />
+            <Row label={t('stat.lost')} v={team => s.teams[team].economy.totals.unitsLost} />
+            <Row label={t('stat.finalModel')} v={team => s.teams[team].design.name} />
+            <Row label={t('stat.llmDecisions')} v={team => `${usage[team].calls} / ${usage[team].errors}`} />
+            <Row label={t('stat.tokens')} v={team => `${usage[team].tokensIn}/${usage[team].tokensOut}`} />
           </tbody>
         </table>
-        <div className="text-[10px] text-slate-400 mt-2">Режим наблюдения не списывает AI-монеты: это демонстрация, а не ваши приказы.</div>
-        <Buttons ctrl={ctrl} again="Ещё матч ИИ против ИИ" />
+        <div className="text-[10px] text-slate-400 mt-2">{t('victory.spectatorNote')}</div>
+        <Buttons ctrl={ctrl} again={t('victory.againAi')} />
       </div>
     </div>
   );
@@ -121,7 +122,7 @@ const Buttons: React.FC<{ ctrl: GameController; again: string }> = ({ ctrl, agai
       onClick={() => ctrl.backToMenu()}
       className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-100 font-semibold flex items-center justify-center gap-2"
     >
-      <Home className="w-5 h-5" /> В меню
+      <Home className="w-5 h-5" /> {t('common.toMenu')}
     </button>
   </div>
 );

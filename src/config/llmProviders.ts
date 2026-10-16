@@ -1,3 +1,5 @@
+import { MessageKey, t } from '../i18n';
+
 export type LLMProviderId =
   | 'openrouter'
   | 'dashscope'
@@ -7,14 +9,16 @@ export type LLMProviderId =
   | 'anthropic'
   | 'proxy'
   | 'custom'
+  | 'device'
   | 'offline';
 
-export type LLMProtocol = 'openai' | 'anthropic' | 'none';
+/** 'native' = the on-device model of the iOS app, reached through the WebView bridge */
+export type LLMProtocol = 'openai' | 'anthropic' | 'native' | 'none';
 
 export interface LLMProviderPreset {
   id: LLMProviderId;
+  /** brand name; our own providers (proxy, custom, device, offline) are localized by providerLabel() */
   label: string;
-  hint: string;
   protocol: LLMProtocol;
   baseUrl: string;
   defaultModel: string;
@@ -22,6 +26,8 @@ export interface LLMProviderPreset {
   /** Whether the provider accepts `response_format: {type: "json_object"}` */
   jsonMode: boolean;
   keyUrl?: string;
+  /** Language of the agent prompts; 'en' for models without Russian (fragments are translated on the device) */
+  promptLanguage?: 'ru' | 'en';
 }
 
 /**
@@ -33,7 +39,6 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   openrouter: {
     id: 'openrouter',
     label: 'OpenRouter · Qwen',
-    hint: 'Рекомендуется: быстрые недорогие модели Qwen, работает прямо из браузера',
     protocol: 'openai',
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'qwen/qwen3-30b-a3b-instruct-2507',
@@ -44,7 +49,6 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   dashscope: {
     id: 'dashscope',
     label: 'Alibaba Qwen (DashScope)',
-    hint: 'Официальный API Qwen. Если браузер блокирует CORS — используйте серверный прокси',
     protocol: 'openai',
     baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     defaultModel: 'qwen-flash',
@@ -55,7 +59,6 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   groq: {
     id: 'groq',
     label: 'Groq',
-    hint: 'Очень низкая задержка, модель Qwen3 32B',
     protocol: 'openai',
     baseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'qwen/qwen3-32b',
@@ -66,7 +69,6 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   openai: {
     id: 'openai',
     label: 'OpenAI',
-    hint: 'Любая chat-completions модель OpenAI',
     protocol: 'openai',
     baseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4.1-mini',
@@ -77,7 +79,6 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   gemini: {
     id: 'gemini',
     label: 'Google Gemini',
-    hint: 'OpenAI-совместимый эндпоинт Gemini',
     protocol: 'openai',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-2.5-flash-lite',
@@ -88,7 +89,6 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   anthropic: {
     id: 'anthropic',
     label: 'Anthropic Claude',
-    hint: 'Claude Haiku через Messages API',
     protocol: 'anthropic',
     baseUrl: 'https://api.anthropic.com/v1',
     defaultModel: 'claude-haiku-5-5',
@@ -98,8 +98,7 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   },
   proxy: {
     id: 'proxy',
-    label: 'Серверный прокси (.env)',
-    hint: 'Ключ хранится на dev-сервере (LLM_API_KEY в .env.local) и не попадает в браузер',
+    label: 'Server proxy (.env)',
     protocol: 'openai',
     baseUrl: '/api/llm',
     defaultModel: '',
@@ -108,18 +107,26 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
   },
   custom: {
     id: 'custom',
-    label: 'Локальный / свой OpenAI-совместимый',
-    hint: 'oMLX, vLLM, LM Studio, Ollama, корпоративный шлюз… (сервер должен разрешать CORS)',
+    label: 'Local / OpenAI-compatible',
     protocol: 'openai',
     baseUrl: 'http://127.0.0.1:8000/v1',
     defaultModel: 'Qwen3.6-35B-A3B-UD-MLX-4bit',
     needsKey: false,
     jsonMode: true,
   },
+  device: {
+    id: 'device',
+    label: 'On device · Apple Intelligence',
+    protocol: 'native',
+    baseUrl: '',
+    defaultModel: 'apple-on-device',
+    needsKey: false,
+    jsonMode: false,
+    promptLanguage: 'en',
+  },
   offline: {
     id: 'offline',
-    label: 'Без облака',
-    hint: 'Агенты работают на локальных эвристиках — для проверки без ключа',
+    label: 'No LLM',
     protocol: 'none',
     baseUrl: '',
     defaultModel: '',
@@ -137,5 +144,24 @@ export const PROVIDER_ORDER: LLMProviderId[] = [
   'anthropic',
   'proxy',
   'custom',
+  'device',
   'offline',
 ];
+
+const LOCALIZED_LABELS: Partial<Record<LLMProviderId, MessageKey>> = {
+  proxy: 'provider.proxy.label',
+  custom: 'provider.custom.label',
+  device: 'provider.device.label',
+  offline: 'provider.offline.label',
+};
+
+/** Provider name for the UI: brands as they are, our own options in the game language. */
+export function providerLabel(id: LLMProviderId): string {
+  const key = LOCALIZED_LABELS[id];
+  return key ? t(key) : LLM_PROVIDERS[id].label;
+}
+
+/** One-line description of a provider in the game language. */
+export function providerHint(id: LLMProviderId): string {
+  return t(`provider.${id}.hint` as MessageKey);
+}

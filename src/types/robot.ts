@@ -9,7 +9,6 @@ export type TacticalRole = 'frontline' | 'skirmisher' | 'artillery' | 'anti_armo
 export interface RobotModule {
   id: string;
   name: string;
-  nameRu: string;
   category: ModuleCategory;
   mass: number;         // kg
   powerDraw: number;    // kW (positive = consumes, negative = generates)
@@ -18,7 +17,6 @@ export interface RobotModule {
   metalCost: number;
   componentCost: number;
   buildTimeSec: number;
-  descriptionRu: string;
 
   // Specific stat bonuses
   armorRating?: number;     // damage reduction share
@@ -40,7 +38,6 @@ export interface RobotModule {
 export interface ChassisConfig {
   id: ChassisType;
   name: string;
-  nameRu: string;
   baseHp: number;
   baseMass: number;
   maxMass: number;
@@ -52,7 +49,6 @@ export interface ChassisConfig {
   metalCost: number;
   componentCost: number;
   buildTimeSec: number;
-  descriptionRu: string;
 }
 
 export interface RobotDesign {
@@ -91,6 +87,8 @@ export interface CalculatedRobotStats {
   armorPierce: number;
   armorRating: number;
   recoilStability: number; // 0..1, 1 is perfectly stable
+  /** recoil makes the platform unusable (one of the validation errors) */
+  recoilUnstable: boolean;
   metalCost: number;
   componentCost: number;
   buildTimeSec: number;

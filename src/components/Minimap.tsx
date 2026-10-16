@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { GAME_BALANCE, TEAM_COLORS } from '../config/balance';
 import { GameController } from '../game/GameController';
+import { t } from '../i18n';
 
 const MW = 216;
 const MH = Math.round((MW * GAME_BALANCE.MAP_HEIGHT) / GAME_BALANCE.MAP_WIDTH);
@@ -64,7 +65,7 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
 
   return (
     <div className="hud-panel pointer-events-auto p-1.5">
-      <canvas ref={ref} width={MW} height={MH} onClick={onClick} className="block rounded-md cursor-crosshair" title="Мини-карта: клик — переместить камеру" />
+      <canvas ref={ref} width={MW} height={MH} onClick={onClick} className="block rounded-md cursor-crosshair" title={t('minimap.title')} />
     </div>
   );
 };

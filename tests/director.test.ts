@@ -8,6 +8,7 @@ import { GAME_BALANCE, INITIAL_ENEMY_DESIGN, INITIAL_PLAYER_DESIGN } from '../sr
 import { RobotBuilder } from '../src/engine/RobotBuilder';
 import { GameState } from '../src/engine/GameState';
 import { DEFAULT_SETTINGS, GameController } from '../src/game/GameController';
+import { LANGS, setLanguage } from '../src/i18n';
 import { ChatMessage, LLMSettings, ProductionProposal } from '../src/types/agent';
 import { CombatUnit } from '../src/types/game';
 import { RobotDesign } from '../src/types/robot';
@@ -378,6 +379,43 @@ describe('custom instructions for the teal commander (AI vs AI)', () => {
       mock.server.close();
     }
   });
+
+  // How the teal commander's prompts open in each game language: the full report and the quick re-plan
+  const TEAL_PROMPTS = {
+    ru: { me: 'Ты — «Командор Бирюзов»', replan: 'В бою важное событие' },
+    en: { me: 'You are "Commodore Teal"', replan: 'Something important happened in battle' },
+    it: { me: 'You are "Commodoro Turchese"', replan: 'Something important happened in battle' },
+  } as const;
+
+  it.each(LANGS)('go into every LLM request of the teal side (%s): full reports and battle re-plans, also after a restart', async lang => {
+    const mock = mockLLM(() => ({ taunt: '', design: null, plan: { stance: 'advance', summary: 'вперёд' }, actions: [] }));
+    const settings = { ...(await mock.start()), enemyUsesLLM: true };
+    setLanguage(lang);
+    try {
+      const ctrl = new GameController();
+      ctrl.applySettings(settings, false);
+      ctrl.setAllyInstructions(orders);
+      ctrl.start('spectator');
+      const play = async (seconds: number) => {
+        for (let i = 0; i < seconds && !ctrl.state.gameOver; i++) {
+          ctrl.fastForward(1, 0.1);
+          await vi.waitFor(() => expect(ctrl.director.busy.enemy || ctrl.director.busy.ally).toBe(false));
+        }
+      };
+      await play(150);
+      ctrl.restart(); // the restart button keeps the mode and the orders
+      await play(60);
+
+      const teal = mock.prompts.filter(p => p.system.startsWith(TEAL_PROMPTS[lang].me));
+      const replans = teal.filter(p => p.system.includes(TEAL_PROMPTS[lang].replan));
+      expect(teal.length - replans.length).toBeGreaterThanOrEqual(3); // full reports, before and after the restart
+      expect(replans.length).toBeGreaterThan(0);
+      expect(teal.filter(p => !p.system.includes(orders) || !p.user.includes(orders))).toEqual([]);
+    } finally {
+      setLanguage('ru');
+      mock.server.close();
+    }
+  }, 60000);
 
   it('are set on the start screen, kept between visits and apply only to AI vs AI', () => {
     const store = new Map<string, string>();
