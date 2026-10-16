@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Pickaxe, Radio, Shield, Users } from 'lucide-react';
 import { MODULES_CATALOG, chassisName, partName } from '../config/catalog';
-import { COMMANDERS } from '../config/commanders';
+import { commanderName } from '../config/commanders';
 import { GAME_BALANCE, TEAM_COLORS } from '../config/balance';
 import { GameController } from '../game/GameController';
 import { Team } from '../types/game';
@@ -47,7 +47,6 @@ export const SpectatorPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => 
 const CommanderColumn: React.FC<{ ctrl: GameController; team: Team; compact: boolean }> = ({ ctrl, team, compact }) => {
   const s = ctrl.state;
   const side = s.teams[team];
-  const profile = COMMANDERS[team];
   const color = TEAM_COLORS[team];
   const key = team === 'enemy' ? 'enemy' : 'ally';
   const call = ctrl.director.lastCall[key];
@@ -67,7 +66,7 @@ const CommanderColumn: React.FC<{ ctrl: GameController; team: Team; compact: boo
         </div>
         <div className="flex-1 min-w-0">
           <div className="font-heading font-bold text-[13px] truncate" style={{ color: color.light }}>
-            {profile.name}
+            {commanderName(team)}
           </div>
           <div className="text-[10px] text-slate-400 truncate">
             {busy ? (
