@@ -1,5 +1,6 @@
 import { AIDirector, GameMode } from '../ai/AIDirector';
 import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
+import { hasNativeBridge, refreshNativeStatus } from '../ai/llm/nativeBridge';
 import { COMMANDERS } from '../config/commanders';
 import { VoiceService, voiceService } from '../ai/VoiceService';
 import { LLM_PROVIDERS, LLMProviderId } from '../config/llmProviders';
@@ -141,6 +142,7 @@ export class GameController {
       source: 'local',
     });
     void this.detectProxy();
+    void this.detectDevice();
   }
 
   // ───────────────────────────── Subscription (useSyncExternalStore) ─────────────────────────────
@@ -321,6 +323,21 @@ export class GameController {
     } catch {
       /* static hosting without the dev proxy */
     }
+  }
+
+  /**
+   * Inside the iOS app: the on-device model (Apple Foundation Models). On first launch it becomes the
+   * default; while it is not ready yet (model downloading, Apple Intelligence off) it is re-checked.
+   */
+  private async detectDevice() {
+    if (!hasNativeBridge()) return;
+    const status = await refreshNativeStatus();
+    const saved = loadSettings();
+    if (status?.available && (!saved || saved.provider === 'proxy') && this.settings.provider !== 'device') {
+      this.applySettings({ ...this.settings, provider: 'device', ...this.presetFor('device'), apiKey: '' }, false);
+    }
+    this.bump();
+    if (!status?.available) setTimeout(() => void this.detectDevice(), 10000);
   }
 
   applySettings(s: LLMSettings, persist = true) {

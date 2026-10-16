@@ -9,20 +9,10 @@ import { RobotDesign } from '../types/robot';
 import { AIBilling, AIParticipant, DecisionRateLimiter } from './AIBilling';
 import { localCommanderDecision, localEngineer, localTactician } from './fallbacks';
 import { LLMConnection, LLMError, LLMResponse, chatJSON, cloudReady } from './llm/LLMClient';
+import { nativeStatus, nativeUnavailableText } from './llm/nativeBridge';
 import { asString, describeAction, normalizeActions, normalizePlan } from './parsing';
-import {
-  COMMANDER_INSTRUCTIONS_MAX,
-  commanderReplanPrompt,
-  commanderReplanSystem,
-  commanderSystem,
-  commanderUserPrompt,
-  ENGINEER_SYSTEM,
-  TACTICIAN_SYSTEM,
-  engineerRepairPrompt,
-  engineerUserPrompt,
-  parseCostLimitPct,
-  tacticianUserPrompt,
-} from './prompts';
+import { COMMANDER_INSTRUCTIONS_MAX, PROMPTS_RU, PromptSet, parseCostLimitPct } from './prompts';
+import { PROMPTS_EN } from './promptsEn';
 
 /** 'ally' = the teal AI commander that replaces the human in AI-vs-AI mode. */
 export type AgentKey = 'engineer' | 'tactician' | 'enemy' | 'ally';
@@ -111,12 +101,18 @@ export class AIDirector {
     return { provider: this.settings.provider, apiKey: this.settings.apiKey, model: this.settings.model, baseUrl: this.settings.baseUrl };
   }
 
+  /** Prompts in the language of the configured model (the on-device one has no Russian). */
+  private get prompts(): PromptSet {
+    return LLM_PROVIDERS[this.settings.provider].promptLanguage === 'en' ? PROMPTS_EN : PROMPTS_RU;
+  }
+
   cloudEnabled(): boolean {
     return cloudReady(this.connection);
   }
 
   providerLabel(): string {
     const p = LLM_PROVIDERS[this.settings.provider];
+    if (p.protocol === 'native') return this.cloudEnabled() ? p.label : `${p.label}: ${nativeUnavailableText(nativeStatus())}`;
     if (!this.cloudEnabled()) return p.protocol === 'none' ? 'локальные эвристики' : `${p.label}: нужен ключ`;
     return `${p.label} · ${this.settings.model || 'модель сервера'}`;
   }
@@ -307,8 +303,8 @@ export class AIDirector {
       'player',
       'production',
       BUDGET.engineer,
-      ENGINEER_SYSTEM,
-      engineerUserPrompt(state, text, pending),
+      this.prompts.engineerSystem,
+      this.prompts.engineerUser(state, text, pending),
     );
     if (gen !== this.generation) return null;
 
@@ -341,8 +337,8 @@ export class AIDirector {
             'player',
             'production',
             BUDGET.engineer,
-            ENGINEER_SYSTEM,
-            `${engineerUserPrompt(state, text, pending)}\n\n${engineerRepairPrompt(errs)}`,
+            this.prompts.engineerSystem,
+            `${this.prompts.engineerUser(state, text, pending)}\n\n${this.prompts.engineerRepair(errs)}`,
           );
           if (gen !== this.generation) return null;
           if (retry.res) {
@@ -495,8 +491,8 @@ export class AIDirector {
       'player',
       'tactical',
       BUDGET.tactician,
-      TACTICIAN_SYSTEM,
-      tacticianUserPrompt(state, order, this.standingOrders, trigger),
+      this.prompts.tacticianSystem,
+      this.prompts.tacticianUser(state, order, this.standingOrders, trigger),
     );
     if (gen !== this.generation) return null;
     this.busy.tactician = false;
@@ -581,8 +577,8 @@ export class AIDirector {
         participant,
         'tactical',
         BUDGET.enemy,
-        commanderSystem(team, vsAI, this.commanderInstructions[team]),
-        commanderUserPrompt(state, team, this.commanderInstructions[team]),
+        this.prompts.commanderSystem(team, vsAI, this.commanderInstructions[team]),
+        this.prompts.commanderUser(state, team, this.commanderInstructions[team]),
         COMMANDER_TIMEOUT_MS,
       );
       if (gen !== this.generation) return;
@@ -633,8 +629,8 @@ export class AIDirector {
       participant,
       'tactical',
       BUDGET.replan,
-      commanderReplanSystem(team, this.mode === 'spectator', this.commanderInstructions[team]),
-      commanderReplanPrompt(state, team, trigger, this.commanderInstructions[team]),
+      this.prompts.replanSystem(team, this.mode === 'spectator', this.commanderInstructions[team]),
+      this.prompts.replanUser(state, team, trigger, this.commanderInstructions[team]),
       REPLAN_TIMEOUT_MS,
     );
     if (gen !== this.generation) return;
@@ -655,9 +651,12 @@ export class AIDirector {
   async testConnection(conn: LLMConnection): Promise<{ ok: boolean; text: string }> {
     if (!cloudReady(conn)) return { ok: false, text: 'Заполните провайдера, ключ и модель' };
     try {
+      const english = LLM_PROVIDERS[conn.provider].promptLanguage === 'en';
       const res = await chatJSON(conn, {
-        system: 'Ты проверка связи игры. Ответь только JSON {"status":"ok","reply":"короткое приветствие командиру"}.',
-        user: 'Проверка связи.',
+        system: english
+          ? 'You are the game\'s connection check. Answer with JSON only: {"status":"ok","reply":"a short greeting to the commander"}.'
+          : 'Ты проверка связи игры. Ответь только JSON {"status":"ok","reply":"короткое приветствие командиру"}.',
+        user: english ? 'Connection check.' : 'Проверка связи.',
         maxTokens: 60,
         temperature: 0,
         timeoutMs: 20000,

@@ -1,7 +1,7 @@
 import React from 'react';
 import { GameController } from '../game/GameController';
 import { GameEventType } from '../types/game';
-import { cx, formatTime } from './ui';
+import { cx, formatTime, useCompactHud } from './ui';
 
 const COLORS: Partial<Record<GameEventType, string>> = {
   base_attack: 'bg-rose-400',
@@ -16,7 +16,10 @@ const COLORS: Partial<Record<GameEventType, string>> = {
 };
 
 export const EventFeed: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
-  const events = ctrl.state.events.filter(e => e.team === 'player' && e.type !== 'loss' && e.type !== 'batch_started').slice(0, 5);
+  const compact = useCompactHud();
+  const events = ctrl.state.events
+    .filter(e => e.team === 'player' && e.type !== 'loss' && e.type !== 'batch_started')
+    .slice(0, compact ? 2 : 5);
   if (!events.length) return null;
   return (
     <div className="flex flex-col gap-1 w-[264px] pointer-events-none">

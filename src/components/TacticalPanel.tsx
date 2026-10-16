@@ -4,7 +4,7 @@ import { GAME_BALANCE } from '../config/balance';
 import { PRIORITY_RU, PRIORITY_SHORT, RANGE_RU, RANGE_SHORT, STANCE_RU, STANCE_SHORT } from '../ai/parsing';
 import { GameController } from '../game/GameController';
 import { EngagementRange, Stance, TargetPriority } from '../types/game';
-import { Chip, Panel, cx } from './ui';
+import { Chip, Panel, cx, usePanelOpen } from './ui';
 
 const SOURCE_RU = { default: 'стандартный', player: 'ваш приказ', agent: 'решение Кобры', fallback: 'локальный AI' } as const;
 
@@ -18,9 +18,14 @@ export const TacticalPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
     Math.max(0, GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC - (ctrl.state.gameTime - (d.lastCall.tactician?.at ?? -999))),
   );
 
+  const [open, toggle] = usePanelOpen();
+
   return (
     <Panel
       className="w-[300px]"
+      open={open}
+      onToggle={toggle}
+      summary={plan.summaryRu}
       title={<><Compass className="w-3.5 h-3.5 text-teal-300" /> План армии</>}
       right={
         <span className={cx('text-[9px] font-semibold', plan.source === 'agent' ? 'text-cyan-300' : 'text-slate-400')}>{SOURCE_RU[plan.source]}</span>

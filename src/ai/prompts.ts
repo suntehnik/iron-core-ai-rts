@@ -90,7 +90,7 @@ function eventsLine(state: GameState, team: Team): string {
   return ev.length ? ev.map(e => `[${Math.round(e.time)}с] ${e.text}`).join('; ') : 'нет';
 }
 
-function planLine(p: TacticalPlan): string {
+export function planLine(p: TacticalPlan): string {
   return `stance=${p.stance}, engagementRange=${p.engagementRange}, targetPriority=${p.targetPriority}, retreatHpThreshold=${p.retreatHpThreshold}, guardHarvesters=${p.guardHarvesters}`;
 }
 
@@ -202,7 +202,7 @@ function instructionsReminder(instructions: string | undefined): string[] {
   return text ? [`УКАЗАНИЯ ШТАБА — выполни их в этом решении (план, конструкция, экономика): «${text}»`] : [];
 }
 
-function cleanInstructions(instructions: string | undefined): string {
+export function cleanInstructions(instructions: string | undefined): string {
   return (instructions ?? '').trim().slice(0, COMMANDER_INSTRUCTIONS_MAX);
 }
 
@@ -267,3 +267,28 @@ export const ENEMY_SYSTEM = commanderSystem('enemy', false);
 export function enemyUserPrompt(state: GameState): string {
   return commanderUserPrompt(state, 'enemy');
 }
+
+/** One language of agent prompts; the director picks it by the provider (see LLMProviderPreset.promptLanguage). */
+export interface PromptSet {
+  engineerSystem: string;
+  engineerUser(state: GameState, order: string, pending: ProductionProposal | null): string;
+  engineerRepair(errors: string[]): string;
+  tacticianSystem: string;
+  tacticianUser(state: GameState, order: string | null, standingOrders: string[], trigger: string | null): string;
+  commanderSystem(team: Team, vsAI: boolean, instructions?: string): string;
+  commanderUser(state: GameState, team: Team, instructions?: string): string;
+  replanSystem(team: Team, vsAI: boolean, instructions?: string): string;
+  replanUser(state: GameState, team: Team, trigger: string, instructions?: string): string;
+}
+
+export const PROMPTS_RU: PromptSet = {
+  engineerSystem: ENGINEER_SYSTEM,
+  engineerUser: engineerUserPrompt,
+  engineerRepair: engineerRepairPrompt,
+  tacticianSystem: TACTICIAN_SYSTEM,
+  tacticianUser: tacticianUserPrompt,
+  commanderSystem,
+  commanderUser: commanderUserPrompt,
+  replanSystem: commanderReplanSystem,
+  replanUser: commanderReplanPrompt,
+};

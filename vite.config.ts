@@ -100,10 +100,29 @@ export function llmProxy(env: Record<string, string>): Plugin {
   };
 }
 
+/**
+ * `vite build --mode ios` packs the game for the iOS app (ios/Web, served from the bundle):
+ * a fixed layout width that WebKit scales down to the phone, and no web fonts, so the app works offline.
+ */
+export const IOS_LAYOUT_WIDTH = 1024;
+
+function iosShell(mode: string): Plugin {
+  return {
+    name: 'ironcore-ios-shell',
+    transformIndexHtml(html) {
+      if (mode !== 'ios') return html;
+      return html
+        .replace(/<meta name="viewport"[^>]*>/, `<meta name="viewport" content="width=${IOS_LAYOUT_WIDTH}, user-scalable=no, viewport-fit=cover" />`)
+        .replace(/\s*<link rel="preconnect"[^>]*>/g, '')
+        .replace(/\s*<link href="https:\/\/fonts\.googleapis\.com[^>]*>/g, '');
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), llmProxy(env)],
+    plugins: [react(), llmProxy(env), iosShell(mode)],
     server: {
       port: 3000,
       host: true,

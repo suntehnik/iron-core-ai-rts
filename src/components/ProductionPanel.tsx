@@ -2,7 +2,7 @@ import React from 'react';
 import { Factory, Minus, Pause, Pickaxe, Play, Plus, Zap } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
 import { GameController } from '../game/GameController';
-import { Panel, ProgressBar, cx } from './ui';
+import { Panel, ProgressBar, cx, usePanelOpen } from './ui';
 
 /** Mining, factory queues and base construction (brief §3, §7). */
 export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
@@ -17,9 +17,14 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
   const canPlant = s.canBuild('player', 'power_plant');
   const canFactory = s.canBuild('player', 'factory');
 
+  const [open, toggle] = usePanelOpen();
+
   return (
     <Panel
       className="w-[264px]"
+      open={open}
+      onToggle={toggle}
+      summary={`${factories.map(f => s.factoryStatus(f)).join(' · ') || 'заводов нет'} · добытчики ${s.harvesterCount('player')}/${GAME_BALANCE.MAX_HARVESTERS}`}
       title={<><Factory className="w-3.5 h-3.5 text-teal-300" /> Производство</>}
       right={
         factories.length > 1 ? (

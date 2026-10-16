@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:ios": "tsc && vite build --mode ios --outDir ios/Web --emptyOutDir",
     "preview": "vite preview",
     "test": "vitest run",
     "test:live": "LLM_LIVE=1 vitest run tests/llm-live.test.ts"

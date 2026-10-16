@@ -13,7 +13,8 @@ import { TopBar } from './components/TopBar';
 import { VictoryModal } from './components/VictoryModal';
 
 const controller = new GameController();
-if (import.meta.env.DEV) (window as unknown as { __game: GameController }).__game = controller;
+// Dev tools and the iOS app's debug harness (ios/IronCore, -autotest) drive the game through this handle
+if (import.meta.env.DEV || import.meta.env.MODE === 'ios') (window as unknown as { __game: GameController }).__game = controller;
 
 export const App: React.FC = () => {
   const ctrl = controller;

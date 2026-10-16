@@ -3,6 +3,7 @@ import { Cpu, ListRestart, PlugZap, X } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
 import { LLM_PROVIDERS, LLMProviderId, PROVIDER_ORDER } from '../config/llmProviders';
 import { listModels } from '../ai/llm/LLMClient';
+import { hasNativeBridge, nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
 import { GameController } from '../game/GameController';
 import { LLMSettings } from '../types/agent';
 import { cx } from './ui';
@@ -15,6 +16,10 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
   const [modelsError, setModelsError] = useState('');
   const preset = LLM_PROVIDERS[s.provider];
   const proxy = ctrl.proxyStatus;
+  // In the iOS app there is the on-device model and no dev-server proxy; in a browser it is the other way round
+  const inApp = hasNativeBridge();
+  const device = nativeStatus();
+  const providers = PROVIDER_ORDER.filter(id => (id === 'device' ? inApp : id === 'proxy' ? !inApp : true));
 
   const pick = (p: LLMProviderId) => {
     setS(prev => ({ ...prev, provider: p, ...ctrl.presetFor(p), apiKey: p === prev.provider ? prev.apiKey : '' }));
@@ -64,7 +69,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
           <div>
             <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">Провайдер</div>
             <div className="grid grid-cols-3 gap-1.5">
-              {PROVIDER_ORDER.map(id => {
+              {providers.map(id => {
                 const p = LLM_PROVIDERS[id];
                 const ready = id === 'proxy' ? proxy?.configured : true;
                 return (
@@ -79,7 +84,15 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
                   >
                     <div className="font-semibold text-[11px]">{p.label}</div>
                     <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">
-                      {id === 'proxy' ? (ready ? `настроен: ${proxy?.host} · ${proxy?.model || 'модель по умолчанию'}` : 'не настроен (.env.local)') : p.defaultModel || p.hint}
+                      {id === 'proxy'
+                        ? ready
+                          ? `настроен: ${proxy?.host} · ${proxy?.model || 'модель по умолчанию'}`
+                          : 'не настроен (.env.local)'
+                        : id === 'device'
+                          ? device?.available
+                            ? 'готова · Neural Engine, без сети'
+                            : nativeUnavailableText(device)
+                          : p.defaultModel || p.hint}
                     </div>
                   </button>
                 );
@@ -88,7 +101,28 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
             <div className="text-[10px] text-slate-400 mt-1.5">{preset.hint}</div>
           </div>
 
-          {preset.protocol !== 'none' && (
+          {preset.protocol === 'native' && (
+            <div className="rounded-lg bg-slate-800/60 border border-white/10 p-2.5 leading-relaxed">
+              <div>
+                Модель: <b>{device?.available ? 'готова' : nativeUnavailableText(device)}</b>
+                {device?.contextSize ? `, окно ${device.contextSize} токенов` : ''}
+              </div>
+              <div>
+                Перевод ru⇄en на устройстве:{' '}
+                <b>
+                  {device?.translation === 'installed'
+                    ? 'установлен'
+                    : device?.translation === 'supported'
+                      ? 'нужно скачать языки (система предложит при запуске)'
+                      : device?.translation === 'unsupported'
+                        ? 'недоступен — агенты будут отвечать по-английски'
+                        : 'неизвестно'}
+                </b>
+              </div>
+            </div>
+          )}
+
+          {(preset.protocol === 'openai' || preset.protocol === 'anthropic') && (
             <div className="grid grid-cols-1 gap-3">
               {s.provider !== 'proxy' && (
                 <Field label="Base URL">

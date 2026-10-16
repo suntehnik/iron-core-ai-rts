@@ -7,9 +7,11 @@ export type LLMProviderId =
   | 'anthropic'
   | 'proxy'
   | 'custom'
+  | 'device'
   | 'offline';
 
-export type LLMProtocol = 'openai' | 'anthropic' | 'none';
+/** 'native' = the on-device model of the iOS app, reached through the WebView bridge */
+export type LLMProtocol = 'openai' | 'anthropic' | 'native' | 'none';
 
 export interface LLMProviderPreset {
   id: LLMProviderId;
@@ -22,6 +24,8 @@ export interface LLMProviderPreset {
   /** Whether the provider accepts `response_format: {type: "json_object"}` */
   jsonMode: boolean;
   keyUrl?: string;
+  /** Language of the agent prompts; 'en' for models without Russian (fragments are translated on the device) */
+  promptLanguage?: 'ru' | 'en';
 }
 
 /**
@@ -116,6 +120,17 @@ export const LLM_PROVIDERS: Record<LLMProviderId, LLMProviderPreset> = {
     needsKey: false,
     jsonMode: true,
   },
+  device: {
+    id: 'device',
+    label: 'На устройстве · Apple Intelligence',
+    hint: 'Модель Apple на Neural Engine, без сети и ключей. Она не знает русского: агенты думают на английском, а приказы и ответы переводятся на устройстве',
+    protocol: 'native',
+    baseUrl: '',
+    defaultModel: 'apple-on-device',
+    needsKey: false,
+    jsonMode: false,
+    promptLanguage: 'en',
+  },
   offline: {
     id: 'offline',
     label: 'Без облака',
@@ -137,5 +152,6 @@ export const PROVIDER_ORDER: LLMProviderId[] = [
   'anthropic',
   'proxy',
   'custom',
+  'device',
   'offline',
 ];

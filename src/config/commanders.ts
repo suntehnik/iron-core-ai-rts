@@ -7,12 +7,19 @@ export interface CommanderProfile {
   designPrefix: string;
   persona: string;
   taunts: string[];
+  /** for the English prompts of the on-device model (it has no Russian) */
+  nameEn: string;
+  armyEn: string;
+  personaEn: string;
 }
 
 export const COMMANDERS: Record<Team, CommanderProfile> = {
   enemy: {
     name: 'Генерал Ржавый',
+    nameEn: 'General Rusty',
     armyRu: 'оранжевых',
+    armyEn: 'orange',
+    personaEn: 'Boastful and sarcastic',
     designPrefix: 'Ржавый',
     persona: 'Хвастливый и язвительный',
     taunts: [
@@ -26,7 +33,10 @@ export const COMMANDERS: Record<Team, CommanderProfile> = {
   },
   player: {
     name: 'Командор Бирюзов',
+    nameEn: 'Commodore Teal',
     armyRu: 'бирюзовых',
+    armyEn: 'teal',
+    personaEn: 'An imperturbable pedant with dry irony',
     designPrefix: 'Бирюзовый',
     persona: 'Невозмутимый педант с сухой иронией',
     taunts: [

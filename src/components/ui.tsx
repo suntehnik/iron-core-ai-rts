@@ -1,21 +1,62 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
-export const Panel: React.FC<React.PropsWithChildren<{ className?: string; title?: React.ReactNode; right?: React.ReactNode }>> = ({
-  className,
-  title,
-  right,
-  children,
-}) => (
+const COMPACT_QUERY = '(max-height: 640px)';
+
+/** Short screens (a phone in landscape): the side panels start collapsed so they do not cover each other. */
+export function useCompactHud(): boolean {
+  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(COMPACT_QUERY).matches);
+  useEffect(() => {
+    const m = window.matchMedia?.(COMPACT_QUERY);
+    if (!m) return;
+    const update = () => setCompact(m.matches);
+    m.addEventListener('change', update);
+    return () => m.removeEventListener('change', update);
+  }, []);
+  return compact;
+}
+
+/** Open state of a collapsible panel: follows the screen size until the player toggles it. */
+export function usePanelOpen(): [boolean, () => void] {
+  const compact = useCompactHud();
+  const [choice, setChoice] = useState<boolean | null>(null);
+  const open = choice ?? !compact;
+  return [open, () => setChoice(!open)];
+}
+
+export const Panel: React.FC<
+  React.PropsWithChildren<{
+    className?: string;
+    title?: React.ReactNode;
+    right?: React.ReactNode;
+    /** collapsible panel: the title toggles the body; `summary` stands in for it while collapsed */
+    open?: boolean;
+    onToggle?: () => void;
+    summary?: React.ReactNode;
+  }>
+> = ({ className, title, right, open = true, onToggle, summary, children }) => (
   <div className={cx('hud-panel pointer-events-auto', className)}>
     {title && (
-      <div className="flex items-center justify-between px-3 pt-2 pb-1.5 border-b border-white/5">
-        <div className="font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 flex items-center gap-1.5">{title}</div>
+      <div className={cx('flex items-center justify-between px-3 pt-2 pb-1.5', open && 'border-b border-white/5')}>
+        {onToggle ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 hover:text-white flex items-center gap-1.5"
+          >
+            {title}
+            <ChevronDown className={cx('w-3.5 h-3.5 transition-transform', !open && '-rotate-90')} />
+          </button>
+        ) : (
+          <div className="font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 flex items-center gap-1.5">{title}</div>
+        )}
         {right}
       </div>
     )}
-    {children}
+    {open ? children : summary && <div className="px-3 pb-2 -mt-0.5 text-[11px] text-slate-300 leading-snug line-clamp-2">{summary}</div>}
   </div>
 );
 

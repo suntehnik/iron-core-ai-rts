@@ -1,5 +1,6 @@
 import { LLM_PROVIDERS, LLMProviderId } from '../../config/llmProviders';
 import { estimateTokens, extractJSONObject } from './jsonExtract';
+import { nativeGenerate, nativeStatus, nativeTranslate, resolveMarked, translateReadableFields } from './nativeBridge';
 
 export interface LLMConnection {
   provider: LLMProviderId;
@@ -32,7 +33,7 @@ export interface LLMResponse {
   attempts: number;
 }
 
-export type LLMErrorKind = 'not_configured' | 'network' | 'http' | 'timeout' | 'parse' | 'aborted';
+export type LLMErrorKind = 'not_configured' | 'network' | 'http' | 'timeout' | 'parse' | 'aborted' | 'device';
 
 export class LLMError extends Error {
   constructor(
@@ -55,6 +56,8 @@ export class LLMError extends Error {
         return 'модель вернула неразборчивый ответ';
       case 'aborted':
         return 'запрос отменён';
+      case 'device':
+        return `модель на устройстве: ${this.message}`;
       default:
         if (this.status === 401 || this.status === 403) return 'ключ API отклонён провайдером';
         if (this.status === 429) return 'провайдер ограничил частоту запросов';
@@ -66,6 +69,7 @@ export class LLMError extends Error {
 export function cloudReady(c: LLMConnection): boolean {
   const preset = LLM_PROVIDERS[c.provider];
   if (!preset || preset.protocol === 'none') return false;
+  if (preset.protocol === 'native') return !!nativeStatus()?.available;
   if (preset.needsKey && !c.apiKey.trim()) return false;
   if (!c.baseUrl.trim()) return false;
   if (c.provider !== 'proxy' && !c.model.trim()) return false;
@@ -82,6 +86,7 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 export async function chatJSON(conn: LLMConnection, req: LLMRequest): Promise<LLMResponse> {
   if (!cloudReady(conn)) throw new LLMError('not_configured', 'LLM provider is not configured');
   const preset = LLM_PROVIDERS[conn.provider];
+  if (preset.protocol === 'native') return chatOnDevice(req);
   const started = performance.now();
   let attempts = 0;
   let minimal = false; // after a 400 we retry once without optional parameters
@@ -121,6 +126,44 @@ export async function chatJSON(conn: LLMConnection, req: LLMRequest): Promise<LL
     }
   }
   throw lastError ?? new LLMError('network', 'Unknown LLM failure');
+}
+
+/**
+ * The on-device model (iOS app): the prompt's Russian fragments (marked by the English prompt set)
+ * are translated to English first; the fields a player reads come back translated to Russian.
+ * One attempt only: a local model that failed will fail the same way again.
+ */
+async function chatOnDevice(req: LLMRequest): Promise<LLMResponse> {
+  const started = performance.now();
+  const timeoutMs = req.timeoutMs ?? 25000;
+  const [system, user] = await resolveMarked([req.system, req.user], f => nativeTranslate(f, 'ru', 'en'));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new LLMError('timeout', `No reply within ${timeoutMs} ms`)), timeoutMs);
+  });
+  let reply;
+  try {
+    reply = await Promise.race([
+      nativeGenerate({ system, user, maxTokens: req.maxTokens, temperature: req.temperature ?? 0.4, timeoutMs }),
+      timeout,
+    ]);
+  } catch (e) {
+    if (e instanceof LLMError) throw e;
+    throw new LLMError('device', e instanceof Error ? e.message : String(e));
+  } finally {
+    clearTimeout(timer);
+  }
+  const data = extractJSONObject(reply.text);
+  if (!data) throw new LLMError('parse', `Model reply is not JSON: ${reply.text.slice(0, 160)}`);
+  await translateReadableFields(data, texts => nativeTranslate(texts, 'en', 'ru'));
+  return {
+    data,
+    text: reply.text,
+    usage: { tokensIn: reply.tokensIn, tokensOut: reply.tokensOut, estimated: reply.estimated },
+    latencyMs: Math.round(performance.now() - started),
+    model: 'apple-on-device',
+    attempts: 1,
+  };
 }
 
 /** Lists models exposed by an OpenAI-compatible server (GET /models). */
