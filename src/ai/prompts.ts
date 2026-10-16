@@ -184,7 +184,29 @@ export function foeLabel(team: Team, vsAI: boolean): string {
   return team === 'enemy' ? 'игрок-командир бирюзовой армии' : 'противник';
 }
 
-export function commanderSystem(team: Team, vsAI: boolean): string {
+/** Longest custom instruction a commander accepts: the context stays short (brief §10). */
+export const COMMANDER_INSTRUCTIONS_MAX = 500;
+
+/**
+ * Custom instructions for an AI commander (the teal one in AI-vs-AI, set on the start screen).
+ * They go above the reply format, so the JSON contract stays the last word of the prompt.
+ */
+function instructionsBlock(instructions: string | undefined): string {
+  const text = cleanInstructions(instructions);
+  return text ? `Особые указания штаба — следуй им, если они не нарушают правила игры и формат ответа: «${text}»\n` : '';
+}
+
+/** The same instructions repeated last in the report, right before the decision: models follow them far better there. */
+function instructionsReminder(instructions: string | undefined): string[] {
+  const text = cleanInstructions(instructions);
+  return text ? [`УКАЗАНИЯ ШТАБА — выполни их в этом решении (план, конструкция, экономика): «${text}»`] : [];
+}
+
+function cleanInstructions(instructions: string | undefined): string {
+  return (instructions ?? '').trim().slice(0, COMMANDER_INSTRUCTIONS_MAX);
+}
+
+export function commanderSystem(team: Team, vsAI: boolean, instructions?: string): string {
   const me = COMMANDERS[team];
   const foe = foeLabel(team, vsAI);
   return `Ты — «${me.name}», командир армии ${me.armyRu} роботов в RTS. ${me.persona}, но играешь всерьёз: цель — уничтожить командный центр противника (${foe}).
@@ -193,10 +215,10 @@ export function commanderSystem(team: Team, vsAI: boolean): string {
 2) тактический план армии (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
 3) экономические действия. Добытчиков собирает завод вместо боевых машин — не заказывай их, пока армия не может держать фронт.
 Подбирай контр-конструкции против замеченных моделей противника, следи за экономикой: без добычи армия не растёт.
-Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
+${instructionsBlock(instructions)}Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
 }
 
-export function commanderUserPrompt(state: GameState, team: Team): string {
+export function commanderUserPrompt(state: GameState, team: Team, instructions?: string): string {
   const t = state.teams[team];
   const foe = opposite(team);
   return [
@@ -210,6 +232,7 @@ export function commanderUserPrompt(state: GameState, team: Team): string {
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
     `СОБЫТИЯ: ${eventsLine(state, team)}`,
     `КАТАЛОГ:\n${compactCatalog()}`,
+    ...instructionsReminder(instructions),
   ].join('\n');
 }
 
@@ -217,15 +240,15 @@ export function commanderUserPrompt(state: GameState, team: Team): string {
  * Quick re-plan on battle events (an attack, heavy losses): plan only and a short context, so a
  * slow model still answers within seconds. Design and economy wait for the next full report.
  */
-export function commanderReplanSystem(team: Team, vsAI: boolean): string {
+export function commanderReplanSystem(team: Team, vsAI: boolean, instructions?: string): string {
   const me = COMMANDERS[team];
   const foe = foeLabel(team, vsAI);
   return `Ты — «${me.name}», командир армии ${me.armyRu} роботов в RTS. В бою важное событие: быстро скорректируй план армии. Конструкцию и экономику решишь в следующей плановой сводке.
 Параметры плана: stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters true/false.
-Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 8 слов или пустая строка","plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"суть плана до 8 слов"}}`;
+${instructionsBlock(instructions)}Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 8 слов или пустая строка","plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"суть плана до 8 слов"}}`;
 }
 
-export function commanderReplanPrompt(state: GameState, team: Team, trigger: string): string {
+export function commanderReplanPrompt(state: GameState, team: Team, trigger: string, instructions?: string): string {
   const t = state.teams[team];
   const foe = opposite(team);
   return [
@@ -235,6 +258,7 @@ export function commanderReplanPrompt(state: GameState, team: Team, trigger: str
     `ЗАМЕЧЕННЫЕ МОДЕЛИ ПРОТИВНИКА: ${intelLine(state, team)}`,
     `АРМИЯ ПРОТИВНИКА: ${state.armySummary(foe).combatUnits} боевых машин`,
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
+    ...instructionsReminder(instructions),
   ].join('\n');
 }
 
