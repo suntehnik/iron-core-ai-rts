@@ -115,9 +115,13 @@ export async function chatJSON(conn: LLMConnection, req: LLMRequest): Promise<LL
       const err = toLLMError(e);
       lastError = err;
       if (err.kind === 'aborted' || req.signal?.aborted) throw err;
-      if (err.kind === 'http' && err.status === 400 && !minimal && preset.protocol === 'openai') {
-        minimal = true;
-        continue;
+      if (err.kind === 'http' && err.status === 400 && preset.protocol === 'openai') {
+        // A reasoning model that wants another effort names the ones it takes: retry with the lowest
+        if (conn.provider === 'openai' && learnReasoningEffort(conn.model, err.message)) continue;
+        if (!minimal) {
+          minimal = true;
+          continue;
+        }
       }
       // A timed-out request is usually still being computed by the server (local models process
       // requests one by one), so retrying it only lengthens the queue — retry real failures only.
@@ -204,16 +208,23 @@ async function callOpenAI(conn: LLMConnection, req: LLMRequest, minimal: boolean
     headers['X-Title'] = 'Iron Core AI RTS';
   }
 
+  const model = conn.model.trim();
   const body: Record<string, unknown> = {
     messages: [
       { role: 'system', content: req.system },
       { role: 'user', content: req.user },
     ],
-    max_tokens: req.maxTokens,
-    temperature: req.temperature ?? 0.4,
   };
-  if (conn.model.trim()) body.model = conn.model.trim();
+  if (model) body.model = model;
+  // OpenAI's own API: max_tokens is deprecated in favour of max_completion_tokens and rejected by
+  // reasoning models, so every OpenAI model gets the new one. Reasoning models take only the default
+  // temperature and spend part of the budget on hidden reasoning. Other servers keep max_tokens.
+  const openai = conn.provider === 'openai';
+  const effort = openai ? openAIReasoningEffort(model) : null;
+  body[openai ? 'max_completion_tokens' : 'max_tokens'] = effort ? req.maxTokens + REASONING_HEADROOM_TOKENS : req.maxTokens;
+  if (!effort) body.temperature = req.temperature ?? 0.4;
   if (!minimal) {
+    if (effort) body.reasoning_effort = effort;
     if (preset.jsonMode) body.response_format = { type: 'json_object' };
     // Qwen3 hybrid-thinking models: hidden reasoning burns the token budget and adds
     // seconds of latency, so ask every server flavour to answer directly.
@@ -232,6 +243,49 @@ async function callOpenAI(conn: LLMConnection, req: LLMRequest, minimal: boolean
     ? { tokensIn: Number(json.usage.prompt_tokens) || 0, tokensOut: Number(json.usage.completion_tokens) || 0, estimated: false }
     : null;
   return { text, usage, model: json?.model };
+}
+
+/**
+ * Extra output budget for OpenAI's hidden reasoning. Billing follows the tokens actually used; at the
+ * lowest effort our short JSON answers need far less, the cap only keeps a long think from cutting the answer.
+ */
+const REASONING_HEADROOM_TOKENS = 4000;
+
+const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+/** Efforts learned from OpenAI's replies, per model, for this session */
+const learnedEffort = new Map<string, ReasoningEffort>();
+
+/**
+ * The reasoning effort to ask an OpenAI model for: the lowest it takes, or null for a model without
+ * reasoning (gpt-4.1, gpt-4o, the chat models). Per the model docs: gpt-5, gpt-5-mini and gpt-5-nano
+ * start at "minimal", the o-series at "low", gpt-5.1 and later (gpt-5.5, gpt-5.6, gpt-6 Sol, gpt-6 Luna)
+ * take "none". Models that do not (gpt-6 Astra, gpt-6.1 Sol, the pro models) name the efforts they take
+ * in the HTTP 400 reply, and learnReasoningEffort() picks from those.
+ */
+export function openAIReasoningEffort(model: string): ReasoningEffort | null {
+  const m = model.trim().toLowerCase();
+  if (!/^(gpt-([5-9]|\d{2,})|o\d)/.test(m) || /chat/.test(m)) return null;
+  const learned = learnedEffort.get(m);
+  if (learned) return learned;
+  if (/^o\d/.test(m)) return 'low';
+  if (/^gpt-5(-mini|-nano)?(-\d{4}-\d{2}-\d{2})?$/.test(m)) return 'minimal';
+  return 'none';
+}
+
+/**
+ * OpenAI rejects an effort a model does not take with a list of the ones it does ("Supported values
+ * are: 'low', 'medium', …"); remembers the lowest of them. True if there is a new effort to retry with.
+ */
+export function learnReasoningEffort(model: string, error: string): boolean {
+  if (!/reasoning/i.test(error)) return false;
+  const listed = error.match(/supported values are:?([^.]*)/i)?.[1] ?? '';
+  const lowest = REASONING_EFFORTS.find(e => new RegExp(`'${e}'`).test(listed));
+  const m = model.trim().toLowerCase();
+  if (!lowest || lowest === openAIReasoningEffort(m)) return false;
+  learnedEffort.set(m, lowest);
+  return true;
 }
 
 async function callAnthropic(conn: LLMConnection, req: LLMRequest): Promise<RawReply> {
@@ -286,7 +340,7 @@ async function fetchJSON(url: string, init: RequestInit, req: LLMRequest): Promi
     if (!res.ok) {
       let detail = '';
       try {
-        detail = (await res.text()).slice(0, 300);
+        detail = (await res.text()).slice(0, 600);
       } catch {
         /* ignore */
       }

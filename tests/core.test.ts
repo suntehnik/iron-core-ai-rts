@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extractJSONObject } from '../src/ai/llm/jsonExtract';
-import { chatJSON, LLMError } from '../src/ai/llm/LLMClient';
+import { chatJSON, LLMError, learnReasoningEffort, openAIReasoningEffort } from '../src/ai/llm/LLMClient';
 import { AIBilling, DecisionRateLimiter } from '../src/ai/AIBilling';
 import { RobotBuilder } from '../src/engine/RobotBuilder';
 import { normalizeActions, normalizePlan } from '../src/ai/parsing';
@@ -150,6 +150,12 @@ describe('chatJSON against a mock OpenAI-compatible server', () => {
       req.on('end', () => {
         const body = JSON.parse(raw || '{}');
         seen.push({ auth: req.headers.authorization, body });
+        if (body.model === 'gpt-6-astra' && body.reasoning_effort === 'none') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          const message = "Unsupported value: 'none' is not supported with the 'gpt-6-astra' model. Supported values are: 'low', 'medium', 'high', 'xhigh', and 'max'.";
+          res.end(JSON.stringify({ error: { message, type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }));
+          return;
+        }
         if (failFirstWith400 && body.response_format) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: { message: 'response_format unsupported' } }));
@@ -189,6 +195,63 @@ describe('chatJSON against a mock OpenAI-compatible server', () => {
     failFirstWith400 = false;
     expect(res.attempts).toBe(2);
     expect(seen[seen.length - 1].body.response_format).toBeUndefined();
+  });
+
+  it('asks OpenAI for max_completion_tokens, the current parameter for every model; other servers keep max_tokens', async () => {
+    await chatJSON({ provider: 'openai', apiKey: 'k', model: 'gpt-4.1-nano', baseUrl: base }, { system: 's', user: 'u', maxTokens: 50, temperature: 0.3 });
+    const legacy = seen[seen.length - 1].body;
+    expect(legacy.max_completion_tokens).toBe(50);
+    expect(legacy.max_tokens).toBeUndefined();
+    expect(legacy.temperature).toBe(0.3);
+    expect(legacy.reasoning_effort).toBeUndefined();
+
+    await chatJSON({ provider: 'custom', apiKey: '', model: 'm', baseUrl: base }, { system: 's', user: 'u', maxTokens: 50 });
+    const custom = seen[seen.length - 1].body;
+    expect(custom.max_tokens).toBe(50);
+    expect(custom.max_completion_tokens).toBeUndefined();
+  });
+
+  it('gives OpenAI reasoning models the default temperature, the lowest effort and room to reason', async () => {
+    await chatJSON({ provider: 'openai', apiKey: 'k', model: 'gpt-5-mini', baseUrl: base }, { system: 's', user: 'u', maxTokens: 50, temperature: 0.3 });
+    const body = seen[seen.length - 1].body;
+    expect(body.temperature).toBeUndefined();
+    expect(body.reasoning_effort).toBe('minimal');
+    expect(body.max_completion_tokens).toBeGreaterThan(1000);
+    expect(body.max_tokens).toBeUndefined();
+
+    // any other 400: the retry drops the optional parameters, the rest stays valid
+    failFirstWith400 = true;
+    const res = await chatJSON({ provider: 'openai', apiKey: 'k', model: 'gpt-5.1', baseUrl: base }, { system: 's', user: 'u', maxTokens: 50 });
+    failFirstWith400 = false;
+    const [first, retry] = seen.slice(-2).map(x => x.body);
+    expect(res.attempts).toBe(2);
+    expect(first.reasoning_effort).toBe('none');
+    expect(retry.reasoning_effort).toBeUndefined();
+    expect(retry.temperature).toBeUndefined();
+    expect(retry.max_completion_tokens).toBe(first.max_completion_tokens);
+  });
+
+  it('learns the effort from OpenAI\'s 400 when a model does not take the first guess', async () => {
+    // GPT-6 Astra has no "none" effort (developers.openai.com, reasoning guide)
+    const astra = { provider: 'openai' as const, apiKey: 'k', model: 'gpt-6-astra', baseUrl: base };
+    const res = await chatJSON(astra, { system: 's', user: 'u', maxTokens: 50 });
+    const [first, retry] = seen.slice(-2).map(x => x.body);
+    expect(res.attempts).toBe(2);
+    expect(first.reasoning_effort).toBe('none');
+    expect(retry.reasoning_effort).toBe('low');
+    expect(retry.response_format).toEqual({ type: 'json_object' }); // the rest of the request is kept
+
+    const next = await chatJSON(astra, { system: 's', user: 'u', maxTokens: 50 });
+    expect(next.attempts).toBe(1);
+    expect(seen[seen.length - 1].body.reasoning_effort).toBe('low');
+  });
+
+  it('knows which OpenAI models reason and the lowest effort each takes', () => {
+    expect(['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-mini-2025-08-07'].map(openAIReasoningEffort)).toEqual(['minimal', 'minimal', 'minimal', 'minimal']);
+    expect(['gpt-5.1', 'gpt-5.5', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna'].map(openAIReasoningEffort)).toEqual(['none', 'none', 'none', 'none', 'none']);
+    expect(['o3', 'o4-mini'].map(openAIReasoningEffort)).toEqual(['low', 'low']);
+    expect(['gpt-4.1-nano', 'gpt-4o', 'gpt-5-chat-latest', 'chat-latest', 'gpt-oss-20b'].map(openAIReasoningEffort)).toEqual([null, null, null, null, null]);
+    expect(learnReasoningEffort('gpt-6-astra', 'HTTP 400: rate limited')).toBe(false);
   });
 
   it('reports unconfigured providers without a network call', async () => {
