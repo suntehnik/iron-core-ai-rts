@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { GAME_BALANCE, TEAM_COLORS } from '../config/balance';
 import { GameState } from '../engine/GameState';
+import { TerrainGrid } from '../engine/terrain/TerrainGrid';
 import { Building, GameUnit, Projectile, ResourcePatch, ScrapWreckage, Team, Vector2D } from '../types/game';
 import { BuildingMeshFactory, BuildingRig } from './BuildingMeshFactory';
 import { Effects } from './Effects';
 import { RobotMeshFactory, RobotRig } from './RobotMeshFactory';
+import { TerrainView } from './TerrainView';
 import { box, glow, sphere } from './toon';
 
 interface UnitView {
@@ -25,7 +27,7 @@ const H = GAME_BALANCE.MAP_HEIGHT;
 const YAW = THREE.MathUtils.degToRad(35);
 const PITCH = THREE.MathUtils.degToRad(42);
 
-/** Cartoon isometric renderer (brief §7): flat sand field, faction colours, readable silhouettes. */
+/** Cartoon isometric renderer (brief §7): sand field with groves and rocks, faction colours, readable silhouettes. */
 export class SceneManager {
   private scene = new THREE.Scene();
   private camera: THREE.OrthographicCamera;
@@ -39,6 +41,8 @@ export class SceneManager {
   private scraps = new Map<string, THREE.Group>();
   private projectiles = new Map<string, THREE.Object3D>();
   private rallyMarkers: Record<Team, THREE.Group> = {} as Record<Team, THREE.Group>;
+  private terrainView: TerrainView | null = null;
+  private terrainRef: TerrainGrid | null = null;
 
   private target = new THREE.Vector3(30, 0, 33);
   private zoom = 30; // half-height of the view in world units
@@ -289,6 +293,7 @@ export class SceneManager {
     for (const u of state.units) lookup.set(u.id, u);
     for (const b of state.buildings) lookup.set(b.id, b);
 
+    if (state.terrain !== this.terrainRef) this.syncTerrain(state.terrain);
     this.syncPatches(state.resourcePatches);
     this.syncScrap(state.scrapPiles);
     this.syncBuildings(state, dt);
@@ -458,6 +463,17 @@ export class SceneManager {
     }
   }
 
+  /** Rebuilds trees and rocks when a match starts on another map. */
+  private syncTerrain(grid: TerrainGrid) {
+    if (this.terrainView) {
+      this.scene.remove(this.terrainView.root);
+      this.terrainView.dispose();
+    }
+    this.terrainRef = grid;
+    this.terrainView = new TerrainView(grid);
+    this.scene.add(this.terrainView.root);
+  }
+
   private syncPatches(patches: ResourcePatch[]) {
     for (const p of patches) {
       let v = this.patches.get(p.id);
@@ -530,6 +546,7 @@ export class SceneManager {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('resize', this.onResize);
+    this.terrainView?.dispose();
     this.renderer.dispose();
     // Remove the canvas: a stale canvas left in the DOM covered the live scene (black screen bug)
     if (el.parentElement) el.parentElement.removeChild(el);

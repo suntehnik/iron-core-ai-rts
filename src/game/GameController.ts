@@ -9,6 +9,7 @@ import { AI_WALLET } from '../config/tariffs';
 import { GAME_BALANCE } from '../config/balance';
 import { TrialReport, pickTrialOpponent, runDesignTrial, trialKey, trialVerdict } from '../engine/DesignTrial';
 import { GameState, SoundSink } from '../engine/GameState';
+import { DEFAULT_MAP } from '../engine/terrain/MapGenerator';
 import { sounds } from '../engine/SoundEffects';
 import { SceneManager } from '../rendering/SceneManager';
 import { AgentId, ChatMessage, LLMSettings, ProductionProposal, TacticalDecision } from '../types/agent';
@@ -18,6 +19,11 @@ import { LANGS, Lang, getLanguage, languageFromLocale, setLanguage, t } from '..
 const SETTINGS_KEY = 'ironcore_settings_v2';
 const ALLY_INSTRUCTIONS_KEY = 'ironcore_ally_instructions_v1';
 const LANGUAGE_KEY = 'ironcore_lang';
+
+/** A fresh match on the battlefield map (forest groves and rock ridges). */
+function newMatchState(): GameState {
+  return new GameState({ map: DEFAULT_MAP });
+}
 
 export const DEFAULT_SETTINGS: LLMSettings = {
   provider: 'openrouter',
@@ -134,7 +140,7 @@ export class GameController {
     const lang = loadLanguage();
     if (lang) applyLanguage(lang);
     // Created after the language is known: unit and design names are in the game language
-    this.state = new GameState();
+    this.state = newMatchState();
     this.settings = loadSettings() ?? { ...DEFAULT_SETTINGS };
     this.director = new AIDirector(this.settings, {
       chat: m => this.pushChat(m),
@@ -191,7 +197,7 @@ export class GameController {
       /* ignore */
     }
     if (!this.started) {
-      this.state = new GameState();
+      this.state = newMatchState();
       this.attachSound();
       this.director.resetMatch();
       this.scene?.reset();
@@ -310,7 +316,7 @@ export class GameController {
   }
 
   restart(mode: GameMode = this.mode) {
-    this.state = new GameState();
+    this.state = newMatchState();
     this.attachSound();
     this.director.resetMatch();
     this.setMode(mode);

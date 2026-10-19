@@ -1,12 +1,42 @@
 import React, { useEffect, useRef } from 'react';
 import { GAME_BALANCE, TEAM_COLORS } from '../config/balance';
 import { GameController } from '../game/GameController';
+import { TERRAIN_CODE, TerrainGrid } from '../engine/terrain/TerrainGrid';
 import { t } from '../i18n';
 
 const MW = 216;
 const MH = Math.round((MW * GAME_BALANCE.MAP_HEIGHT) / GAME_BALANCE.MAP_WIDTH);
 
-/** Minimap with the camera frame; click to move the camera (brief §7). */
+const TERRAIN_COLORS: Record<number, string> = {
+  [TERRAIN_CODE.forest]: '#3e5f3c',
+  [TERRAIN_CODE.rock]: '#6b655c',
+  [TERRAIN_CODE.swamp]: '#3d5552',
+};
+
+/** Terrain painted once per map: the minimap redraws several times a second. */
+const terrainLayers = new WeakMap<TerrainGrid, HTMLCanvasElement>();
+function terrainLayer(grid: TerrainGrid): HTMLCanvasElement {
+  let c = terrainLayers.get(grid);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = MW;
+  c.height = MH;
+  const ctx = c.getContext('2d')!;
+  const kx = MW / grid.cols;
+  const ky = MH / grid.rows;
+  for (let cy = 0; cy < grid.rows; cy++) {
+    for (let cx = 0; cx < grid.cols; cx++) {
+      const color = TERRAIN_COLORS[grid.cells[grid.index(cx, cy)]];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.floor(cx * kx), Math.floor(cy * ky), Math.ceil(kx), Math.ceil(ky));
+    }
+  }
+  terrainLayers.set(grid, c);
+  return c;
+}
+
+/** Minimap with terrain and the camera frame; click to move the camera (brief §7). */
 export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ ctrl, version }) => {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -19,6 +49,7 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
     const ky = MH / GAME_BALANCE.MAP_HEIGHT;
     ctx.fillStyle = '#26303b';
     ctx.fillRect(0, 0, MW, MH);
+    ctx.drawImage(terrainLayer(s.terrain), 0, 0);
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.beginPath();
     ctx.moveTo(MW / 2, 0);

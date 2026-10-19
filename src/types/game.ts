@@ -30,6 +30,22 @@ export interface UnitBase {
   facing: number; // radians, 0 = +x
   vel: number;    // current scalar speed (acceleration model)
   lastDamagedAt: number;
+  /** route around trees and rocks (absent on an open field or while the way is straight) */
+  nav?: UnitNav;
+}
+
+/** Per-unit navigation state: the planned detour and a stuck detector. */
+export interface UnitNav {
+  goal: Vector2D;
+  /** waypoints of the detour; null while the goal is in a straight, clear line */
+  path: Vector2D[] | null;
+  idx: number;
+  /** next time the straight line / route is re-checked */
+  recheckAt: number;
+  plannedAt: number;
+  stuckPos: Vector2D;
+  stuckAt: number;
+  lastSteerAt: number;
 }
 
 export interface CombatUnit extends UnitBase {
