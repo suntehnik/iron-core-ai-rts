@@ -54,11 +54,12 @@ export function normalizeActions(raw: unknown): ProductionAction[] {
         out.push({ type: 'build_harvester', count: Math.max(1, Math.min(4, Math.round(Number(a.count) || 1))) });
         break;
       case 'build_power_plant':
-        out.push({ type: 'build_power_plant' });
+      case 'build_factory': {
+        // one harvester builds by default; two speed the site up 1.6×
+        const workers = Number(a.workers) >= 2 ? 2 : 1;
+        out.push(workers === 2 ? { type: a.type, workers } : { type: a.type });
         break;
-      case 'build_factory':
-        out.push({ type: 'build_factory' });
-        break;
+      }
       case 'set_batch_size': {
         const size = Math.round(Number(a.size));
         if (Number.isFinite(size)) {

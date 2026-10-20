@@ -1,5 +1,5 @@
 import React from 'react';
-import { Factory, Minus, Pause, Pickaxe, Play, Plus, Zap } from 'lucide-react';
+import { Factory, Minus, Pause, Pickaxe, Play, Plus, X, Zap } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
 import { GameController } from '../game/GameController';
 import { Panel, ProgressBar, cx, usePanelOpen } from './ui';
@@ -12,7 +12,9 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
   const factories = s.buildings.filter(b => b.team === 'player' && b.type === 'factory');
   const plants = s.buildings.filter(b => b.team === 'player' && b.type === 'power_plant');
   const harvesters = s.units.filter(u => u.team === 'player' && u.kind === 'harvester');
-  const mining = harvesters.filter(h => h.kind === 'harvester' && (h.state === 'harvesting' || h.carrying > 0)).length;
+  const onSite = harvesters.filter(h => h.kind === 'harvester' && h.buildSiteId).length;
+  const mining = harvesters.filter(h => h.kind === 'harvester' && !h.buildSiteId && (h.state === 'harvesting' || h.carrying > 0)).length;
+  const plantSites = plants.filter(p => p.built < 1);
   const harvInProduction = s.harvestersInProduction('player');
   const allPaused = factories.length > 0 && factories.every(f => f.paused);
   const canPlant = s.canBuild('player', 'power_plant');
@@ -61,6 +63,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
                 <span className="font-semibold text-slate-100">{t('prod.factory', { n: i + 1 })}</span>
                 <span className="flex items-center gap-1.5">
                   <span className={cx('text-[10px]', status === t('factory.assembling') || status === t('factory.harvester') ? 'text-teal-300' : 'text-amber-300')}>{status}</span>
+                  {f.built < 1 && <CancelSite onClick={() => ctrl.cancelSite(f.id)} />}
                   {f.built >= 1 && (
                     <button
                       type="button"
@@ -102,6 +105,21 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
           );
         })}
 
+        {plantSites.map(p => (
+          <div key={p.id} className="rounded-lg border p-2 bg-slate-800/60 border-white/5" title={t('prod.workersHint')}>
+            <div className="flex items-center justify-between gap-1">
+              <span className="font-semibold text-slate-100 flex items-center gap-1">
+                <Zap className="w-3 h-3 text-amber-300" /> {t('prod.plantSite')}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[10px] text-amber-300">{s.siteStatus(p)}</span>
+                <CancelSite onClick={() => ctrl.cancelSite(p.id)} />
+              </span>
+            </div>
+            <ProgressBar value={p.built} color="#f2b134" className="mt-1.5" />
+          </div>
+        ))}
+
         <div className="flex items-center justify-between">
           <span className="text-slate-300">{t('prod.batchSize')}</span>
           <div className="flex items-center gap-1">
@@ -131,6 +149,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
           </span>
           <span className="text-[10px] text-slate-400">
             {t('prod.mining', { n: mining })}
+            {onSite > 0 && <span className="text-amber-200"> · {t('prod.onSite', { n: onSite })}</span>}
             {harvInProduction > 0 && <span className="text-amber-200"> · {t('prod.onLine', { n: harvInProduction })}</span>}
           </span>
         </div>
@@ -172,6 +191,18 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
     </Panel>
   );
 };
+
+const CancelSite: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={t('prod.cancelSite')}
+    aria-label={t('prod.cancelSite')}
+    className="w-6 h-6 rounded-md border flex items-center justify-center transition bg-slate-700/70 border-white/10 text-slate-200 hover:bg-rose-700/60 hover:border-rose-300/50"
+  >
+    <X className="w-3 h-3" />
+  </button>
+);
 
 const BuildButton: React.FC<{ label: string; cost: string; disabled?: boolean; title?: string; onClick: () => void; icon: React.ReactNode }> = ({
   label,

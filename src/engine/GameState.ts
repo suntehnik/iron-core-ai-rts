@@ -117,6 +117,7 @@ export class GameState {
   /** Reused by target acquisition (called for every machine every tick). */
   private candidates: { target: GameUnit | Building; score: number }[] = [];
   private sightingTimer = 0;
+  private siteTimer = 0;
   private combatTick = 0;
   private minedWindow: Record<Team, { t: number; amount: number }[]> = { player: [], enemy: [] };
 
@@ -341,7 +342,11 @@ export class GameState {
     return { ok: true };
   }
 
-  public buildStructure(team: Team, type: 'factory' | 'power_plant'): { ok: boolean; text: string } {
+  /**
+   * Orders a building: it is paid now and appears as a site that a harvester has to build
+   * (`workers` 2 sends two harvesters for a 1.6× faster build).
+   */
+  public buildStructure(team: Team, type: 'factory' | 'power_plant', workers = 1): { ok: boolean; text: string } {
     const check = this.canBuild(team, type);
     if (!check.ok) return { ok: false, text: check.reason || tr('build.impossible') };
     const occupied = this.buildings.filter(b => b.team === team && b.type === type).map(b => b.pos);
@@ -355,9 +360,16 @@ export class GameState {
     }
     if (!slot) return { ok: false, text: tr('build.noSlot') };
     const econ = this.teams[team].economy;
-    econ.metal -= type === 'factory' ? GAME_BALANCE.FACTORY_COST_METAL : GAME_BALANCE.POWER_PLANT_COST_METAL;
-    econ.components -= type === 'factory' ? GAME_BALANCE.FACTORY_COST_COMPONENTS : 0;
-    this.addBuilding(team, type, slot, false);
+    const cost = {
+      metal: type === 'factory' ? GAME_BALANCE.FACTORY_COST_METAL : GAME_BALANCE.POWER_PLANT_COST_METAL,
+      components: type === 'factory' ? GAME_BALANCE.FACTORY_COST_COMPONENTS : 0,
+    };
+    econ.metal -= cost.metal;
+    econ.components -= cost.components;
+    const site = this.addBuilding(team, type, slot, false);
+    site.workersWanted = workers >= 2 ? 2 : 1;
+    site.cost = cost;
+    this.siteTimer = 0; // assign a worker right away
     this.pushEvent(team, 'info', tr(type === 'factory' ? 'build.startedFactory' : 'build.startedPlant'), false);
     return { ok: true, text: tr(type === 'factory' ? 'build.buildingFactory' : 'build.buildingPlant') };
   }
@@ -453,9 +465,9 @@ export class GameState {
         return tr(action.paused ? 'act.productionStopped' : 'act.productionResumed', { n });
       }
       case 'build_power_plant':
-        return this.buildStructure(team, 'power_plant').text;
+        return this.buildStructure(team, 'power_plant', action.workers).text;
       case 'build_factory':
-        return this.buildStructure(team, 'factory').text;
+        return this.buildStructure(team, 'factory', action.workers).text;
       case 'set_batch_size': {
         econ.batchSize = Math.max(GAME_BALANCE.BATCH_SIZE_MIN, Math.min(GAME_BALANCE.BATCH_SIZE_MAX, Math.round(action.size)));
         return tr('act.batchSize', { n: econ.batchSize });
@@ -594,17 +606,133 @@ export class GameState {
     }
   }
 
+  /** Sites rise only while their workers stand at them; two workers build 1.6× as fast. */
   private updateConstruction(dt: number) {
+    this.assignWorkers(dt);
     for (const b of this.buildings) {
       if (b.built >= 1) continue;
+      const atWork = this.siteWorkers(b).filter(h => h.state === 'constructing');
+      if (!atWork.length) continue;
+      const rate = atWork.length >= 2 ? 1 + GAME_BALANCE.SECOND_WORKER_BONUS : 1;
       const before = b.built;
-      b.built = Math.min(1, b.built + dt / b.buildTimeSec);
+      b.built = Math.min(1, b.built + (dt * rate) / b.buildTimeSec);
       b.hp = Math.min(b.maxHp, b.hp + (b.built - before) * b.maxHp * 0.85);
+      if (this.throttled(`weld_${b.id}`, 0.45)) {
+        const w = atWork[0];
+        this.addEffect('weld', { x: (w.pos.x + b.pos.x) / 2, y: (w.pos.y + b.pos.y) / 2 }, b.team, 1);
+      }
       if (b.built >= 1) {
+        for (const h of this.siteWorkers(b)) {
+          h.buildSiteId = null;
+          h.state = 'moving';
+        }
         this.addEffect('build_complete', b.pos, b.team, b.radius);
         this.pushEvent(b.team, 'build_complete', tr(b.type === 'factory' ? 'event.factoryOnline' : 'event.plantOnline'), false);
       }
     }
+  }
+
+  /** Harvesters assigned to a construction site. */
+  public siteWorkers(b: Building): HarvesterUnit[] {
+    const out: HarvesterUnit[] = [];
+    for (const u of this.units) if (u.kind === 'harvester' && u.state !== 'dead' && u.buildSiteId === b.id) out.push(u);
+    return out;
+  }
+
+  /** Construction sites of a side, oldest first. */
+  public constructionSites(team: Team): Building[] {
+    return this.buildings.filter(b => b.team === team && b.built < 1);
+  }
+
+  /**
+   * Gives sites their workers: the nearest harvester with the least cargo (it keeps the cargo and
+   * delivers it after the job). At most MAX_ACTIVE_SITES sites are worked at once; others queue.
+   */
+  private assignWorkers(dt: number) {
+    this.siteTimer -= dt;
+    if (this.siteTimer > 0) return;
+    this.siteTimer = 0.5;
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const sites = this.constructionSites(team);
+      if (!sites.length) continue;
+      let active = sites.filter(b => this.siteWorkers(b).length > 0).length;
+      for (const site of sites) {
+        const assigned = this.siteWorkers(site).length;
+        const wanted = site.workersWanted ?? 1;
+        if (assigned >= wanted) continue;
+        if (assigned === 0 && active >= GAME_BALANCE.MAX_ACTIVE_SITES) continue;
+        let need = wanted - assigned;
+        while (need > 0) {
+          let best: HarvesterUnit | null = null;
+          let bestScore = Infinity;
+          for (const u of this.units) {
+            if (u.kind !== 'harvester' || u.team !== team || u.state === 'dead' || u.buildSiteId) continue;
+            const score = dist(u.pos, site.pos) + u.carrying * 0.3;
+            if (score < bestScore) {
+              bestScore = score;
+              best = u;
+            }
+          }
+          if (!best) {
+            if (assigned === 0 && this.throttled(`site_noworker_${team}`, 30)) this.pushEvent(team, 'warning', tr('event.siteNoWorkers'), false);
+            break;
+          }
+          best.buildSiteId = site.id;
+          best.targetId = null;
+          need--;
+          if (assigned === 0 && need === wanted - 1) active++;
+        }
+      }
+    }
+  }
+
+  /** Cancels a site: 75% of its price comes back and the workers return to mining. */
+  public cancelConstruction(team: Team, buildingId: string): { ok: boolean; text: string } {
+    const site = this.buildings.find(b => b.id === buildingId && b.team === team && b.built < 1);
+    if (!site) return { ok: false, text: tr('build.noSite') };
+    const econ = this.teams[team].economy;
+    const metal = Math.round((site.cost?.metal ?? 0) * GAME_BALANCE.SITE_CANCEL_REFUND);
+    const components = Math.round((site.cost?.components ?? 0) * GAME_BALANCE.SITE_CANCEL_REFUND);
+    econ.metal += metal;
+    econ.components += components;
+    for (const h of this.siteWorkers(site)) {
+      h.buildSiteId = null;
+      h.state = 'moving';
+    }
+    this.buildings = this.buildings.filter(b => b.id !== site.id);
+    const text = tr('event.siteCancelled', { metal });
+    this.pushEvent(team, 'info', text, false);
+    return { ok: true, text };
+  }
+
+  /** What a site is waiting for, in the game language (production panel, factory status). */
+  public siteStatus(b: Building): string {
+    const workers = this.siteWorkers(b);
+    if (!workers.length) {
+      const active = this.constructionSites(b.team).filter(x => this.siteWorkers(x).length > 0).length;
+      return tr(active >= GAME_BALANCE.MAX_ACTIVE_SITES ? 'site.queued' : 'site.noWorker');
+    }
+    if (workers.some(h => h.state === 'constructing')) return tr('site.building', { pct: Math.round(b.built * 100) });
+    if (workers.every(h => this.gameTime - h.lastDamagedAt < 6)) return tr('site.retreated');
+    return tr('site.enRoute');
+  }
+
+  /** A harvester assigned to a site walks there and builds. False when the site is gone (back to mining). */
+  private workOnSite(u: HarvesterUnit, dt: number): boolean {
+    const site = this.buildings.find(b => b.id === u.buildSiteId);
+    if (!site || site.built >= 1) {
+      u.buildSiteId = null;
+      return false;
+    }
+    if (dist(u.pos, site.pos) > site.radius + u.radius + GAME_BALANCE.SITE_REACH) {
+      this.steer(u, site.pos, u.speed, dt);
+      u.state = 'moving';
+    } else {
+      this.brake(u, dt);
+      u.facing = Math.atan2(site.pos.y - u.pos.y, site.pos.x - u.pos.x);
+      u.state = 'constructing';
+    }
+    return true;
   }
 
   private updateFabricators(dt: number) {
@@ -644,7 +772,7 @@ export class GameState {
 
   /** Factory status for the HUD */
   public factoryStatus(b: Building): string {
-    if (b.built < 1) return tr('factory.building', { pct: Math.round(b.built * 100) });
+    if (b.built < 1) return this.siteStatus(b);
     if (b.paused) return tr('factory.paused');
     if (b.harvesterBuild) return tr('factory.harvester');
     if (!b.job) return tr('factory.waitingResources');
@@ -766,7 +894,13 @@ export class GameState {
 
       // Flee home when attacked and an enemy is close
       const threatened = this.gameTime - u.lastDamagedAt < 4 && this.nearestEnemyCombat(u.team, u.pos, 14);
-      if (u.carrying >= u.capacity || (threatened && u.carrying > 0) || (threatened && u.state !== 'delivering')) {
+      // A worker builds (the cargo waits until the job is done); under fire it flees like any harvester
+      if (u.buildSiteId) {
+        if (!threatened && this.workOnSite(u, dt)) continue;
+        if (threatened && this.throttled(`site_fire_${u.buildSiteId}`, 20)) this.pushEvent(u.team, 'warning', tr('event.siteUnderFire'), false);
+      }
+      // under threat a harvester keeps running home (an empty one used to flip between fleeing and mining every tick)
+      if ((u.carrying >= u.capacity && !u.buildSiteId) || threatened) {
         u.state = 'delivering';
         if (dist(u.pos, hq.pos) < hq.radius + u.radius + 0.4) {
           if (u.carrying > 0) {
@@ -1025,6 +1159,11 @@ export class GameState {
     }
 
     this.applySeparation(dt);
+  }
+
+  /** Our buildings took fire in the last few seconds. */
+  public baseUnderFire(team: Team): boolean {
+    return this.buildings.some(b => b.team === team && this.gameTime - b.lastDamagedAt < GAME_BALANCE.BASE_ALERT_SEC);
   }
 
   /** The enemy machine nearest to our HQ while our buildings are under fire, if one is close to the base. */

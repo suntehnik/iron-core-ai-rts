@@ -88,7 +88,26 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
     e.powerCapacity
   } kW, mining ${e.miningRatePerMin}/min, harvesters ${state.harvesterCount(team)}/${GAME_BALANCE.MAX_HARVESTERS}${
     harvQueued ? ` (+${harvQueued} in production)` : ''
-  }, factories ${factories.length}${paused ? ` (paused: ${paused})` : ''}, power plants ${state.buildingCount(team, 'power_plant')}, batch size ${e.batchSize}, component reserve ${e.componentReserve}`;
+  }${builders(state, team) ? ` (${builders(state, team)} building)` : ''}, factories ${factories.length}${paused ? ` (paused: ${paused})` : ''}, power plants ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, batch size ${e.batchSize}, component reserve ${e.componentReserve}`;
+  }
+
+  /** Harvesters away from mining on construction sites. */
+  function builders(state: GameState, team: Team): number {
+    return state.constructionSites(team).reduce((n, b) => n + state.siteWorkers(b).length, 0);
+  }
+
+  /** Construction sites: progress and whether a worker is at it. */
+  function sitesLine(state: GameState, team: Team): string {
+    const sites = state.constructionSites(team);
+    if (!sites.length) return '';
+    return `, sites: ${sites
+      .map(b => {
+        const w = state.siteWorkers(b);
+        const at = w.filter(h => h.state === 'constructing').length;
+        const status = at ? `${at} building` : w.length ? 'worker on the way' : 'needs a worker';
+        return `${b.type === 'factory' ? 'factory' : 'power plant'} ${Math.round(b.built * 100)}% (${status})`;
+      })
+      .join('; ')}`;
   }
 
   function intelLine(state: GameState, team: Team): string {
@@ -143,12 +162,13 @@ Rules:
 - If the commander capped the cost, keep within the cap relative to the current cost.
 - Changes apply to the next batches; robots already built do not change.
 - If the order is about production (harvesters, power plant, factory, batch size, component reserve, stopping/starting the lines) rather than the design, return "design": null and the actions.
+- A harvester builds each building (factory, power plant): it goes to the site and does not mine meanwhile. At most ${GAME_BALANCE.MAX_ACTIVE_SITES} sites are worked at once, the rest wait. "workers":2 sends two harvesters and builds 1.6× as fast.
 - The factory builds harvesters (${GAME_BALANCE.HARVESTER_BUILD_SEC} s each) instead of combat robots. "set_production" with paused=true stops all factories (to save metal and free power), paused=false starts them.
 - If the commander capped the cost growth, return the cap in percent in "costLimitPct" (a quarter = 25, a third = 33, half = 50), otherwise null. Cost = chassis metal + metal of all modules.
 - In "reply" and "compromise" do not use part ids: name the parts in plain words (siege cannon, reinforced armour). Give the model a short name.
 - ${readable}
 Answer with JSON only:
-{"reply":"1–2 short sentences to the commander","design":{"name":"short model name","chassis":"chassis id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"what was sacrificed, or an empty string"}`;
+{"reply":"1–2 short sentences to the commander","design":{"name":"short model name","chassis":"chassis id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"what was sacrificed, or an empty string"}`;
 
   function engineerUserPrompt(state: GameState, order: string, pending: ProductionProposal | null): string {
     const t = state.teams.player;
@@ -219,11 +239,11 @@ Answer with JSON only: {"reply":"1–2 sentences to the commander","plan":{"stan
 Every ~${GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC} seconds you get a report and decide:
 1) the design for the next batches — only from the catalog, within the chassis limits (slots, mass, power, recoil); null if no change is needed;
 2) the army plan (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
-3) economic actions. The factory builds harvesters instead of combat robots — do not order them while the army cannot hold the front.
+3) economic actions. The factory builds harvesters instead of combat robots — do not order them while the army cannot hold the front. Harvesters build the buildings and do not mine meanwhile.
 Counter the enemy models you have spotted and watch the economy: without mining the army does not grow.
 Fog of war: you see only what your machines and buildings see, and forest blocks sight, so the enemy data is partial.
 ${readable}
-${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the enemy (${foe}), up to 15 words","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
+${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the enemy (${foe}), up to 15 words","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"set_batch_size","size":3}]}`;
   }
 
   function commanderUserPrompt(state: GameState, team: Team, instructions?: string): string {

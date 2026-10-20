@@ -66,7 +66,26 @@ function economyLine(state: GameState, team: Team): string {
     e.powerCapacity
   } кВт, добыча ${e.miningRatePerMin}/мин, добытчиков ${harv}/${GAME_BALANCE.MAX_HARVESTERS}${
     harvQueued ? ` (+${harvQueued} в производстве)` : ''
-  }, заводов ${factories.length}${paused ? ` (на паузе: ${paused})` : ''}, электростанций ${state.buildingCount(team, 'power_plant')}, размер партии ${e.batchSize}, резерв компонентов ${e.componentReserve}`;
+  }${builders(state, team) ? ` (на стройке ${builders(state, team)})` : ''}, заводов ${factories.length}${paused ? ` (на паузе: ${paused})` : ''}, электростанций ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, размер партии ${e.batchSize}, резерв компонентов ${e.componentReserve}`;
+}
+
+/** Harvesters away from mining on construction sites. */
+function builders(state: GameState, team: Team): number {
+  return state.constructionSites(team).reduce((n, b) => n + state.siteWorkers(b).length, 0);
+}
+
+/** Construction sites: progress and whether a worker is at it. */
+function sitesLine(state: GameState, team: Team): string {
+  const sites = state.constructionSites(team);
+  if (!sites.length) return '';
+  return `, стройки: ${sites
+    .map(b => {
+      const w = state.siteWorkers(b);
+      const at = w.filter(h => h.state === 'constructing').length;
+      const status = at ? `строят ${at}` : w.length ? 'рабочий в пути' : 'ждёт рабочего';
+      return `${b.type === 'factory' ? 'завод' : 'электростанция'} ${Math.round(b.built * 100)}% (${status})`;
+    })
+    .join('; ')}`;
 }
 
 function intelLine(state: GameState, team: Team): string {
@@ -125,11 +144,12 @@ export const ENGINEER_SYSTEM = `Ты — «Болт», главный инжен
 - Если командир ограничил стоимость — соблюдай лимит относительно текущей стоимости.
 - Изменения идут в следующие партии, выпущенные машины не меняются.
 - Если приказ про производство (добытчики, электростанция, завод, размер партии, резерв компонентов, остановка/запуск конвейеров), а не про конструкцию — верни "design": null и действия.
+- Здание (завод, электростанцию) строит добытчик: он идёт на площадку и на это время не добывает. Одновременно идут не больше ${GAME_BALANCE.MAX_ACTIVE_SITES} строек, остальные ждут. "workers":2 посылает двух добытчиков и ускоряет стройку в 1,6 раза.
 - Добытчиков собирает завод (${GAME_BALANCE.HARVESTER_BUILD_SEC} с каждый) вместо боевых машин. "set_production" с paused=true останавливает все заводы (копить металл, освободить энергию), paused=false — запускает.
 - Если командир ограничил рост стоимости, верни лимит в процентах в "costLimitPct" (четверть = 25, треть = 33, половина = 50), иначе null. Стоимость = металл шасси + металл всех модулей.
 - В "reply" и "compromise" не используй id деталей — называй их по-русски (осадная пушка, усиленная броня). Имя модели — по-русски.
 Ответ — только JSON:
-{"reply":"1–2 коротких предложения командиру","design":{"name":"короткое имя модели","chassis":"id шасси","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"чем пожертвовали или пустая строка"}`;
+{"reply":"1–2 коротких предложения командиру","design":{"name":"короткое имя модели","chassis":"id шасси","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"чем пожертвовали или пустая строка"}`;
 
 export function engineerUserPrompt(state: GameState, order: string, pending: ProductionProposal | null): string {
   const t = state.teams.player;
@@ -239,10 +259,10 @@ export function commanderSystem(team: Team, vsAI: boolean, instructions?: string
 Раз в ~${GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC} секунд получаешь сводку и решаешь:
 1) конструкцию для следующих партий — только из каталога, соблюдая ограничения шасси (слоты, масса, энергия, отдача); null — если менять не нужно;
 2) тактический план армии (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
-3) экономические действия. Добытчиков собирает завод вместо боевых машин — не заказывай их, пока армия не может держать фронт.
+3) экономические действия. Добытчиков собирает завод вместо боевых машин — не заказывай их, пока армия не может держать фронт. Здания строят добытчики: на время стройки они не добывают.
 Подбирай контр-конструкции против замеченных моделей противника, следи за экономикой: без добычи армия не растёт.
 Туман войны: ты видишь только то, что видят твои машины и здания, лес закрывает обзор, поэтому сведения о противнике неполные.
-${instructionsBlock(instructions)}Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
+${instructionsBlock(instructions)}Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"set_batch_size","size":3}]}`;
 }
 
 export function commanderUserPrompt(state: GameState, team: Team, instructions?: string): string {

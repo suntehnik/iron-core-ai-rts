@@ -16,6 +16,7 @@ export type UnitState =
   | 'delivering'
   | 'retreating'
   | 'repairing'
+  | 'constructing'
   | 'dead';
 
 export interface UnitBase {
@@ -74,6 +75,8 @@ export interface HarvesterUnit extends UnitBase {
   capacity: number;
   targetId: string | null;
   targetType: 'ore' | 'scrap' | null;
+  /** the construction site this harvester is assigned to (it does not mine meanwhile) */
+  buildSiteId?: string | null;
 }
 
 export type GameUnit = CombatUnit | HarvesterUnit;
@@ -108,6 +111,10 @@ export interface Building {
   /** 0..1 while under construction, 1 when operational */
   built: number;
   buildTimeSec: number;
+  /** a construction site: how many harvesters should build it (1, or 2 for a rush) */
+  workersWanted?: number;
+  /** what the site cost: a cancelled site refunds part of it */
+  cost?: { metal: number; components: number };
   turretCooldown: number;
   lastDamagedAt: number;
 }
@@ -147,7 +154,7 @@ export interface Projectile {
 /** One-shot visual effects consumed by the renderer. */
 export interface VisualEffect {
   id: number;
-  type: 'muzzle' | 'hit' | 'explosion' | 'big_explosion' | 'melee' | 'build_complete';
+  type: 'muzzle' | 'hit' | 'explosion' | 'big_explosion' | 'melee' | 'build_complete' | 'weld';
   pos: Vector2D;
   team: Team | 'neutral';
   size: number;
@@ -231,8 +238,8 @@ export interface GameEvent {
 
 export type ProductionAction =
   | { type: 'build_harvester'; count: number }
-  | { type: 'build_power_plant' }
-  | { type: 'build_factory' }
+  | { type: 'build_power_plant'; workers?: number }
+  | { type: 'build_factory'; workers?: number }
   | { type: 'set_batch_size'; size: number }
   | { type: 'set_component_reserve'; amount: number }
   | { type: 'set_production'; paused: boolean };

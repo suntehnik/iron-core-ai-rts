@@ -573,6 +573,12 @@ export class GameController {
     this.notify(text, 'info');
   }
 
+  /** Cancels one of the player's construction sites (75% of the price comes back). */
+  cancelSite(id: string) {
+    sounds.playClick();
+    this.notify(this.state.cancelConstruction('player', id).text, 'info');
+  }
+
   toggleFactory(id: string) {
     sounds.playClick();
     const f = this.state.buildings.find(b => b.id === id && b.team === 'player' && b.type === 'factory');

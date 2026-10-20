@@ -235,13 +235,15 @@ export class AIDirector {
     if (harvesters < targetHarvesters && canSpareFactory && (econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL || harvesters === 0)) {
       state.orderHarvester(team);
     }
-    if (econ.powerEfficiency < 0.9 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) {
+    // A harvester builds each building and stops mining meanwhile: build with enough miners and not under fire
+    const canBuild = state.harvesterCount(team) >= 3 && !state.baseUnderFire(team);
+    if (canBuild && econ.powerEfficiency < 0.9 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) {
       const building = state.buildings.some(b => b.team === team && b.type === 'power_plant' && b.built < 1);
       if (!building) state.buildStructure(team, 'power_plant');
     }
     // Metal piling up while components are short → fabricate more components
     econ.componentReserve = econ.metal > 500 ? Math.max(econ.componentReserve, 350) : Math.min(econ.componentReserve, 220);
-    if (state.buildingCount(team, 'factory') === 0 && econ.metal >= GAME_BALANCE.FACTORY_COST_METAL) {
+    if (state.buildingCount(team, 'factory') === 0 && state.harvesterCount(team) > 0 && econ.metal >= GAME_BALANCE.FACTORY_COST_METAL) {
       state.buildStructure(team, 'factory');
     }
   }

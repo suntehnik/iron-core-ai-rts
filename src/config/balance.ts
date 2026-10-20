@@ -26,6 +26,14 @@ export const GAME_BALANCE = {
   MAX_FACTORIES: 2,
   MAX_POWER_PLANTS: 3,
 
+  // Construction by harvesters: a building rises only while a harvester works at the site, and
+  // that harvester does not mine meanwhile. Power does not matter (a base without power must be
+  // able to build a power plant).
+  MAX_ACTIVE_SITES: 2, // more sites wait in a queue for a worker
+  SECOND_WORKER_BONUS: 0.6, // two workers build 1.6× as fast
+  SITE_CANCEL_REFUND: 0.75,
+  SITE_REACH: 1.2, // a worker this close to the site's edge is at work
+
   // HQ self-defence turret (prevents instant loss to a single early rush)
   HQ_TURRET_RANGE: 16.5, // +10% (was 15)
   HQ_TURRET_DAMAGE: 36, // +20% (was 30): ~51 DPS at the 0.7 s interval

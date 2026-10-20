@@ -305,8 +305,10 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
   const econ = t.economy;
   const harvesters = state.harvesterCount(team) + state.harvestersInProduction(team);
   if (harvesters < 5 && mine >= 3 && econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL) actions.push({ type: 'build_harvester', count: 1 });
-  if (econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
-  if (econ.metal > 750 && state.buildingCount(team, 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
+  // a harvester builds and stops mining meanwhile: only with enough miners and a quiet base
+  const canBuild = state.harvesterCount(team) >= 3 && !state.baseUnderFire(team) && state.constructionSites(team).length === 0;
+  if (canBuild && econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
+  else if (canBuild && econ.metal > 750 && state.buildingCount(team, 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
 
   return { taunt: commanderTaunt(team, Math.random()), design, plan, actions };
 }

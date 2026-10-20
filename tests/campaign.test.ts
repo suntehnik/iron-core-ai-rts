@@ -130,15 +130,22 @@ describe('campaign levels', () => {
   });
 
   it('the garrison guards its HQ and never joins a wave', () => {
-    const s = new GameState({ level: levelConfig(5) });
-    const hq = s.getHQ('enemy')!;
-    s.setPlan('enemy', { ...s.teams.enemy.plan, stance: 'advance' });
-    for (let t = 0; t < 90; t += 0.1) s.update(0.1);
-    const garrison = s.units.filter((u): u is CombatUnit => u.kind === 'combat' && !!u.garrison);
-    expect(garrison).toHaveLength(3);
-    for (const g of garrison) {
-      expect(g.committed).toBe(false);
-      expect(Math.hypot(g.pos.x - hq.pos.x, g.pos.y - hq.pos.y)).toBeLessThan(16);
+    const orig = Math.random;
+    Math.random = seeded(4);
+    try {
+      const s = new GameState({ level: levelConfig(5) });
+      const hq = s.getHQ('enemy')!;
+      s.setPlan('enemy', { ...s.teams.enemy.plan, stance: 'advance' });
+      for (let t = 0; t < 90; t += 0.1) s.update(0.1);
+      const garrison = s.units.filter((u): u is CombatUnit => u.kind === 'combat' && !!u.garrison);
+      expect(garrison).toHaveLength(3);
+      for (const g of garrison) {
+        expect(g.committed).toBe(false);
+        // it may chase an intruder off, but stays inside the base (the waves go 40+ units out)
+        expect(Math.hypot(g.pos.x - hq.pos.x, g.pos.y - hq.pos.y)).toBeLessThan(GAME_BALANCE.BASE_DEFENSE_RECALL_RADIUS);
+      }
+    } finally {
+      Math.random = orig;
     }
   });
 
