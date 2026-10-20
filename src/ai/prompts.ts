@@ -82,13 +82,17 @@ const PAD_NAMES_RU: Record<PadBuildingType, string> = {
 /** Pad buildings open on this level: id, cost, how many stand and how many pads are free. */
 function padBuildingsLine(state: GameState, team: Team): string {
   const open = state.unlockedPadBuildings();
-  if (!open.length) return 'на этом уровне пока недоступны';
-  return open
+  const closed = (Object.keys(PAD_BUILDINGS) as PadBuildingType[]).filter(t => !open.includes(t));
+  const openText = open
     .map(type => {
       const spec = PAD_BUILDINGS[type];
       return `${type} — ${PAD_NAMES_RU[type]}, ${spec.metal}м/${spec.components}к${state.crystals && spec.crystals ? `/${spec.crystals}кр` : ''}, построено ${state.buildingCount(team, type)}/${spec.maxCount}, свободных площадок ${state.freePads(team, type).length}`;
     })
     .join('; ');
+  const closedText = closed.length
+    ? `ЗАКРЫТЫ на этом уровне, строить нельзя: ${closed.map(t => `${t} (с уровня ${PAD_BUILDINGS[t].unlockLevel})`).join(', ')}`
+    : '';
+  return [openText || 'открытых зданий на площадках нет', closedText].filter(Boolean).join('. ');
 }
 
 /** Crystals and the laboratory on this level, in one line; empty where neither applies. */
@@ -130,6 +134,15 @@ function intelLine(state: GameState, team: Team): string {
     .slice(0, 4)
     .map(s => `${s.design.name} ×${s.count}, ${s.inSight ? 'в поле зрения' : `видели ${s.lastSeenSec} с назад`} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
     .join('; ');
+}
+
+/** Orders the game refused in the last minute: the model sees the reason and stops repeating what it cannot pay for. */
+function refusalLines(state: GameState, team: Team): string[] {
+  const now = state.affordableNow(team);
+  const out = [`ПО КАРМАНУ СЕЙЧАС: ${now.length ? now.join(', ') : 'ничего — копи металл, новые заказы будут отклонены'}`];
+  const list = state.recentRefusals(team);
+  if (list.length) out.push(`ИГРА ОТКАЗАЛА ЗА МИНУТУ (не повторяй, пока причина не исчезнет): ${list.map(r => `${r.what} — ${r.why} (${r.ago} с назад)`).join('; ')}`);
+  return out;
 }
 
 /** Campaign level rules for an AI commander: the doctrine and the chassis it may use. */
@@ -184,7 +197,7 @@ export const ENGINEER_SYSTEM = `Ты — «Болт», главный инжен
 - Изменения идут в следующие партии, выпущенные машины не меняются.
 - Если приказ про производство (добытчики, электростанция, завод, размер партии, резерв компонентов, остановка/запуск конвейеров), а не про конструкцию — верни "design": null и действия.
 - Здание (завод, электростанцию) строит добытчик: он идёт на площадку и на это время не добывает. Одновременно идут не больше ${GAME_BALANCE.MAX_ACTIVE_SITES} строек, остальные ждут. "workers":2 посылает двух добытчиков и ускоряет стройку в 1,6 раза.
-- Здания на площадках (турель, ремонтный док, радарная вышка, пункт приёма) — действие "build" с "building" из строки ЗДАНИЯ НА ПЛОЩАДКАХ; "where": base (у базы), forward (передовая), north / center / south (передовая на фланге). Пункт приёма ставится только на передовую.
+- Здания на площадках — действие "build" только с открытым "building" из строки ЗДАНИЯ НА ПЛОЩАДКАХ (закрытое не обещай командиру, скажи, с какого уровня оно откроется); лабораторию, радар и ремонтный док ставь у базы (base), турели — у базы или на передовой, пункт приёма — только на передовой. Здание ещё нужно построить: говори «заложил», «строим», а не «готово»; "where": base (у базы), forward (передовая), north / center / south (передовая на фланге). Пункт приёма ставится только на передовую.
 - Добытчиков собирает завод (${GAME_BALANCE.HARVESTER_BUILD_SEC} с каждый) вместо боевых машин. "set_production" с paused=true останавливает все заводы (копить металл, освободить энергию), paused=false — запускает.
 - Если командир ограничил рост стоимости, верни лимит в процентах в "costLimitPct" (четверть = 25, треть = 33, половина = 50), иначе null. Стоимость = металл шасси + металл всех модулей.
 - В "reply" и "compromise" не используй id деталей — называй их по-русски (осадная пушка, усиленная броня). Имя модели — по-русски.
@@ -205,6 +218,7 @@ export function engineerUserPrompt(state: GameState, order: string, pending: Pro
   lines.push(`НАША АРМИЯ: ${armyLine(state, 'player')}`);
   lines.push(`РАЗВЕДКА: ${intelLine(state, 'player')}`);
   lines.push(`СОБЫТИЯ: ${eventsLine(state, 'player')}`);
+  lines.push(...refusalLines(state, 'player'));
   lines.push(`КАТАЛОГ:\n${compactCatalog()}`);
   return lines.join('\n');
 }
@@ -323,6 +337,7 @@ export function commanderUserPrompt(state: GameState, team: Team, instructions?:
     `АРМИЯ ПРОТИВНИКА: ${enemyArmyLine(state, team)}`,
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
     `СОБЫТИЯ: ${eventsLine(state, team)}`,
+    ...refusalLines(state, team),
     ...levelLines(state, team),
     `КАТАЛОГ:\n${compactCatalog()}`,
     ...instructionsReminder(instructions),

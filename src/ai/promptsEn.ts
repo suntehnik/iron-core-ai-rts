@@ -95,13 +95,17 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
   /** Pad buildings open on this level: id, cost, how many stand and how many pads are free. */
   function padBuildingsLine(state: GameState, team: Team): string {
     const open = state.unlockedPadBuildings();
-    if (!open.length) return 'not available on this level yet';
-    return open
+    const closed = (Object.keys(PAD_BUILDINGS) as PadBuildingType[]).filter(t => !open.includes(t));
+    const openText = open
       .map(type => {
         const spec = PAD_BUILDINGS[type];
         return `${type} — ${PAD_NAMES_EN[type]}, ${spec.metal}m/${spec.components}c${state.crystals && spec.crystals ? `/${spec.crystals}cr` : ''}, built ${state.buildingCount(team, type)}/${spec.maxCount}, free pads ${state.freePads(team, type).length}`;
       })
       .join('; ');
+    const closedText = closed.length
+      ? `CLOSED on this level, cannot be built: ${closed.map(t => `${t} (from level ${PAD_BUILDINGS[t].unlockLevel})`).join(', ')}`
+      : '';
+    return [openText || 'no pad buildings open', closedText].filter(Boolean).join('. ');
   }
 
   /** Crystals and the laboratory on this level, in one line; empty where neither applies. */
@@ -143,6 +147,15 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
       .slice(0, 4)
       .map(s => `${mark(s.design.name)} ×${s.count}, ${s.inSight ? 'in sight' : `seen ${s.lastSeenSec} s ago`} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
       .join('; ');
+  }
+
+  /** Orders the game refused in the last minute: the model sees the reason and stops repeating what it cannot pay for. */
+  function refusalLines(state: GameState, team: Team): string[] {
+    const now = state.affordableNow(team);
+    const out = [`AFFORDABLE NOW: ${now.length ? now.join(', ') : 'nothing — save metal, new orders will be refused'}`];
+    const list = state.recentRefusals(team);
+    if (list.length) out.push(`THE GAME REFUSED IN THE LAST MINUTE (do not repeat until the reason is gone): ${list.map(r => `${r.what} — ${mark(r.why)} (${r.ago} s ago)`).join('; ')}`);
+    return out;
   }
 
   /** Campaign level rules for an AI commander: the doctrine and the chassis it may use. */
@@ -193,7 +206,7 @@ Rules:
 - Changes apply to the next batches; robots already built do not change.
 - If the order is about production (harvesters, power plant, factory, batch size, component reserve, stopping/starting the lines) rather than the design, return "design": null and the actions.
 - A harvester builds each building (factory, power plant): it goes to the site and does not mine meanwhile. At most ${GAME_BALANCE.MAX_ACTIVE_SITES} sites are worked at once, the rest wait. "workers":2 sends two harvesters and builds 1.6× as fast.
-- Pad buildings (turret, repair dock, radar tower, drop-off point): action "build" with "building" from the PAD BUILDINGS line; "where": base, forward, or north / center / south (a forward flank). The drop-off point goes on forward pads only.
+- Pad buildings: action "build" only with an open "building" from the PAD BUILDINGS line (do not promise a closed one; say from which level it opens); put the laboratory, radar and repair dock at the base (base), turrets at the base or forward, the drop-off point forward only. A harvester still has to build it: say "laid down" or "building", not "done"; "where": base, forward, or north / center / south (a forward flank). The drop-off point goes on forward pads only.
 - The factory builds harvesters (${GAME_BALANCE.HARVESTER_BUILD_SEC} s each) instead of combat robots. "set_production" with paused=true stops all factories (to save metal and free power), paused=false starts them.
 - If the commander capped the cost growth, return the cap in percent in "costLimitPct" (a quarter = 25, a third = 33, half = 50), otherwise null. Cost = chassis metal + metal of all modules.
 - In "reply" and "compromise" do not use part ids: name the parts in plain words (siege cannon, reinforced armour). Give the model a short name.
@@ -212,6 +225,7 @@ Answer with JSON only:
     lines.push(`OUR ARMY: ${armyLine(state, 'player')}`);
     lines.push(`SCOUTING: ${intelLine(state, 'player')}`);
     lines.push(`EVENTS: ${eventsLine(state, 'player')}`);
+    lines.push(...refusalLines(state, 'player'));
     lines.push(`CATALOG:\n${compactCatalog()}`);
     return lines.join('\n');
   }
@@ -295,6 +309,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
       `HQS: yours ${state.baseHpPct(team)}%, enemy ${state.baseHpPct(foe)}%`,
       `EVENTS: ${eventsLine(state, team)}`,
+      ...refusalLines(state, team),
       ...levelLines(state, team),
       `CATALOG:\n${compactCatalog()}`,
       ...instructionsReminder(instructions),

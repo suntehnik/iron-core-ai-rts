@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AIDirector } from '../src/ai/AIDirector';
 import { localCommanderDecision, localEngineer } from '../src/ai/fallbacks';
 import { normalizeActions } from '../src/ai/parsing';
 import { commanderUserPrompt, engineerUserPrompt } from '../src/ai/prompts';
@@ -215,11 +216,43 @@ describe('pad buildings for the agents', () => {
   });
 
   it('the reports list only the buildings open on the level', () => {
-    expect(engineerUserPrompt(new GameState({ level: levelConfig(1) }), 'x', null)).toContain('ЗДАНИЯ НА ПЛОЩАДКАХ: на этом уровне пока недоступны');
+    expect(engineerUserPrompt(new GameState({ level: levelConfig(1) }), 'x', null)).toContain(
+      'ЗДАНИЯ НА ПЛОЩАДКАХ: открытых зданий на площадках нет. ЗАКРЫТЫ на этом уровне, строить нельзя: turret (с уровня 2)',
+    );
     const l3 = commanderUserPrompt(new GameState({ level: levelConfig(3) }), 'enemy');
     expect(l3).toContain('turret — турель');
     expect(l3).toContain('repair_dock — ремонтный док');
     expect(l3).not.toContain('radar —');
+  });
+
+  it('a building the level has not opened is dropped, and the engineer says so instead of promising it', async () => {
+    const s = new GameState({ level: levelConfig(1) });
+    let proposal: unknown = 'none';
+    const chat: string[] = [];
+    const offline = {
+      provider: 'offline' as const, apiKey: '', model: '', baseUrl: '',
+      enemyUsesLLM: false, autonomousTactics: false, chargeEnemyToPlayer: false,
+      autoSpeakResponse: false, matchCoinLimit: 40, soundMuted: true,
+    };
+    const d = new AIDirector(offline, { chat: m => chat.push(m.text), proposal: p => (proposal = p), tactical() {}, intercept() {}, changed() {} });
+    const reply = await d.sendEngineerOrder(s, 'Поставь турель у базы');
+    expect(proposal).toBeNull(); // nothing left to confirm
+    expect(reply?.text).toContain('Недоступно на этом уровне: Турель (откроется на уровне 2)');
+    expect(s.buildings.some(b => b.type === 'turret')).toBe(false);
+  });
+
+  it('orders the game refused show in the report for a minute, so the model stops repeating them', () => {
+    const s = new GameState({ level: levelConfig(2) });
+    s.teams.enemy.economy.metal = 50;
+    s.applyProductionAction('enemy', { type: 'build', building: 'turret', where: 'base' });
+    s.applyProductionAction('enemy', { type: 'build_factory' });
+    expect(commanderUserPrompt(s, 'enemy')).toMatch(/ИГРА ОТКАЗАЛА ЗА МИНУТУ .*turret — Нужно 120 металла \(0 с назад\); factory — /);
+    expect(commanderUserPrompt(s, 'enemy')).toContain('ПО КАРМАНУ СЕЙЧАС: ничего');
+    for (let i = 0; i < 20 * 61; i++) s.update(0.05);
+    expect(commanderUserPrompt(s, 'enemy')).not.toContain('ИГРА ОТКАЗАЛА');
+    s.teams.enemy.economy.metal = 2000;
+    s.teams.enemy.economy.components = 500;
+    expect(commanderUserPrompt(s, 'enemy')).toMatch(/ПО КАРМАНУ СЕЙЧАС: harvester, power_plant, factory, turret/);
   });
 
   it('the local engineer understands turrets, docks, radar towers and drop-off points, but not the radar module', () => {

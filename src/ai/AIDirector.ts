@@ -419,6 +419,13 @@ export class AIDirector {
 
     this.lastCall.engineer = call;
     this.busy.engineer = false;
+    // a building the level has not opened yet is dropped, and the player is told so instead of a false promise
+    const screened = state.screenActions(proposal.actions);
+    if (screened.notes.length) {
+      proposal.actions = screened.actions;
+      proposal.warnings.push(...screened.notes);
+      proposal.replyRu = `${proposal.replyRu.replace(/[.\s]+$/, '')}. ${screened.notes.join('. ')}.`;
+    }
     const hasContent = !!proposal.design || proposal.actions.length > 0;
     this.pendingProposal = hasContent ? proposal : null;
     const reply = this.say({

@@ -490,6 +490,52 @@ export class GameState {
     return { ok: true, text: tr('pad.building', { name }) };
   }
 
+  /**
+   * Drops actions the level does not allow (a building that opens on a later level) and says why:
+   * an agent must not promise the player a turret on level 1.
+   */
+  public screenActions(actions: ProductionAction[]): { actions: ProductionAction[]; notes: string[] } {
+    const notes: string[] = [];
+    const kept = actions.filter(a => {
+      if (a.type !== 'build' || this.isUnlocked(a.building)) return true;
+      notes.push(tr('pad.lockedAction', { name: tr(`building.${a.building}` as MessageKey), n: PAD_BUILDINGS[a.building].unlockLevel }));
+      return false;
+    });
+    return { actions: kept, notes };
+  }
+
+  /** Recent orders the game refused (what and why): agents see them and stop repeating what cannot be paid. */
+  private refusals: Record<Team, { what: string; why: string; time: number }[]> = { player: [], enemy: [] };
+
+  private noteRefusal(team: Team, what: string, why: string) {
+    const list = this.refusals[team];
+    const same = list.find(r => r.what === what);
+    if (same) {
+      same.why = why;
+      same.time = this.gameTime;
+    } else list.push({ what, why, time: this.gameTime });
+    if (list.length > 6) list.shift();
+  }
+
+  /** Orders this side can pay for and place right now (action ids for the agents' reports). */
+  public affordableNow(team: Team): string[] {
+    const econ = this.teams[team].economy;
+    const out: string[] = [];
+    const harvesters = this.harvesterCount(team) + this.harvestersInProduction(team);
+    if (harvesters < GAME_BALANCE.MAX_HARVESTERS && (econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL || harvesters === 0)) out.push('harvester');
+    if (this.canBuild(team, 'power_plant').ok) out.push('power_plant');
+    if (this.canBuild(team, 'factory').ok) out.push('factory');
+    for (const type of this.unlockedPadBuildings()) if (this.canBuildOnPad(team, type).ok) out.push(type);
+    return out;
+  }
+
+  /** Refused orders of the last minute, newest last (for the agents' reports). */
+  public recentRefusals(team: Team, withinSec = 60): { what: string; why: string; ago: number }[] {
+    return this.refusals[team]
+      .filter(r => this.gameTime - r.time <= withinSec)
+      .map(r => ({ what: r.what, why: r.why, ago: Math.round(this.gameTime - r.time) }));
+  }
+
   /** Puts a ready pad building on a pad (campaign fortifications). */
   public placeReady(team: Team, type: PadBuildingType, where?: PadWhere): Building | null {
     const pad = this.freePads(team, type, where)[0];
@@ -575,7 +621,10 @@ export class GameState {
             break;
           }
         }
-        if (!ordered) return tr('act.harvNotOrdered', { why: lastFail });
+        if (!ordered) {
+          this.noteRefusal(team, 'harvester', lastFail); // action ids, not UI text: the models read them
+          return tr('act.harvNotOrdered', { why: lastFail });
+        }
         const factories = this.buildings.filter(b => b.team === team && b.type === 'factory');
         const where = !factories.length
           ? tr('act.harvByHq')
@@ -590,11 +639,17 @@ export class GameState {
         return tr(action.paused ? 'act.productionStopped' : 'act.productionResumed', { n });
       }
       case 'build_power_plant':
-        return this.buildStructure(team, 'power_plant', action.workers).text;
-      case 'build_factory':
-        return this.buildStructure(team, 'factory', action.workers).text;
-      case 'build':
-        return this.buildOnPad(team, action.building, action.where, action.workers).text;
+      case 'build_factory': {
+        const type = action.type === 'build_factory' ? 'factory' : 'power_plant';
+        const r = this.buildStructure(team, type, action.workers);
+        if (!r.ok) this.noteRefusal(team, type, r.text);
+        return r.text;
+      }
+      case 'build': {
+        const r = this.buildOnPad(team, action.building, action.where, action.workers);
+        if (!r.ok) this.noteRefusal(team, action.building, r.text);
+        return r.text;
+      }
       case 'set_batch_size': {
         econ.batchSize = Math.max(GAME_BALANCE.BATCH_SIZE_MIN, Math.min(GAME_BALANCE.BATCH_SIZE_MAX, Math.round(action.size)));
         return tr('act.batchSize', { n: econ.batchSize });

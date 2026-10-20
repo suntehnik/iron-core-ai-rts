@@ -186,3 +186,10 @@ ios/IronCore/                SwiftUI-приложение: WKWebView, схема
 npm test             # юнит-тесты и безголовая симуляция матчей
 npm run test:live    # живые вызовы агентов к LLM из .env.local (LLM_PROXY_TARGET/LLM_API_KEY/LLM_MODEL)
 ```
+
+Живая проверка кампании: приказы инженеру на новые механики и матчи «ИИ против ИИ» на модели по уровням. Число игровых
+секунд и уровни задаются переменными, полный отчёт пишется в JSON:
+
+```bash
+LLM_LIVE=1 CAMPAIGN_LIVE_LEVELS=3,5,6 CAMPAIGN_LIVE_SEC=420 CAMPAIGN_LIVE_REPORT=report.json npx vitest run tests/campaign-live.test.ts
+```
