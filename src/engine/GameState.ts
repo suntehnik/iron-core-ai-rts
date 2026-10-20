@@ -1,5 +1,8 @@
 import {
+  ARTILLERY,
+  CRYSTAL,
   GAME_BALANCE,
+  LAB_FROM_LEVEL,
   PAD_BUILDINGS,
   RADAR_SIGHT,
   REPAIR_DOCK,
@@ -71,6 +74,13 @@ const TERRAIN_COLLISION_SLACK = 0.6;
 /** Bodies pushed closer than this share of their radius to trees or rocks are moved back out. */
 const TERRAIN_PUSHOUT = 0.8;
 
+/** The same design with its advanced parts swapped for basic ones (no laboratory, or too few crystals). */
+export function basicDesign(design: RobotDesign): RobotDesign {
+  const basic: Record<string, string> = { plasma_blasters: 'autocannon_20mm', sniper_railgun: 'autocannon_20mm', sloped_reactive: 'reinforced_steel' };
+  const swapped: RobotDesign = { ...design, modules: design.modules.map(id => basic[id] ?? id) };
+  return RobotBuilder.calculateStats(swapped).isValid ? swapped : RobotBuilder.repairDesign(swapped).design;
+}
+
 function isPadType(type: BuildingType): type is PadBuildingType {
   return type in PAD_BUILDINGS;
 }
@@ -99,6 +109,10 @@ export class GameState {
   public readonly vision: Vision;
   /** Campaign level of this match (map and the enemy's edge); null for a plain map or the arena. */
   public readonly level: LevelConfig | null;
+  /** The map has crystal deposits and crystal prices apply (campaign levels from 4 on). */
+  public readonly crystals: boolean;
+  /** Advanced (tier 2) parts need a laboratory (campaign levels from 6 on). */
+  public readonly labRequired: boolean;
   /** Doctrine of a side's AI commander set by the level; null — no doctrine line, balanced play. */
   public doctrine: Record<Team, Doctrine | null> = { player: null, enemy: null };
   /** Multiplier on the metal a side's harvesters bring home (the enemy's economic edge on a level). */
@@ -145,6 +159,8 @@ export class GameState {
   constructor(options: { arena?: boolean; map?: MapSpec; level?: LevelConfig; fair?: boolean } = {}) {
     this.arena = !!options.arena;
     this.level = options.arena ? null : (options.level ?? null);
+    this.crystals = !!this.level && this.level.n >= CRYSTAL.FROM_LEVEL;
+    this.labRequired = !!this.level && this.level.n >= LAB_FROM_LEVEL;
     this.teams = {
       player: this.createTeam('player', initialDesign('player')),
       enemy: this.createTeam('enemy', initialDesign('enemy')),
@@ -169,6 +185,7 @@ export class GameState {
     this.allowedChassis[team] = [...m.chassis];
     const hq = this.getHQ(team);
     if (m.extraFactory) this.addBuilding(team, 'factory', buildingSlot(team, 'factory', 1), true);
+    for (const type of m.fortifications ?? []) this.placeReady(team, type, 'base');
     if (hq && m.hqHpMul) {
       hq.maxHp = Math.round(hq.maxHp * m.hqHpMul);
       hq.hp = hq.maxHp;
@@ -198,6 +215,10 @@ export class GameState {
    * heaviest allowed chassis and repaired; null when it cannot be made to fit (keep the current one).
    */
   public fitDesign(team: Team, design: RobotDesign): RobotDesign | null {
+    if (this.lockedParts(team, RobotBuilder.calculateStats(design)).length) {
+      design = basicDesign(design);
+      if (this.lockedParts(team, RobotBuilder.calculateStats(design)).length) return null;
+    }
     const allowed = this.allowedChassis[team];
     if (!allowed || allowed.includes(design.chassisId)) return design;
     const order: ChassisType[] = ['heavy_quad', 'medium_tracked', 'light_biped'];
@@ -211,6 +232,8 @@ export class GameState {
     const economy: TeamEconomy = {
       metal: GAME_BALANCE.INITIAL_METAL,
       components: GAME_BALANCE.INITIAL_COMPONENTS,
+      crystals: 0,
+      crystalReserve: CRYSTAL.DEFAULT_RESERVE,
       powerCapacity: 0,
       powerDemand: 0,
       powerEfficiency: 1,
@@ -222,6 +245,7 @@ export class GameState {
         metalMined: 0,
         scrapReclaimed: 0,
         componentsMade: 0,
+        crystalsMined: 0,
         unitsBuilt: 0,
         unitsLost: 0,
         kills: 0,
@@ -257,6 +281,12 @@ export class GameState {
     patch('res_mid_c', 50, 30, 6500, 4.5, 'contested');
     patch('res_mid_s', 50, 48, 4500, 4, 'contested');
 
+    if (this.crystals) {
+      // rare crystals in the middle, between the contested metal deposits
+      for (const [id, y] of [['crystal_n', 21], ['crystal_s', 39]] as const) {
+        this.resourcePatches.push({ id, pos: { x: 50, y }, metalRemaining: CRYSTAL.DEPOSIT, maxMetal: CRYSTAL.DEPOSIT, radius: 2.5, zone: 'contested', resource: 'crystal' });
+      }
+    }
     this.pads = [...padSlots('player'), ...padSlots('enemy')];
     if (map) this.generateMapTerrain(map);
 
@@ -432,6 +462,7 @@ export class GameState {
     const econ = this.teams[team].economy;
     if (econ.metal < spec.metal) return { ok: false, reason: tr('build.needMetal', { n: spec.metal }) };
     if (econ.components < spec.components) return { ok: false, reason: tr('build.needComponents', { n: spec.components }) };
+    if (this.crystals && econ.crystals < (spec.crystals ?? 0)) return { ok: false, reason: tr('build.needCrystals', { n: spec.crystals ?? 0 }) };
     return { ok: true };
   }
 
@@ -445,12 +476,14 @@ export class GameState {
     const pad = this.freePads(team, type, where)[0];
     const spec = PAD_BUILDINGS[type];
     const econ = this.teams[team].economy;
+    const crystals = this.crystals ? (spec.crystals ?? 0) : 0;
     econ.metal -= spec.metal;
     econ.components -= spec.components;
+    econ.crystals -= crystals;
     const site = this.addBuilding(team, type, pad.pos, false);
     site.padId = pad.id;
     site.workersWanted = workers >= 2 ? 2 : 1;
-    site.cost = { metal: spec.metal, components: spec.components };
+    site.cost = { metal: spec.metal, components: spec.components, crystals };
     this.siteTimer = 0;
     const name = tr(`building.${type}` as MessageKey);
     this.pushEvent(team, 'info', tr('pad.started', { name }), false);
@@ -569,6 +602,10 @@ export class GameState {
       case 'set_component_reserve': {
         econ.componentReserve = Math.max(0, Math.min(600, Math.round(action.amount)));
         return tr('act.componentReserve', { n: econ.componentReserve });
+      }
+      case 'set_crystal_reserve': {
+        econ.crystalReserve = Math.max(0, Math.min(400, Math.round(action.amount)));
+        return tr('act.crystalReserve', { n: econ.crystalReserve });
       }
     }
   }
@@ -793,6 +830,7 @@ export class GameState {
     const components = Math.round((site.cost?.components ?? 0) * GAME_BALANCE.SITE_CANCEL_REFUND);
     econ.metal += metal;
     econ.components += components;
+    econ.crystals += Math.round((site.cost?.crystals ?? 0) * GAME_BALANCE.SITE_CANCEL_REFUND);
     for (const h of this.siteWorkers(site)) {
       h.buildSiteId = null;
       h.state = 'moving';
@@ -873,17 +911,23 @@ export class GameState {
     if (b.built < 1) return this.siteStatus(b);
     if (b.paused) return tr('factory.paused');
     if (b.harvesterBuild) return tr('factory.harvester');
-    if (!b.job) return tr('factory.waitingResources');
+    if (!b.job) {
+      const stats = RobotBuilder.calculateStats(this.teams[b.team].design);
+      if (this.lockedParts(b.team, stats).length) return tr('factory.needLab');
+      if (this.crystals && this.teams[b.team].economy.crystals < stats.crystalCost) return tr('factory.needCrystals');
+      return tr('factory.waitingResources');
+    }
     if (this.isArmyCapped(b.team)) return tr('factory.armyCap');
-    if (!b.job.unitPaid && !this.canAffordUnit(b.team, b.job.stats.metalCost, b.job.stats.componentCost)) {
+    if (!b.job.unitPaid && this.lockedParts(b.team, b.job.stats).length) return tr('factory.needLab');
+    if (!b.job.unitPaid && !this.canAffordUnit(b.team, b.job.stats.metalCost, b.job.stats.componentCost, b.job.stats.crystalCost)) {
       return tr('factory.needResources');
     }
     return tr('factory.assembling');
   }
 
-  private canAffordUnit(team: Team, metal: number, comps: number) {
+  private canAffordUnit(team: Team, metal: number, comps: number, crystals = 0) {
     const econ = this.teams[team].economy;
-    return econ.metal >= metal && econ.components >= comps;
+    return econ.metal >= metal && econ.components >= comps && (!this.crystals || econ.crystals >= crystals);
   }
 
   private updateProduction(dt: number) {
@@ -916,7 +960,8 @@ export class GameState {
       if (!b.job) {
         const stats = RobotBuilder.calculateStats(t.design);
         if (!stats.isValid) continue;
-        if (!this.canAffordUnit(b.team, stats.metalCost, stats.componentCost)) continue;
+        if (this.lockedParts(b.team, stats).length) continue; // waits for a laboratory
+        if (!this.canAffordUnit(b.team, stats.metalCost, stats.componentCost, stats.crystalCost)) continue;
         b.job = {
           design: { ...t.design },
           stats,
@@ -935,9 +980,11 @@ export class GameState {
 
       // Pay for each unit when its assembly starts (keeps the factory busy without locking a whole batch)
       if (!job.unitPaid) {
-        if (!this.canAffordUnit(b.team, job.stats.metalCost, job.stats.componentCost)) continue;
+        if (this.lockedParts(b.team, job.stats).length) continue; // the laboratory was lost
+        if (!this.canAffordUnit(b.team, job.stats.metalCost, job.stats.componentCost, job.stats.crystalCost)) continue;
         econ.metal -= job.stats.metalCost;
         econ.components -= job.stats.componentCost;
+        if (this.crystals) econ.crystals -= job.stats.crystalCost;
         job.unitPaid = true;
       }
 
@@ -998,19 +1045,25 @@ export class GameState {
         if (threatened && this.throttled(`site_fire_${u.buildSiteId}`, 20)) this.pushEvent(u.team, 'warning', tr('event.siteUnderFire'), false);
       }
       // under threat a harvester keeps running home (an empty one used to flip between fleeing and mining every tick)
-      if ((u.carrying >= u.capacity && !u.buildSiteId) || threatened) {
+      if ((u.carrying >= this.cargoCap(u) && !u.buildSiteId) || threatened) {
         u.state = 'delivering';
         // unload at the nearest drop-off point; under fire run to the HQ
         const drop = threatened ? hq : (this.dropOffNear(u.team, u.pos) ?? hq);
         if (dist(u.pos, drop.pos) < drop.radius + u.radius + 0.4) {
           if (u.carrying > 0) {
             const income = u.carrying * this.incomeMul[u.team];
-            econ.metal += income;
-            if (u.targetType === 'scrap') econ.totals.scrapReclaimed += income;
-            else econ.totals.metalMined += income;
-            this.minedWindow[u.team].push({ t: this.gameTime, amount: income });
+            if (u.cargo === 'crystal') {
+              econ.crystals += income;
+              econ.totals.crystalsMined += income;
+            } else {
+              econ.metal += income;
+              if (u.targetType === 'scrap') econ.totals.scrapReclaimed += income;
+              else econ.totals.metalMined += income;
+              this.minedWindow[u.team].push({ t: this.gameTime, amount: income });
+            }
           }
           u.carrying = 0;
+          u.cargo = 'metal';
           u.targetId = null;
           u.state = threatened ? 'idle' : 'moving';
         } else {
@@ -1036,7 +1089,7 @@ export class GameState {
           u.state = 'moving';
         } else {
           u.state = 'harvesting';
-          const gather = Math.min(scrap.metal, GAME_BALANCE.HARVEST_RATE_PER_SEC * 1.5 * econ.powerEfficiency * dt, u.capacity - u.carrying);
+          const gather = Math.min(scrap.metal, GAME_BALANCE.HARVEST_RATE_PER_SEC * 1.5 * econ.powerEfficiency * dt, this.cargoCap(u) - u.carrying);
           scrap.metal -= gather;
           u.carrying += gather;
           if (scrap.metal <= 0.5) {
@@ -1057,7 +1110,10 @@ export class GameState {
         u.state = 'moving';
       } else {
         u.state = 'harvesting';
-        const gather = Math.min(patch.metalRemaining, GAME_BALANCE.HARVEST_RATE_PER_SEC * econ.powerEfficiency * dt, u.capacity - u.carrying);
+        const crystal = patch.resource === 'crystal';
+        if (u.carrying <= 0) u.cargo = crystal ? 'crystal' : 'metal';
+        const rate = GAME_BALANCE.HARVEST_RATE_PER_SEC * (crystal ? CRYSTAL.RATE_MUL : 1);
+        const gather = Math.min(patch.metalRemaining, rate * econ.powerEfficiency * dt, this.cargoCap(u) - u.carrying);
         patch.metalRemaining -= gather;
         u.carrying += gather;
       }
@@ -1083,18 +1139,65 @@ export class GameState {
       const score = d + dist(s.pos, hq.pos) * 0.5 + danger - 8;
       if (!best || score < best.score) best = { id: s.id, type: 'scrap', score };
     }
+    const wantCrystals = this.wantsCrystals(u.team);
     for (const p of this.resourcePatches) {
       if (p.metalRemaining <= 0) continue;
+      const crystal = p.resource === 'crystal';
+      // no mixed loads; crystals only while below the reserve
+      if (u.carrying > 0 && (u.cargo === 'crystal') !== crystal) continue;
+      if (crystal && !wantCrystals && !(u.carrying > 0 && u.cargo === 'crystal')) continue;
       const crowd = this.units.filter(o => o.kind === 'harvester' && o.team === u.team && o.targetId === p.id).length;
       const danger = this.nearestEnemyCombat(u.team, p.pos, 15) ? 70 : 0;
       const drop = this.dropOffNear(u.team, p.pos) ?? hq;
-      const score = dist(p.pos, drop.pos) * 1.2 + dist(u.pos, p.pos) * 0.3 + crowd * 7 + danger;
+      const score = dist(p.pos, drop.pos) * 1.2 + dist(u.pos, p.pos) * 0.3 + crowd * 7 + danger - (crystal ? 40 : 0);
       if (!best || score < best.score) best = { id: p.id, type: 'ore', score };
     }
     if (best) {
       u.targetId = best.id;
       u.targetType = best.type;
     }
+  }
+
+  /** A load is 50 metal or 25 crystals. */
+  private cargoCap(u: HarvesterUnit): number {
+    return u.cargo === 'crystal' ? CRYSTAL.CARRY : u.capacity;
+  }
+
+  /** Crystals are below the reserve and fewer than a third of the harvesters already work on them (three or more harvesters). */
+  public wantsCrystals(team: Team): boolean {
+    if (!this.crystals) return false;
+    const econ = this.teams[team].economy;
+    if (econ.crystals >= econ.crystalReserve) return false;
+    let total = 0;
+    let onCrystals = 0;
+    for (const u of this.units) {
+      if (u.kind !== 'harvester' || u.team !== team) continue;
+      total++;
+      const p = u.targetType === 'ore' && u.targetId ? this.resourcePatches.find(x => x.id === u.targetId) : null;
+      if (p?.resource === 'crystal' || (u.cargo === 'crystal' && u.carrying > 0)) onCrystals++;
+    }
+    // a third of the harvesters at most, and none while there are fewer than three (metal comes first)
+    return onCrystals < Math.floor(total / 3);
+  }
+
+  /** The side has a ready laboratory (advanced parts on late levels). */
+  public hasLab(team: Team): boolean {
+    return this.buildings.some(b => b.team === team && b.type === 'lab' && b.built >= 1);
+  }
+
+  /** Advanced parts of a design the side cannot build yet (no laboratory on a level that requires one). */
+  public lockedParts(team: Team, stats: { labParts: string[] }): string[] {
+    return this.labRequired && !this.hasLab(team) ? stats.labParts : [];
+  }
+
+  /** Notes for a design proposal: parts that need a laboratory, and the crystal price. */
+  public designTechNotes(team: Team, design: RobotDesign): string[] {
+    const stats = RobotBuilder.calculateStats(design);
+    const notes: string[] = [];
+    const locked = this.lockedParts(team, stats);
+    if (locked.length) notes.push(tr('tech.needsLab', { parts: locked.map(id => partName(id)).join(', ') }));
+    if (this.crystals && stats.crystalCost > 0) notes.push(tr('tech.crystalPrice', { n: stats.crystalCost }));
+    return notes;
   }
 
   private nearestEnemyCombat(team: Team, pos: Vector2D, radius: number): CombatUnit | null {
@@ -1648,6 +1751,10 @@ export class GameState {
   /** The HQ's roof gun and defence turrets: shoot the nearest enemy our side sees in a clear line. */
   private updateTurrets(dt: number) {
     for (const b of this.buildings) {
+      if (b.type === 'artillery' && b.built >= 1) {
+        this.fireArtillery(b, dt);
+        continue;
+      }
       const tower = b.type === 'turret';
       if (b.type !== 'command_center' && !(tower && b.built >= 1)) continue;
       b.turretCooldown -= dt;
@@ -1677,6 +1784,41 @@ export class GameState {
       });
       this.sound.shot('turret', b.team);
     }
+  }
+
+  /** Artillery turret: lobs a shell over the forest at the nearest enemy its side spots, beyond a minimum range. */
+  private fireArtillery(b: Building, dt: number) {
+    b.turretCooldown -= dt;
+    if (b.turretCooldown > 0) return;
+    let target: GameUnit | null = null;
+    let bestD = ARTILLERY.RANGE + b.radius;
+    for (const o of this.units) {
+      if (o.team === b.team || o.state === 'dead' || !this.vision.sees(b.team, o.id)) continue;
+      const d = dist(o.pos, b.pos);
+      if (d < ARTILLERY.MIN_RANGE || d >= bestD) continue;
+      bestD = d;
+      target = o;
+    }
+    if (!target) return;
+    b.turretCooldown = ARTILLERY.INTERVAL / Math.max(0.3, this.teams[b.team].economy.powerEfficiency);
+    const from = { x: b.pos.x, y: b.pos.y };
+    this.projectiles.push({
+      id: `proj_${this.nextId++}`,
+      team: b.team,
+      sourceId: b.id,
+      targetId: target.id,
+      from,
+      to: { ...target.pos },
+      pos: { ...from },
+      progress: 0,
+      speed: 26,
+      damage: ARTILLERY.DAMAGE,
+      kind: 'explosive',
+      splash: ARTILLERY.SPLASH,
+      armorPierce: ARTILLERY.ARMOR_PIERCE,
+    });
+    this.addEffect('muzzle', from, b.team, 1.6);
+    this.sound.shot('explosive', b.team);
   }
 
   /** Nearest enemy unit; with `needSight` only one our side sees and in a clear line from `pos` (turrets). */

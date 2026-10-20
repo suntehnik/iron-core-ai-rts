@@ -123,13 +123,39 @@ export interface PadBuildingSpec {
   unlockLevel: number;
   /** forward pads only (the drop-off point) */
   forwardOnly?: boolean;
+  /** crystals, charged only on maps with crystals */
+  crystals?: number;
 }
 
 export const PAD_BUILDINGS: Record<PadBuildingType, PadBuildingSpec> = {
   turret: { hp: 900, radius: 1.8, buildSec: 12, metal: 120, components: 30, powerKw: 20, maxCount: 6, unlockLevel: 2 },
   repair_dock: { hp: 1000, radius: 2.6, buildSec: 16, metal: 140, components: 20, powerKw: 0, maxCount: 2, unlockLevel: 3 },
-  radar: { hp: 700, radius: 2.2, buildSec: 18, metal: 160, components: 60, powerKw: 40, maxCount: 1, unlockLevel: 4 },
+  radar: { hp: 700, radius: 2.2, buildSec: 18, metal: 160, components: 60, crystals: 20, powerKw: 40, maxCount: 1, unlockLevel: 4 },
   depot: { hp: 900, radius: 2.8, buildSec: 18, metal: 180, components: 0, powerKw: 10, maxCount: 2, unlockLevel: 5, forwardOnly: true },
+  lab: { hp: 1200, radius: 2.8, buildSec: 30, metal: 250, components: 80, crystals: 40, powerKw: 50, maxCount: 1, unlockLevel: 6 },
+  artillery: { hp: 1000, radius: 2.0, buildSec: 20, metal: 220, components: 60, crystals: 30, powerKw: 40, maxCount: 3, unlockLevel: 7 },
+};
+
+/** Rare crystals: from this campaign level on, two deposits in the middle of the map. */
+export const CRYSTAL = {
+  FROM_LEVEL: 4,
+  CARRY: 25, // per trip (metal: 50)
+  RATE_MUL: 0.5, // mined at half the metal rate
+  DEFAULT_RESERVE: 60,
+  DEPOSIT: 1500,
+};
+
+/** From this campaign level on, advanced (tier 2) parts need a laboratory. */
+export const LAB_FROM_LEVEL = 6;
+
+/** Artillery turret: lobs shells over the forest at targets its side spots. */
+export const ARTILLERY = {
+  RANGE: 28,
+  MIN_RANGE: 5,
+  DAMAGE: 75,
+  INTERVAL: 3,
+  SPLASH: 2.5,
+  ARMOR_PIERCE: 0.1,
 };
 
 export const TURRET = {

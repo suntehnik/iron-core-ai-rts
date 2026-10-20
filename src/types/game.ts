@@ -73,6 +73,8 @@ export interface HarvesterUnit extends UnitBase {
   kind: 'harvester';
   carrying: number;
   capacity: number;
+  /** what the harvester carries now (crystals travel in smaller loads) */
+  cargo?: 'metal' | 'crystal';
   targetId: string | null;
   targetType: 'ore' | 'scrap' | null;
   /** the construction site this harvester is assigned to (it does not mine meanwhile) */
@@ -84,7 +86,7 @@ export type GameUnit = CombatUnit | HarvesterUnit;
 export type BuildingType = 'command_center' | 'factory' | 'power_plant' | PadBuildingType;
 
 /** Buildings placed on pads (base and forward), unlocked by campaign level. */
-export type PadBuildingType = 'turret' | 'repair_dock' | 'radar' | 'depot';
+export type PadBuildingType = 'turret' | 'repair_dock' | 'radar' | 'depot' | 'lab' | 'artillery';
 
 /** Where a pad building goes: any base pad, a forward pad, or a forward pad on one flank. */
 export type PadWhere = 'base' | 'forward' | 'north' | 'center' | 'south';
@@ -130,7 +132,7 @@ export interface Building {
   /** a construction site: how many harvesters should build it (1, or 2 for a rush) */
   workersWanted?: number;
   /** what the site cost: a cancelled site refunds part of it */
-  cost?: { metal: number; components: number };
+  cost?: { metal: number; components: number; crystals?: number };
   /** the pad a pad building stands on */
   padId?: string;
   turretCooldown: number;
@@ -144,6 +146,8 @@ export interface ResourcePatch {
   maxMetal: number;
   radius: number;
   zone: 'player_safe' | 'enemy_safe' | 'contested';
+  /** metal ore, or rare crystals (campaign levels from 4 on) */
+  resource?: 'metal' | 'crystal';
 }
 
 export interface ScrapWreckage {
@@ -182,6 +186,9 @@ export interface VisualEffect {
 export interface TeamEconomy {
   metal: number;
   components: number;
+  /** rare resource of later campaign levels; harvesters bring it when below the reserve */
+  crystals: number;
+  crystalReserve: number;
   powerCapacity: number;
   powerDemand: number;
   powerEfficiency: number; // 0..1
@@ -193,6 +200,7 @@ export interface TeamEconomy {
     metalMined: number;
     scrapReclaimed: number;
     componentsMade: number;
+    crystalsMined: number;
     unitsBuilt: number;
     unitsLost: number;
     kills: number;
@@ -261,6 +269,7 @@ export type ProductionAction =
   | { type: 'build'; building: PadBuildingType; where?: PadWhere; workers?: number }
   | { type: 'set_batch_size'; size: number }
   | { type: 'set_component_reserve'; amount: number }
+  | { type: 'set_crystal_reserve'; amount: number }
   | { type: 'set_production'; paused: boolean };
 
 export interface ArmySummary {

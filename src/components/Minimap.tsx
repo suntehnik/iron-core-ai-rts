@@ -71,7 +71,7 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
 
     for (const p of s.resourcePatches) {
       if (p.metalRemaining <= 0) continue;
-      ctx.fillStyle = '#9fb3c8';
+      ctx.fillStyle = p.resource === 'crystal' ? '#d08bff' : '#9fb3c8';
       ctx.beginPath();
       ctx.arc(p.pos.x * kx, p.pos.y * ky, 2 + 2 * (p.metalRemaining / p.maxMetal), 0, Math.PI * 2);
       ctx.fill();

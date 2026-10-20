@@ -1,4 +1,5 @@
 import { MapSpec } from '../engine/terrain/MapGenerator';
+import { PadBuildingType } from '../types/game';
 import { ChassisType } from '../types/robot';
 
 /** How the enemy general plays: the rule-based AI follows it and the LLM gets it as a line of its report. */
@@ -18,6 +19,8 @@ export interface EnemyModifiers {
   garrison?: number;
   /** HQ durability multiplier */
   hqHpMul?: number;
+  /** ready pad buildings at its base from the start */
+  fortifications?: PadBuildingType[];
 }
 
 export interface LevelConfig {
@@ -89,14 +92,14 @@ export const CAMPAIGN: LevelConfig[] = [
     n: 6,
     id: 'fortress',
     map: { id: 'fortress', seed: 606, groves: 8, groveSize: [4, 6], ridges: 2, swamps: 1, symmetric: true, fortress: FORTRESS_LINE },
-    enemy: { incomeMul: 1.15, chassis: ALL_CHASSIS, garrison: 4, hqHpMul: 1.25 },
+    enemy: { incomeMul: 1.05, chassis: ALL_CHASSIS, hqHpMul: 1.25, fortifications: ['artillery'] },
     doctrine: 'balanced',
   },
   {
     n: 7,
     id: 'laststand',
     map: { id: 'laststand', seed: 707, groves: 10, groveSize: [4, 6.5], ridges: 3, swamps: 2, symmetric: false },
-    enemy: { incomeMul: 1.1, chassis: ALL_CHASSIS, garrison: 3, hqHpMul: 1.25 },
+    enemy: { incomeMul: 1.15, chassis: ALL_CHASSIS, garrison: 3, hqHpMul: 1.25 },
     doctrine: 'aggressive',
   },
 ];

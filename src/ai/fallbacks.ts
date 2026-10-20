@@ -1,7 +1,7 @@
 import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
 import { commanderDesignName, commanderTaunt } from '../config/commanders';
 import { Doctrine } from '../config/levels';
-import { GameState, opposite } from '../engine/GameState';
+import { GameState, basicDesign, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { PadBuildingType, ProductionAction, TacticalPlan, Team } from '../types/game';
 import { ChassisType, RobotDesign, TacticalRole } from '../types/robot';
@@ -75,12 +75,19 @@ export function localEngineer(order: string, current: RobotDesign): EngineerDraf
     ['repair_dock', ['ремонтный док', 'ремонтн', 'repair dock', 'officina']],
     ['radar', ['радарную вышк', 'радарная вышк', 'вышк', 'radar tower', 'torre radar']],
     ['depot', ['пункт приём', 'пункт прием', 'drop-off', 'depot', 'punto di raccolta']],
+    ['lab', ['лаборатор', 'laborator']],
+    ['artillery', ['артиллерийск', 'artillery turret', "torretta d'artiglieria", 'torretta d’artiglieria']],
   ];
-  for (const [building, words] of padWords) {
-    if (!has(p, ...words)) continue;
+  const named = padWords.filter(([, words]) => has(p, ...words)).map(([b]) => b);
+  // "артиллерийская турель" is the artillery turret, not a turret as well
+  for (const building of named.includes('artillery') ? named.filter(b => b !== 'turret') : named) {
     const forward = has(p, 'передов', 'фронт', 'forward', 'front', 'avanzat');
     actions.push({ type: 'build', building, ...(forward || building === 'depot' ? { where: 'forward' as const } : { where: 'base' as const }) });
     replies.push(tr('le.padBuilding', { name: tr(`building.${building}` as MessageKey) }));
+  }
+  if (has(p, 'кристалл', 'crystal', 'cristall') && numberIn(p) !== null) {
+    actions.push({ type: 'set_crystal_reserve', amount: numberIn(p)! });
+    replies.push(tr('le.crystals', { n: numberIn(p)! }));
   }
   if (has(p, 'парти', 'batch', 'lotto', 'lotti') && numberIn(p) !== null) {
     actions.push({ type: 'set_batch_size', size: numberIn(p)! });
@@ -306,6 +313,10 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
       plan.engagementRange = 'balanced';
       plan.targetPriority = 'closest';
     }
+    // crystals are rare: without enough for a batch the general keeps to the basic version of the design
+    if (design && state.crystals && t.economy.crystals < RobotBuilder.calculateStats(design).crystalCost * t.economy.batchSize) {
+      design = { ...basicDesign(design), name: design.name };
+    }
     if (design && design.chassisId === t.design.chassisId && design.modules.join() === t.design.modules.join()) design = null;
   }
 
@@ -328,6 +339,11 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
   const raided = state.recentEvents(team, 5, 60).some(e => e.type === 'base_attack');
   if (canBuild && econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
   else if (canBuild && raided && state.buildingCount(team, 'turret') < 2 && padOk('turret', 100)) actions.push({ type: 'build', building: 'turret', where: 'base' });
+  else if (canBuild && state.labRequired && !state.hasLab(team) && state.buildingCount(team, 'lab') === 0 && padOk('lab', 150)) {
+    actions.push({ type: 'build', building: 'lab', where: 'base' });
+  } else if (canBuild && state.gameTime > 300 && state.buildingCount(team, 'artillery') < 2 && padOk('artillery', 250)) {
+    actions.push({ type: 'build', building: 'artillery', where: 'base' });
+  }
   else if (canBuild && state.gameTime > 240 && state.buildingCount(team, 'repair_dock') === 0 && padOk('repair_dock', 150)) {
     actions.push({ type: 'build', building: 'repair_dock', where: 'base' });
   } else if (canBuild && state.gameTime > 300 && state.buildingCount(team, 'radar') === 0 && padOk('radar', 200)) {

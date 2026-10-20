@@ -35,7 +35,7 @@ function compactCatalog(): string {
   const chassis = Object.values(CHASSIS_CATALOG)
     .map(
       c =>
-        `${c.id}: ${c.maxSlots} slots, base mass ${c.baseMass}/max ${c.maxMass} kg, source ${c.basePowerOutput} kW, ${c.baseSpeed} m/s, holds recoil ≤${c.recoilResistance}, ${c.metalCost}m/${c.componentCost}c`,
+        `${c.id}: ${c.maxSlots} slots, base mass ${c.baseMass}/max ${c.maxMass} kg, source ${c.basePowerOutput} kW, ${c.baseSpeed} m/s, holds recoil ≤${c.recoilResistance}, ${c.metalCost}m/${c.componentCost}c${c.crystalCost ? `/${c.crystalCost}cr` : ''}`,
     )
     .join('\n');
   const modules = Object.values(MODULES_CATALOG)
@@ -45,8 +45,9 @@ function compactCatalog(): string {
       if (m.powerOutput) parts.push(`+${m.powerOutput}kW`);
       if (m.heatGen) parts.push(`heat ${m.heatGen}`);
       if (m.heatDissipation > 0) parts.push(`cooling ${m.heatDissipation}`);
-      parts.push(`${m.metalCost}m/${m.componentCost}c`);
+      parts.push(`${m.metalCost}m/${m.componentCost}c${m.crystalCost ? `/${m.crystalCost}cr` : ''}`);
       const fx: string[] = [];
+      if (m.tier === 2) fx.push('advanced part');
       if (m.hpBonus) fx.push(`+${m.hpBonus}HP`);
       if (m.armorRating) fx.push(`armour ${Math.round(m.armorRating * 100)}%`);
       if (m.weaponDamage && m.weaponFireRate) {
@@ -98,9 +99,22 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
     return open
       .map(type => {
         const spec = PAD_BUILDINGS[type];
-        return `${type} — ${PAD_NAMES_EN[type]}, ${spec.metal}m/${spec.components}c, built ${state.buildingCount(team, type)}/${spec.maxCount}, free pads ${state.freePads(team, type).length}`;
+        return `${type} — ${PAD_NAMES_EN[type]}, ${spec.metal}m/${spec.components}c${state.crystals && spec.crystals ? `/${spec.crystals}cr` : ''}, built ${state.buildingCount(team, type)}/${spec.maxCount}, free pads ${state.freePads(team, type).length}`;
       })
       .join('; ');
+  }
+
+  /** Crystals and the laboratory on this level, in one line; empty where neither applies. */
+  function techLine(state: GameState, team: Team): string {
+    const out: string[] = [];
+    if (state.crystals) {
+      const e = state.teams[team].economy;
+      out.push(`crystals ${Math.round(e.crystals)}, reserve ${e.crystalReserve} (while below it some harvesters bring crystals at half the metal rate; {"type":"set_crystal_reserve","amount":80} changes the reserve); parts priced in cr and the heavy chassis wait for crystals like for metal`);
+    }
+    if (state.labRequired) {
+      out.push(state.hasLab(team) ? 'laboratory built, advanced parts available' : 'advanced parts (plasma_blasters, sniper_railgun, sloped_reactive) are unavailable without a laboratory');
+    }
+    return out.join('; ');
   }
 
   /** Harvesters away from mining on construction sites. */
@@ -193,6 +207,8 @@ Answer with JSON only:
     if (pending?.design) lines.push(`UNCONFIRMED PROPOSAL (the commander is refining it): ${describeDesign(pending.design)}`);
     lines.push(`ECONOMY: ${economyLine(state, 'player')}`);
     lines.push(`PAD BUILDINGS: ${padBuildingsLine(state, 'player')}`);
+    const tech = techLine(state, 'player');
+    if (tech) lines.push(`CRYSTALS AND TECH: ${tech}`);
     lines.push(`OUR ARMY: ${armyLine(state, 'player')}`);
     lines.push(`SCOUTING: ${intelLine(state, 'player')}`);
     lines.push(`EVENTS: ${eventsLine(state, 'player')}`);
@@ -273,6 +289,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `YOUR PLAN: ${planLine(t.plan)}`,
       `YOUR ECONOMY: ${economyLine(state, team)}`,
       `PAD BUILDINGS: ${padBuildingsLine(state, team)}`,
+      ...(techLine(state, team) ? [`CRYSTALS AND TECH: ${techLine(state, team)}`] : []),
       `YOUR ARMY: ${armyLine(state, team)}; losses ${t.economy.totals.unitsLost}, enemies destroyed ${t.economy.totals.kills}`,
       `SPOTTED ENEMY MODELS: ${intelLine(state, team)}`,
       `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
@@ -325,6 +342,8 @@ const cache = new Map<string, PromptSet>();
 /** English prompt set for a reply language (built once per combination). */
 const PAD_NAMES_EN: Record<PadBuildingType, string> = {
   turret: 'turret (defence, range 15)',
+  lab: 'laboratory (unlocks the advanced parts)',
+  artillery: 'artillery turret (lobs shells over the forest, range 28, at spotted targets)',
   repair_dock: 'repair dock (repairs 25/s away from the HQ)',
   radar: 'radar tower (sight 40, exact enemy report)',
   depot: 'drop-off point (unload ore near far deposits, forward only)',

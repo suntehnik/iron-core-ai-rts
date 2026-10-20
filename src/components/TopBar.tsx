@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, Clock, Cog, Coins, Cpu, Eye, Flag, Home, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
+import { Box, Clock, Cog, Coins, Cpu, Eye, Flag, Gem, Home, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
 import { GameController, TIME_SCALES } from '../game/GameController';
 import { CoinPanel } from './CoinPanel';
@@ -50,6 +50,14 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
           warn={e.powerEfficiency < 0.99}
           sub={e.powerEfficiency < 0.99 ? t('top.deficit', { n: Math.round((1 - e.powerEfficiency) * 100) }) : t('unit.kw')}
         />
+        {s.crystals && (
+          <Resource
+            icon={<Gem className="w-4 h-4 text-fuchsia-300" />}
+            value={Math.floor(e.crystals)}
+            title={t('top.crystals')}
+            sub={t('top.crystalReserve', { n: e.crystalReserve })}
+          />
+        )}
         <Resource icon={<Users className="w-4 h-4" />} value={`${army}/${GAME_BALANCE.MAX_ACTIVE_COMBAT_BOTS}`} title={t('top.army')} sub={t('top.armySub')} />
         <div className="flex items-center gap-1.5 px-2.5 text-slate-300" title={t('top.time')}>
           <Clock className="w-3.5 h-3.5" />

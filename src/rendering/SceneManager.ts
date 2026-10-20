@@ -544,7 +544,7 @@ export class SceneManager {
     for (const p of patches) {
       let v = this.patches.get(p.id);
       if (!v) {
-        v = BuildingMeshFactory.createResourcePatch(p.radius);
+        v = BuildingMeshFactory.createResourcePatch(p.radius, p.resource === 'crystal');
         v.root.position.set(p.pos.x, 0, p.pos.y);
         this.scene.add(v.root);
         this.patches.set(p.id, v);

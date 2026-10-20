@@ -18,7 +18,7 @@ export function compactCatalog(): string {
   const chassis = Object.values(CHASSIS_CATALOG)
     .map(
       c =>
-        `${c.id}: ${c.maxSlots} слота, масса базы ${c.baseMass}/макс ${c.maxMass} кг, источник ${c.basePowerOutput} кВт, ${c.baseSpeed} м/с, держит отдачу ≤${c.recoilResistance}, ${c.metalCost}м/${c.componentCost}к`,
+        `${c.id}: ${c.maxSlots} слота, масса базы ${c.baseMass}/макс ${c.maxMass} кг, источник ${c.basePowerOutput} кВт, ${c.baseSpeed} м/с, держит отдачу ≤${c.recoilResistance}, ${c.metalCost}м/${c.componentCost}к${c.crystalCost ? `/${c.crystalCost}кр` : ''}`,
     )
     .join('\n');
   const modules = Object.values(MODULES_CATALOG)
@@ -28,8 +28,9 @@ export function compactCatalog(): string {
       if (m.powerOutput) parts.push(`+${m.powerOutput}кВт`);
       if (m.heatGen) parts.push(`тепло ${m.heatGen}`);
       if (m.heatDissipation > 0) parts.push(`охлаждение ${m.heatDissipation}`);
-      parts.push(`${m.metalCost}м/${m.componentCost}к`);
+      parts.push(`${m.metalCost}м/${m.componentCost}к${m.crystalCost ? `/${m.crystalCost}кр` : ''}`);
       const fx: string[] = [];
+      if (m.tier === 2) fx.push('деталь второго уровня');
       if (m.hpBonus) fx.push(`+${m.hpBonus}HP`);
       if (m.armorRating) fx.push(`броня ${Math.round(m.armorRating * 100)}%`);
       if (m.weaponDamage && m.weaponFireRate) {
@@ -71,6 +72,8 @@ function economyLine(state: GameState, team: Team): string {
 
 const PAD_NAMES_RU: Record<PadBuildingType, string> = {
   turret: 'турель (оборона, дальность 15)',
+  lab: 'лаборатория (открывает детали второго уровня)',
+  artillery: 'артиллерийская турель (навесом через лес, дальность 28, по подсвеченной цели)',
   repair_dock: 'ремонтный док (ремонт 25/с вне штаба)',
   radar: 'радарная вышка (обзор 40, точная разведсводка)',
   depot: 'пункт приёма (сдача руды у дальних месторождений, только передовая)',
@@ -83,9 +86,22 @@ function padBuildingsLine(state: GameState, team: Team): string {
   return open
     .map(type => {
       const spec = PAD_BUILDINGS[type];
-      return `${type} — ${PAD_NAMES_RU[type]}, ${spec.metal}м/${spec.components}к, построено ${state.buildingCount(team, type)}/${spec.maxCount}, свободных площадок ${state.freePads(team, type).length}`;
+      return `${type} — ${PAD_NAMES_RU[type]}, ${spec.metal}м/${spec.components}к${state.crystals && spec.crystals ? `/${spec.crystals}кр` : ''}, построено ${state.buildingCount(team, type)}/${spec.maxCount}, свободных площадок ${state.freePads(team, type).length}`;
     })
     .join('; ');
+}
+
+/** Crystals and the laboratory on this level, in one line; empty where neither applies. */
+function techLine(state: GameState, team: Team): string {
+  const out: string[] = [];
+  if (state.crystals) {
+    const e = state.teams[team].economy;
+    out.push(`кристаллов ${Math.round(e.crystals)}, резерв ${e.crystalReserve} (пока меньше, часть добытчиков возит их вдвое медленнее металла; {"type":"set_crystal_reserve","amount":80} меняет резерв); детали с ценой в кр и тяжёлое шасси ждут кристаллов, как металла`);
+  }
+  if (state.labRequired) {
+    out.push(state.hasLab(team) ? 'лаборатория построена, детали второго уровня доступны' : 'детали второго уровня (plasma_blasters, sniper_railgun, sloped_reactive) недоступны без лаборатории');
+  }
+  return out.join('; ');
 }
 
 /** Harvesters away from mining on construction sites. */
@@ -184,6 +200,8 @@ export function engineerUserPrompt(state: GameState, order: string, pending: Pro
   if (pending?.design) lines.push(`НЕПОДТВЕРЖДЁННОЕ ПРЕДЛОЖЕНИЕ (командир уточняет его): ${describeDesign(pending.design)}`);
   lines.push(`ЭКОНОМИКА: ${economyLine(state, 'player')}`);
   lines.push(`ЗДАНИЯ НА ПЛОЩАДКАХ: ${padBuildingsLine(state, 'player')}`);
+  const tech = techLine(state, 'player');
+  if (tech) lines.push(`КРИСТАЛЛЫ И ТЕХНОЛОГИИ: ${tech}`);
   lines.push(`НАША АРМИЯ: ${armyLine(state, 'player')}`);
   lines.push(`РАЗВЕДКА: ${intelLine(state, 'player')}`);
   lines.push(`СОБЫТИЯ: ${eventsLine(state, 'player')}`);
@@ -299,6 +317,7 @@ export function commanderUserPrompt(state: GameState, team: Team, instructions?:
     `ТВОЙ ПЛАН: ${planLine(t.plan)}`,
     `ТВОЯ ЭКОНОМИКА: ${economyLine(state, team)}`,
     `ЗДАНИЯ НА ПЛОЩАДКАХ: ${padBuildingsLine(state, team)}`,
+    ...(techLine(state, team) ? [`КРИСТАЛЛЫ И ТЕХНОЛОГИИ: ${techLine(state, team)}`] : []),
     `ТВОЯ АРМИЯ: ${armyLine(state, team)}; потери ${t.economy.totals.unitsLost}, уничтожено врагов ${t.economy.totals.kills}`,
     `ЗАМЕЧЕННЫЕ МОДЕЛИ ПРОТИВНИКА: ${intelLine(state, team)}`,
     `АРМИЯ ПРОТИВНИКА: ${enemyArmyLine(state, team)}`,

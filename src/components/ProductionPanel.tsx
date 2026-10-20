@@ -1,5 +1,5 @@
 import React from 'react';
-import { Crosshair, Factory, Lock, Minus, Package, Pause, Pickaxe, Play, Plus, Radar, Wrench, X, Zap } from 'lucide-react';
+import { Crosshair, Factory, FlaskConical, Gem, Lock, Minus, Package, Pause, Pickaxe, Play, Plus, Radar, Target, Wrench, X, Zap } from 'lucide-react';
 import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
 import { PadBuildingType } from '../types/game';
 import { GameController } from '../game/GameController';
@@ -11,6 +11,8 @@ const PAD_ICONS: Record<PadBuildingType, React.ReactNode> = {
   repair_dock: <Wrench className="w-3.5 h-3.5" />,
   radar: <Radar className="w-3.5 h-3.5" />,
   depot: <Package className="w-3.5 h-3.5" />,
+  lab: <FlaskConical className="w-3.5 h-3.5" />,
+  artillery: <Target className="w-3.5 h-3.5" />,
 };
 
 /** Mining, factory queues and base construction (brief §3, §7). */
@@ -153,6 +155,33 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
           </div>
         </div>
 
+        {s.crystals && (
+          <div className="flex items-center justify-between" title={t('top.crystals')}>
+            <span className="text-slate-300 flex items-center gap-1">
+              <Gem className="w-3.5 h-3.5 text-fuchsia-300" /> {t('prod.crystals')}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+                onClick={() => ctrl.economyAction({ type: 'set_crystal_reserve', amount: econ.crystalReserve - 20 })}
+                aria-label={t('prod.less')}
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+              <span className="w-7 text-center font-bold tabular-nums">{econ.crystalReserve}</span>
+              <button
+                type="button"
+                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+                onClick={() => ctrl.economyAction({ type: 'set_crystal_reserve', amount: econ.crystalReserve + 20 })}
+                aria-label={t('prod.more')}
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <span className="text-slate-300 flex items-center gap-1">
             <Pickaxe className="w-3.5 h-3.5 text-amber-300" /> {t('prod.harvesters', { n: harvesters.length, max: GAME_BALANCE.MAX_HARVESTERS })}
@@ -214,7 +243,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
               <BuildButton
                 key={type}
                 label={`${name} (${s.buildingCount('player', type)}/${spec.maxCount})`}
-                cost={`${spec.metal} ${t('unit.metalShort')}${spec.components ? ` · ${spec.components} ${t('unit.componentsShort')}` : ''}`}
+                cost={`${spec.metal} ${t('unit.metalShort')}${spec.components ? ` · ${spec.components} ${t('unit.componentsShort')}` : ''}${s.crystals && spec.crystals ? ` · ${t('console.crystals', { n: spec.crystals })}` : ''}`}
                 disabled={!check.ok}
                 title={check.ok ? t(`pad.desc.${type}` as MessageKey) : check.reason}
                 onClick={() => ctrl.economyAction({ type: 'build', building: type })}

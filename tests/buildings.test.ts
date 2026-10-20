@@ -80,7 +80,7 @@ describe('pad buildings', () => {
     expect(new GameState({ level: levelConfig(1) }).unlockedPadBuildings()).toEqual([]);
     expect(new GameState({ level: levelConfig(2) }).unlockedPadBuildings()).toEqual(['turret']);
     expect(new GameState({ level: levelConfig(5) }).unlockedPadBuildings()).toEqual(['turret', 'repair_dock', 'radar', 'depot']);
-    expect(new GameState().unlockedPadBuildings()).toHaveLength(4);
+    expect(new GameState().unlockedPadBuildings()).toHaveLength(Object.keys(PAD_BUILDINGS).length);
     const locked = rich(1);
     expect(locked.buildOnPad('player', 'turret').ok).toBe(false);
     expect(locked.canBuildOnPad('player', 'turret').reason).toBe('Откроется на уровне 2');

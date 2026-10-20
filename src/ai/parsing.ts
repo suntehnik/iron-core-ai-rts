@@ -86,6 +86,11 @@ export function normalizeActions(raw: unknown): ProductionAction[] {
         if (Number.isFinite(amount)) out.push({ type: 'set_component_reserve', amount: Math.max(0, Math.min(600, amount)) });
         break;
       }
+      case 'set_crystal_reserve': {
+        const amount = Math.round(Number(a.amount));
+        if (Number.isFinite(amount)) out.push({ type: 'set_crystal_reserve', amount: Math.max(0, Math.min(400, amount)) });
+        break;
+      }
       case 'set_production': {
         const paused = a.paused === true || a.paused === 'true' ? true : a.paused === false || a.paused === 'false' ? false : null;
         if (paused !== null) out.push({ type: 'set_production', paused });
@@ -110,6 +115,8 @@ export function describeAction(a: ProductionAction): string {
       return t('action.batch', { n: a.size });
     case 'set_component_reserve':
       return t('action.reserve', { n: a.amount });
+    case 'set_crystal_reserve':
+      return t('act.crystalReserve', { n: a.amount });
     case 'set_production':
       return t(a.paused ? 'action.stopAll' : 'action.resumeAll');
     case 'build': {

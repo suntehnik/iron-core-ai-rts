@@ -92,8 +92,8 @@ describe('campaign levels', () => {
   });
 
   it('the enemy gets the level edge: garrison, tougher HQ, income; AI vs AI keeps the sides equal', () => {
-    const s = new GameState({ level: levelConfig(6) });
-    const edge = levelConfig(6).enemy;
+    const s = new GameState({ level: levelConfig(7) });
+    const edge = levelConfig(7).enemy;
     const garrison = s.units.filter((u): u is CombatUnit => u.kind === 'combat' && u.team === 'enemy' && !!u.garrison);
     expect(edge.garrison).toBeGreaterThan(0);
     expect(garrison).toHaveLength(edge.garrison!);
@@ -103,7 +103,7 @@ describe('campaign levels', () => {
     expect(s.teams.enemy.economy.totals.unitsBuilt).toBe(0); // a garrison is not production
     expect(s.armySummary('enemy').combatUnits).toBe(0); // nor part of the field army
 
-    const fair = new GameState({ level: levelConfig(6), fair: true });
+    const fair = new GameState({ level: levelConfig(7), fair: true });
     expect(fair.units.some(u => u.kind === 'combat')).toBe(false);
     expect(fair.getHQ('enemy')!.maxHp).toBe(GAME_BALANCE.COMMAND_CENTER_HP);
     expect([...fair.terrain.cells]).toEqual([...s.terrain.cells]); // the same map

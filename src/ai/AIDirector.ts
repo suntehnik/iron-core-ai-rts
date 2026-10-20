@@ -381,6 +381,8 @@ export class AIDirector {
       // A "new" design identical to the serial one is not a proposal worth confirming
       const design = normalized && designSignature(normalized.design) !== designSignature(current) ? normalized.design : null;
       if (normalized && !design) warnings.push(t('dir.unchanged'));
+      // a laboratory needed on late levels, the crystal price where the map has crystals
+      if (design) warnings.push(...state.designTechNotes('player', design));
       proposal = {
         id: newId('proposal'),
         order: text,
@@ -408,7 +410,7 @@ export class AIDirector {
         prevDesign: current,
         prevStats,
         actions: draft.actions,
-        warnings: error ? [t('dir.cloudDown', { why: error })] : [],
+        warnings: [...(error ? [t('dir.cloudDown', { why: error })] : []), ...(draft.design ? state.designTechNotes('player', draft.design) : [])],
         source: 'fallback',
         repaired: false,
       };

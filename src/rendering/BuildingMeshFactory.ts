@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PAD_BUILDINGS } from '../config/balance';
 import { BuildingType, PadBuildingType, Team } from '../types/game';
 import { TeamPalette, geoCrystal } from './RobotMeshFactory';
-import { PALETTE, box, cyl, glow, part, toon } from './toon';
+import { PALETTE, box, cyl, glow, part, sphere, toon } from './toon';
 
 export interface BuildingRig {
   root: THREE.Group;
@@ -201,6 +201,37 @@ export class BuildingMeshFactory {
       model.add(dish);
       spinners.push(dish);
       height = 6.8;
+    } else if (type === 'lab') {
+      model.add(part(box(4.4, 2.0, 3.6), cream, 0, 1.0, 0, { outline: true }));
+      model.add(part(box(4.6, 0.3, 3.8), main, 0, 2.15, 0, { outline: true }));
+      // glass dome with a glowing flask
+      model.add(part(sphere(1.3, 14), toon('#bfe9f2'), 0.4 * front, 2.6, 0, { outline: true }));
+      const flask = part(cyl(0.18, 0.45, 0.9, 10), glow(palette.glow), 0.4 * front, 2.75, 0, { shadow: false });
+      model.add(flask);
+      pulse.push(flask);
+      model.add(part(cyl(0.25, 0.3, 1.8, 8), steel, -1.5 * front, 3.0, -1.1, { outline: true }));
+      const dish = new THREE.Group();
+      dish.position.set(-1.4 * front, 3.4, 1.2);
+      dish.add(part(cyl(0.7, 0.2, 0.25, 12), cream, 0, 0.3, 0, { outline: true }));
+      model.add(dish);
+      spinners.push(dish);
+      model.add(part(box(0.15, 1.2, 1.6), glow('#ffcf5a'), front * 2.25, 0.9, 0, { shadow: false }));
+      height = 4.2;
+    } else if (type === 'artillery') {
+      model.add(part(cyl(1.7, 1.9, 0.8, 12), steelDark, 0, 0.4, 0, { outline: true }));
+      const stripe = hazardStripe(2.8, 2.8);
+      stripe.position.y = 0.85;
+      stripe.scale.set(0.9, 0.5, 0.9);
+      model.add(stripe);
+      turret = new THREE.Group();
+      turret.position.set(0, 1.0, 0);
+      turret.add(part(box(1.8, 0.9, 1.5), main, 0, 0.45, 0, { outline: true }));
+      const barrel = part(cyl(0.22, 0.28, 2.6, 10), steelDark, 1.1, 1.3, 0, { outline: true });
+      barrel.rotation.z = Math.PI / 2 - 0.6; // raised for indirect fire
+      turret.add(barrel);
+      turret.add(part(box(0.12, 0.16, 0.8), glow(palette.glow), 0.9, 0.95, 0, { shadow: false }));
+      model.add(turret);
+      height = 3.6;
     } else if (type === 'depot') {
       model.add(part(box(4.6, 0.5, 4.0), steelDark, 0, 0.25, 0, { outline: true }));
       const stripe = hazardStripe(4.7, 4.1);
@@ -269,7 +300,7 @@ export class BuildingMeshFactory {
     return { root, model, scaffold, turret, spinners, pulse, conveyor, height };
   }
 
-  public static createResourcePatch(radius: number): { root: THREE.Group; crystals: THREE.Object3D[] } {
+  public static createResourcePatch(radius: number, crystal = false): { root: THREE.Group; crystals: THREE.Object3D[] } {
     const root = new THREE.Group();
     const ground = new THREE.Mesh(cyl(radius * 1.25, radius * 1.35, 0.08, 20), toon('#c9b48a'));
     ground.position.y = 0.04;
@@ -277,7 +308,10 @@ export class BuildingMeshFactory {
     root.add(ground);
     const crystals: THREE.Object3D[] = [];
     const count = Math.round(radius * 3.2);
-    const mats = [toon('#8ea2b8'), toon('#a9bccf'), toon('#7d8fa3')];
+    // metal ore is grey-blue; rare crystals glow violet
+    const mats = crystal
+      ? [toon('#b77cf0', '#7c3aed', 0.35), toon('#d8b4fe', '#7c3aed', 0.25), toon('#9b5de5', '#6d28d9', 0.35)]
+      : [toon('#8ea2b8'), toon('#a9bccf'), toon('#7d8fa3')];
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + Math.random() * 0.6;
       const r = Math.random() * radius * 0.9;
