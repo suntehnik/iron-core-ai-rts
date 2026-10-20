@@ -1,11 +1,11 @@
 import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
-import { GAME_BALANCE } from '../config/balance';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
 import { COMMANDERS, commanderName } from '../config/commanders';
 import { DOCTRINE_TEXT } from '../config/levels';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { ProductionProposal } from '../types/agent';
-import { Team } from '../types/game';
+import { PadBuildingType, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { markRussian } from './llm/nativeBridge';
 import { PromptSet, cleanInstructions, planLine } from './prompts';
@@ -91,6 +91,18 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
   }${builders(state, team) ? ` (${builders(state, team)} building)` : ''}, factories ${factories.length}${paused ? ` (paused: ${paused})` : ''}, power plants ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, batch size ${e.batchSize}, component reserve ${e.componentReserve}`;
   }
 
+  /** Pad buildings open on this level: id, cost, how many stand and how many pads are free. */
+  function padBuildingsLine(state: GameState, team: Team): string {
+    const open = state.unlockedPadBuildings();
+    if (!open.length) return 'not available on this level yet';
+    return open
+      .map(type => {
+        const spec = PAD_BUILDINGS[type];
+        return `${type} — ${PAD_NAMES_EN[type]}, ${spec.metal}m/${spec.components}c, built ${state.buildingCount(team, type)}/${spec.maxCount}, free pads ${state.freePads(team, type).length}`;
+      })
+      .join('; ');
+  }
+
   /** Harvesters away from mining on construction sites. */
   function builders(state: GameState, team: Team): number {
     return state.constructionSites(team).reduce((n, b) => n + state.siteWorkers(b).length, 0);
@@ -132,6 +144,10 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
   /** The enemy army as far as our machines and buildings see it (fog of war, forest blocks sight). */
   function enemyArmyLine(state: GameState, team: Team): string {
     const i = state.enemyIntel(team);
+    if (i.radar) {
+      const making = i.radar.producing.length ? `, its factories build ${i.radar.producing.map(n => `"${mark(n)}"`).join(', ')}` : '';
+      return `radar: the enemy has ${i.radar.total} combat robots${making}; ${i.visible} in sight`;
+    }
     if (i.visible) return `${i.visible} combat robots in sight, the rest is hidden by the fog of war`;
     if (i.lastContactAgo === null) return 'no contact yet, the enemy is hidden by the fog of war';
     return `none in sight; last contact ${i.lastContactAgo} s ago (${i.lastCount} robots)`;
@@ -163,18 +179,20 @@ Rules:
 - Changes apply to the next batches; robots already built do not change.
 - If the order is about production (harvesters, power plant, factory, batch size, component reserve, stopping/starting the lines) rather than the design, return "design": null and the actions.
 - A harvester builds each building (factory, power plant): it goes to the site and does not mine meanwhile. At most ${GAME_BALANCE.MAX_ACTIVE_SITES} sites are worked at once, the rest wait. "workers":2 sends two harvesters and builds 1.6× as fast.
+- Pad buildings (turret, repair dock, radar tower, drop-off point): action "build" with "building" from the PAD BUILDINGS line; "where": base, forward, or north / center / south (a forward flank). The drop-off point goes on forward pads only.
 - The factory builds harvesters (${GAME_BALANCE.HARVESTER_BUILD_SEC} s each) instead of combat robots. "set_production" with paused=true stops all factories (to save metal and free power), paused=false starts them.
 - If the commander capped the cost growth, return the cap in percent in "costLimitPct" (a quarter = 25, a third = 33, half = 50), otherwise null. Cost = chassis metal + metal of all modules.
 - In "reply" and "compromise" do not use part ids: name the parts in plain words (siege cannon, reinforced armour). Give the model a short name.
 - ${readable}
 Answer with JSON only:
-{"reply":"1–2 short sentences to the commander","design":{"name":"short model name","chassis":"chassis id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"what was sacrificed, or an empty string"}`;
+{"reply":"1–2 short sentences to the commander","design":{"name":"short model name","chassis":"chassis id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"build","building":"turret","where":"base"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"what was sacrificed, or an empty string"}`;
 
   function engineerUserPrompt(state: GameState, order: string, pending: ProductionProposal | null): string {
     const t = state.teams.player;
     const lines = [`COMMANDER'S ORDER: "${mark(order)}"`, `CURRENT SERIAL MODEL: ${describeDesign(t.design)}`];
     if (pending?.design) lines.push(`UNCONFIRMED PROPOSAL (the commander is refining it): ${describeDesign(pending.design)}`);
     lines.push(`ECONOMY: ${economyLine(state, 'player')}`);
+    lines.push(`PAD BUILDINGS: ${padBuildingsLine(state, 'player')}`);
     lines.push(`OUR ARMY: ${armyLine(state, 'player')}`);
     lines.push(`SCOUTING: ${intelLine(state, 'player')}`);
     lines.push(`EVENTS: ${eventsLine(state, 'player')}`);
@@ -239,11 +257,11 @@ Answer with JSON only: {"reply":"1–2 sentences to the commander","plan":{"stan
 Every ~${GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC} seconds you get a report and decide:
 1) the design for the next batches — only from the catalog, within the chassis limits (slots, mass, power, recoil); null if no change is needed;
 2) the army plan (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
-3) economic actions. The factory builds harvesters instead of combat robots — do not order them while the army cannot hold the front. Harvesters build the buildings and do not mine meanwhile.
+3) economic actions. The factory builds harvesters instead of combat robots — do not order them while the army cannot hold the front. Harvesters build the buildings and do not mine meanwhile. Pad buildings use the "build" action (see the PAD BUILDINGS line).
 Counter the enemy models you have spotted and watch the economy: without mining the army does not grow.
 Fog of war: you see only what your machines and buildings see, and forest blocks sight, so the enemy data is partial.
 ${readable}
-${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the enemy (${foe}), up to 15 words","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"set_batch_size","size":3}]}`;
+${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the enemy (${foe}), up to 15 words","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"build","building":"turret","where":"base"} | {"type":"set_batch_size","size":3}]}`;
   }
 
   function commanderUserPrompt(state: GameState, team: Team, instructions?: string): string {
@@ -254,6 +272,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `YOUR SERIAL MODEL: ${describeDesign(t.design)}`,
       `YOUR PLAN: ${planLine(t.plan)}`,
       `YOUR ECONOMY: ${economyLine(state, team)}`,
+      `PAD BUILDINGS: ${padBuildingsLine(state, team)}`,
       `YOUR ARMY: ${armyLine(state, team)}; losses ${t.economy.totals.unitsLost}, enemies destroyed ${t.economy.totals.kills}`,
       `SPOTTED ENEMY MODELS: ${intelLine(state, team)}`,
       `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
@@ -304,6 +323,13 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
 const cache = new Map<string, PromptSet>();
 
 /** English prompt set for a reply language (built once per combination). */
+const PAD_NAMES_EN: Record<PadBuildingType, string> = {
+  turret: 'turret (defence, range 15)',
+  repair_dock: 'repair dock (repairs 25/s away from the HQ)',
+  radar: 'radar tower (sight 40, exact enemy report)',
+  depot: 'drop-off point (unload ore near far deposits, forward only)',
+};
+
 export function englishPrompts(options: EnglishPromptOptions): PromptSet {
   const key = `${options.replyLanguage}|${options.markForTranslation}`;
   let set = cache.get(key);

@@ -1,5 +1,5 @@
 import { RobotDesign } from '../types/robot';
-import { Team, Vector2D } from '../types/game';
+import { Pad, PadBuildingType, Team, Vector2D } from '../types/game';
 import { t } from '../i18n';
 
 export const GAME_BALANCE = {
@@ -108,6 +108,67 @@ export const GAME_BALANCE = {
   BASE_THREAT_RADIUS: 30, // attackers this close to the HQ count as a raid on the base
   BASE_DEFENSE_RECALL_RADIUS: 32, // machines this close to the HQ respond (covers the rally point)
 };
+
+/** Pad buildings (stage 2 of development): what they cost, do and when the campaign opens them. */
+export interface PadBuildingSpec {
+  hp: number;
+  radius: number;
+  buildSec: number;
+  metal: number;
+  components: number;
+  /** constant base power draw once built, kW (the repair dock draws only while repairing) */
+  powerKw: number;
+  maxCount: number;
+  /** campaign level from which both sides may build it */
+  unlockLevel: number;
+  /** forward pads only (the drop-off point) */
+  forwardOnly?: boolean;
+}
+
+export const PAD_BUILDINGS: Record<PadBuildingType, PadBuildingSpec> = {
+  turret: { hp: 900, radius: 1.8, buildSec: 12, metal: 120, components: 30, powerKw: 20, maxCount: 6, unlockLevel: 2 },
+  repair_dock: { hp: 1000, radius: 2.6, buildSec: 16, metal: 140, components: 20, powerKw: 0, maxCount: 2, unlockLevel: 3 },
+  radar: { hp: 700, radius: 2.2, buildSec: 18, metal: 160, components: 60, powerKw: 40, maxCount: 1, unlockLevel: 4 },
+  depot: { hp: 900, radius: 2.8, buildSec: 18, metal: 180, components: 0, powerKw: 10, maxCount: 2, unlockLevel: 5, forwardOnly: true },
+};
+
+export const TURRET = {
+  RANGE: 15,
+  DAMAGE: 21, // every 0.6 s: ~35 DPS
+  INTERVAL: 0.6,
+  ARMOR_PIERCE: 0.2,
+};
+
+export const REPAIR_DOCK = {
+  RADIUS: 6,
+  HP_PER_SEC: 25,
+};
+
+export const RADAR_SIGHT = 40;
+
+/** Building pads of the player's side (the enemy's are mirrored): 8 around the base, 3 forward. */
+const PLAYER_PADS: Omit<Pad, 'id' | 'team'>[] = [
+  { pos: { x: 24, y: 30 }, kind: 'base' },
+  { pos: { x: 27, y: 23 }, kind: 'base' },
+  { pos: { x: 27, y: 37 }, kind: 'base' },
+  { pos: { x: 11, y: 21 }, kind: 'base' },
+  { pos: { x: 13, y: 13 }, kind: 'base' },
+  { pos: { x: 14, y: 48 }, kind: 'base' },
+  { pos: { x: 31, y: 15 }, kind: 'base' },
+  { pos: { x: 31, y: 45 }, kind: 'base' },
+  { pos: { x: 41, y: 15 }, kind: 'forward', flank: 'north' },
+  { pos: { x: 41, y: 30 }, kind: 'forward', flank: 'center' },
+  { pos: { x: 41, y: 45 }, kind: 'forward', flank: 'south' },
+];
+
+export function padSlots(team: Team): Pad[] {
+  return PLAYER_PADS.map((p, i) => ({
+    ...p,
+    id: `pad_${team}_${i}`,
+    team,
+    pos: team === 'player' ? { ...p.pos } : { x: GAME_BALANCE.MAP_WIDTH - p.pos.x, y: p.pos.y },
+  }));
+}
 
 /** A team's starting design with its name in the game language. */
 export function initialDesign(team: Team): RobotDesign {

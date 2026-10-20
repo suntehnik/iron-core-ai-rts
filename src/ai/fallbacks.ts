@@ -1,12 +1,12 @@
-import { GAME_BALANCE } from '../config/balance';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
 import { commanderDesignName, commanderTaunt } from '../config/commanders';
 import { Doctrine } from '../config/levels';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
-import { ProductionAction, TacticalPlan, Team } from '../types/game';
+import { PadBuildingType, ProductionAction, TacticalPlan, Team } from '../types/game';
 import { ChassisType, RobotDesign, TacticalRole } from '../types/robot';
 import { describePlan } from './parsing';
-import { t as tr } from '../i18n';
+import { MessageKey, t as tr } from '../i18n';
 
 /**
  * Local heuristics used when the cloud LLM is unavailable (no key, offline, error, or the
@@ -68,6 +68,19 @@ export function localEngineer(order: string, current: RobotDesign): EngineerDraf
   ) {
     actions.push({ type: 'build_factory' });
     replies.push(tr('le.factory'));
+  }
+  // pad buildings by name ("поставь турель у базы", "build a repair dock")
+  const padWords: [PadBuildingType, string[]][] = [
+    ['turret', ['турел', 'turret', 'torrett']],
+    ['repair_dock', ['ремонтный док', 'ремонтн', 'repair dock', 'officina']],
+    ['radar', ['радарную вышк', 'радарная вышк', 'вышк', 'radar tower', 'torre radar']],
+    ['depot', ['пункт приём', 'пункт прием', 'drop-off', 'depot', 'punto di raccolta']],
+  ];
+  for (const [building, words] of padWords) {
+    if (!has(p, ...words)) continue;
+    const forward = has(p, 'передов', 'фронт', 'forward', 'front', 'avanzat');
+    actions.push({ type: 'build', building, ...(forward || building === 'depot' ? { where: 'forward' as const } : { where: 'base' as const }) });
+    replies.push(tr('le.padBuilding', { name: tr(`building.${building}` as MessageKey) }));
   }
   if (has(p, 'парти', 'batch', 'lotto', 'lotti') && numberIn(p) !== null) {
     actions.push({ type: 'set_batch_size', size: numberIn(p)! });
@@ -230,6 +243,7 @@ export interface EnemyDraft {
  */
 function estimateEnemyArmy(state: GameState, team: Team, mine: number): number {
   const i = state.enemyIntel(team);
+  if (i.radar) return i.radar.total;
   if (i.visible) return i.visible;
   if (i.lastContactAgo !== null && i.lastContactAgo < 90) return i.lastCount;
   return mine;
@@ -307,8 +321,18 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
   if (harvesters < 5 && mine >= 3 && econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL) actions.push({ type: 'build_harvester', count: 1 });
   // a harvester builds and stops mining meanwhile: only with enough miners and a quiet base
   const canBuild = state.harvesterCount(team) >= 3 && !state.baseUnderFire(team) && state.constructionSites(team).length === 0;
+  const padOk = (type: PadBuildingType, extra = 0) => {
+    const spec = PAD_BUILDINGS[type];
+    return state.canBuildOnPad(team, type, type === 'depot' ? undefined : 'base').ok && econ.metal >= spec.metal + extra;
+  };
+  const raided = state.recentEvents(team, 5, 60).some(e => e.type === 'base_attack');
   if (canBuild && econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
-  else if (canBuild && econ.metal > 750 && state.buildingCount(team, 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
+  else if (canBuild && raided && state.buildingCount(team, 'turret') < 2 && padOk('turret', 100)) actions.push({ type: 'build', building: 'turret', where: 'base' });
+  else if (canBuild && state.gameTime > 240 && state.buildingCount(team, 'repair_dock') === 0 && padOk('repair_dock', 150)) {
+    actions.push({ type: 'build', building: 'repair_dock', where: 'base' });
+  } else if (canBuild && state.gameTime > 300 && state.buildingCount(team, 'radar') === 0 && padOk('radar', 200)) {
+    actions.push({ type: 'build', building: 'radar', where: 'base' });
+  } else if (canBuild && econ.metal > 750 && state.buildingCount(team, 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
 
   return { taunt: commanderTaunt(team, Math.random()), design, plan, actions };
 }

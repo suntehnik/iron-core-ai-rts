@@ -1,9 +1,17 @@
 import React from 'react';
-import { Factory, Minus, Pause, Pickaxe, Play, Plus, X, Zap } from 'lucide-react';
-import { GAME_BALANCE } from '../config/balance';
+import { Crosshair, Factory, Lock, Minus, Package, Pause, Pickaxe, Play, Plus, Radar, Wrench, X, Zap } from 'lucide-react';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
+import { PadBuildingType } from '../types/game';
 import { GameController } from '../game/GameController';
 import { Panel, ProgressBar, cx, usePanelOpen } from './ui';
-import { t } from '../i18n';
+import { MessageKey, t } from '../i18n';
+
+const PAD_ICONS: Record<PadBuildingType, React.ReactNode> = {
+  turret: <Crosshair className="w-3.5 h-3.5" />,
+  repair_dock: <Wrench className="w-3.5 h-3.5" />,
+  radar: <Radar className="w-3.5 h-3.5" />,
+  depot: <Package className="w-3.5 h-3.5" />,
+};
 
 /** Mining, factory queues and base construction (brief §3, §7). */
 export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
@@ -14,7 +22,8 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
   const harvesters = s.units.filter(u => u.team === 'player' && u.kind === 'harvester');
   const onSite = harvesters.filter(h => h.kind === 'harvester' && h.buildSiteId).length;
   const mining = harvesters.filter(h => h.kind === 'harvester' && !h.buildSiteId && (h.state === 'harvesting' || h.carrying > 0)).length;
-  const plantSites = plants.filter(p => p.built < 1);
+  // sites other than factories (those show in their factory card): power plants and pad buildings
+  const otherSites = s.constructionSites('player').filter(b => b.type !== 'factory');
   const harvInProduction = s.harvestersInProduction('player');
   const allPaused = factories.length > 0 && factories.every(f => f.paused);
   const canPlant = s.canBuild('player', 'power_plant');
@@ -105,11 +114,12 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
           );
         })}
 
-        {plantSites.map(p => (
+        {otherSites.map(p => (
           <div key={p.id} className="rounded-lg border p-2 bg-slate-800/60 border-white/5" title={t('prod.workersHint')}>
             <div className="flex items-center justify-between gap-1">
               <span className="font-semibold text-slate-100 flex items-center gap-1">
-                <Zap className="w-3 h-3 text-amber-300" /> {t('prod.plantSite')}
+                {p.type === 'power_plant' ? <Zap className="w-3 h-3 text-amber-300" /> : <span className="text-amber-300">{PAD_ICONS[p.type as PadBuildingType]}</span>}
+                {p.type === 'power_plant' ? t('prod.plantSite') : t(`building.${p.type}` as MessageKey)}
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="text-[10px] text-amber-300">{s.siteStatus(p)}</span>
@@ -186,6 +196,32 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
             onClick={() => ctrl.economyAction({ type: 'build_factory' })}
             icon={<Factory className="w-3.5 h-3.5" />}
           />
+          {(Object.keys(PAD_BUILDINGS) as PadBuildingType[]).map(type => {
+            const spec = PAD_BUILDINGS[type];
+            const name = t(`building.${type}` as MessageKey);
+            if (!s.isUnlocked(type)) {
+              return (
+                <div key={type} className="flex items-center justify-between px-2 py-1 rounded-md border border-white/5 text-slate-500" title={t(`pad.desc.${type}` as MessageKey)}>
+                  <span className="flex items-center gap-1.5">
+                    <Lock className="w-3 h-3" /> {name}
+                  </span>
+                  <span className="text-[10px]">{t('pad.locked', { n: spec.unlockLevel })}</span>
+                </div>
+              );
+            }
+            const check = s.canBuildOnPad('player', type);
+            return (
+              <BuildButton
+                key={type}
+                label={`${name} (${s.buildingCount('player', type)}/${spec.maxCount})`}
+                cost={`${spec.metal} ${t('unit.metalShort')}${spec.components ? ` · ${spec.components} ${t('unit.componentsShort')}` : ''}`}
+                disabled={!check.ok}
+                title={check.ok ? t(`pad.desc.${type}` as MessageKey) : check.reason}
+                onClick={() => ctrl.economyAction({ type: 'build', building: type })}
+                icon={PAD_ICONS[type]}
+              />
+            );
+          })}
         </div>
       </div>
     </Panel>

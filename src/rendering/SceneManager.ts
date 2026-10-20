@@ -43,6 +43,7 @@ export class SceneManager {
   private scraps = new Map<string, THREE.Group>();
   private projectiles = new Map<string, THREE.Object3D>();
   private rallyMarkers: Record<Team, THREE.Group> = {} as Record<Team, THREE.Group>;
+  private padMarkers = new Map<string, THREE.Object3D>();
   private terrainView: TerrainView | null = null;
   private terrainRef: TerrainGrid | null = null;
   private fog: FogView;
@@ -307,6 +308,7 @@ export class SceneManager {
 
     if (state.terrain !== this.terrainRef) this.syncTerrain(state.terrain);
     this.syncPatches(state.resourcePatches);
+    this.syncPads(state);
     this.syncScrap(state.scrapPiles);
     this.syncBuildings(state, dt);
     const fogTeam = state.vision.enabled ? this.fogTeam : null;
@@ -503,6 +505,39 @@ export class SceneManager {
     this.terrainRef = grid;
     this.terrainView = new TerrainView(grid);
     this.scene.add(this.terrainView.root);
+  }
+
+  /** Free building pads of the player's side: faint rings that show where turrets, docks and radars go. */
+  private syncPads(state: GameState) {
+    const taken = new Set(state.buildings.map(b => b.padId).filter(Boolean));
+    const live = new Set<string>();
+    for (const pad of state.pads) {
+      if (pad.team !== 'player') continue;
+      live.add(pad.id);
+      let m = this.padMarkers.get(pad.id);
+      if (!m) {
+        const g = new THREE.Group();
+        const ring = new THREE.Mesh(new THREE.RingGeometry(1.7, 2.1, 28), new THREE.MeshBasicMaterial({ color: TEAM_COLORS.player.main, transparent: true, opacity: 0.35, depthWrite: false }));
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = 0.06;
+        g.add(ring);
+        const dot = new THREE.Mesh(new THREE.CircleGeometry(0.35, 12), new THREE.MeshBasicMaterial({ color: TEAM_COLORS.player.light, transparent: true, opacity: 0.45, depthWrite: false }));
+        dot.rotation.x = -Math.PI / 2;
+        dot.position.y = 0.07;
+        g.add(dot);
+        g.position.set(pad.pos.x, 0, pad.pos.y);
+        this.scene.add(g);
+        this.padMarkers.set(pad.id, g);
+        m = g;
+      }
+      m.visible = !taken.has(pad.id);
+    }
+    for (const [id, m] of this.padMarkers) {
+      if (!live.has(id)) {
+        this.scene.remove(m);
+        this.padMarkers.delete(id);
+      }
+    }
   }
 
   private syncPatches(patches: ResourcePatch[]) {

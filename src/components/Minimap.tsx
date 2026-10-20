@@ -80,7 +80,7 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
     for (const sc of s.scrapPiles) ctx.fillRect(sc.pos.x * kx - 1, sc.pos.y * ky - 1, 2, 2);
     for (const b of s.buildings) {
       ctx.fillStyle = TEAM_COLORS[b.team].main;
-      const size = b.type === 'command_center' ? 9 : 6;
+      const size = b.type === 'command_center' ? 9 : b.type === 'factory' || b.type === 'power_plant' ? 6 : 4;
       ctx.globalAlpha = b.built < 1 ? 0.5 : 1;
       ctx.fillRect(b.pos.x * kx - size / 2, b.pos.y * ky - size / 2, size, size);
       ctx.globalAlpha = 1;

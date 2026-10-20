@@ -1,3 +1,4 @@
+import { RADAR_SIGHT } from '../config/balance';
 import { MODULES_CATALOG } from '../config/catalog';
 import { Building, GameUnit, Team } from '../types/game';
 import type { GameState } from './GameState';
@@ -19,7 +20,10 @@ export const VISION_INTERVAL = 0.25;
 export const FOG_CELL = 2;
 
 export function sightRadius(o: GameUnit | Building): number {
-  if (!('kind' in o)) return o.type === 'command_center' ? SIGHT.command_center : SIGHT.building;
+  if (!('kind' in o)) {
+    if (o.type === 'radar' && o.built >= 1) return RADAR_SIGHT;
+    return o.type === 'command_center' ? SIGHT.command_center : SIGHT.building;
+  }
   if (o.kind === 'harvester') return SIGHT.harvester;
   const base = SIGHT[o.design.chassisId] ?? SIGHT.medium_tracked;
   return o.design.modules.some(id => MODULES_CATALOG[id]?.rangeMultiplier) ? base * RADAR_SIGHT_MULT : base;
@@ -33,6 +37,8 @@ export interface EnemyIntel {
   lastContactAgo: number | null;
   /** how many were in sight at that last contact */
   lastCount: number;
+  /** with a ready radar: the exact size of the enemy field army and the models its factories build */
+  radar?: { total: number; producing: string[] };
 }
 
 export interface FogGrid {

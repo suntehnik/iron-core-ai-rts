@@ -1,8 +1,13 @@
 import {
   GAME_BALANCE,
+  PAD_BUILDINGS,
+  RADAR_SIGHT,
+  REPAIR_DOCK,
+  TURRET,
   initialDesign,
   MAX_SLOTS,
   buildingSlot,
+  padSlots,
 } from '../config/balance';
 import { CHASSIS_CATALOG, MODULES_CATALOG, chassisName, partName } from '../config/catalog';
 import {
@@ -14,6 +19,9 @@ import {
   GameEventType,
   GameUnit,
   HarvesterUnit,
+  Pad,
+  PadBuildingType,
+  PadWhere,
   ProductionAction,
   Projectile,
   ResourcePatch,
@@ -32,7 +40,7 @@ import { KeepOut, MapSpec, generateTerrain } from './terrain/MapGenerator';
 import { Pathfinder } from './terrain/Pathfinding';
 import { TerrainGrid } from './terrain/TerrainGrid';
 import { EnemyIntel, Vision } from './Vision';
-import { t as tr } from '../i18n';
+import { MessageKey, t as tr } from '../i18n';
 
 export const DEFAULT_PLAN: TacticalPlan = {
   stance: 'advance',
@@ -63,6 +71,10 @@ const TERRAIN_COLLISION_SLACK = 0.6;
 /** Bodies pushed closer than this share of their radius to trees or rocks are moved back out. */
 const TERRAIN_PUSHOUT = 0.8;
 
+function isPadType(type: BuildingType): type is PadBuildingType {
+  return type in PAD_BUILDINGS;
+}
+
 /** Stable 0..0.4 s offset per unit so route re-checks of a whole wave do not land on one tick. */
 function navJitter(id: string): number {
   let h = 0;
@@ -77,6 +89,8 @@ export class GameState {
   public resourcePatches: ResourcePatch[] = [];
   public scrapPiles: ScrapWreckage[] = [];
   public projectiles: Projectile[] = [];
+  /** Building pads for turrets, repair docks, radars and drop-off points (base and forward). */
+  public pads: Pad[] = [];
   /** Forest, rocks and swamp; a flat field unless a map spec was given. */
   public terrain: TerrainGrid;
   private pathfinder: Pathfinder;
@@ -243,6 +257,7 @@ export class GameState {
     patch('res_mid_c', 50, 30, 6500, 4.5, 'contested');
     patch('res_mid_s', 50, 48, 4500, 4, 'contested');
 
+    this.pads = [...padSlots('player'), ...padSlots('enemy')];
     if (map) this.generateMapTerrain(map);
 
     for (const team of ['player', 'enemy'] as Team[]) {
@@ -288,14 +303,20 @@ export class GameState {
       keepOut.push({ pos: p.pos, radius: p.radius + 4.5, soft: true });
       connect.push(p.pos);
     }
+    for (const pad of this.pads) {
+      keepOut.push({ pos: pad.pos, radius: 4 });
+      connect.push(pad.pos);
+    }
     this.setTerrain(generateTerrain(map, GAME_BALANCE.MAP_WIDTH, GAME_BALANCE.MAP_HEIGHT, keepOut, connect));
   }
 
   // ───────────────────────────── Construction ─────────────────────────────
 
   private addBuilding(team: Team, type: BuildingType, pos: Vector2D, instant: boolean): Building {
-    const maxHp =
-      type === 'command_center'
+    const spec = isPadType(type) ? PAD_BUILDINGS[type] : null;
+    const maxHp = spec
+      ? spec.hp
+      : type === 'command_center'
         ? GAME_BALANCE.COMMAND_CENTER_HP
         : type === 'factory'
           ? GAME_BALANCE.FACTORY_HP
@@ -307,13 +328,18 @@ export class GameState {
       pos: { ...pos },
       hp: instant ? maxHp : maxHp * 0.15,
       maxHp,
-      radius: type === 'command_center' ? 5 : type === 'factory' ? 4 : 3.2,
+      radius: spec ? spec.radius : type === 'command_center' ? 5 : type === 'factory' ? 4 : 3.2,
       job: null,
       harvesterBuild: null,
       paused: false,
       built: instant ? 1 : 0,
-      buildTimeSec:
-        type === 'factory' ? GAME_BALANCE.FACTORY_BUILD_SEC : type === 'power_plant' ? GAME_BALANCE.POWER_PLANT_BUILD_SEC : 1,
+      buildTimeSec: spec
+        ? spec.buildSec
+        : type === 'factory'
+          ? GAME_BALANCE.FACTORY_BUILD_SEC
+          : type === 'power_plant'
+            ? GAME_BALANCE.POWER_PLANT_BUILD_SEC
+            : 1,
       turretCooldown: 0,
       lastDamagedAt: -999,
     };
@@ -372,6 +398,72 @@ export class GameState {
     this.siteTimer = 0; // assign a worker right away
     this.pushEvent(team, 'info', tr(type === 'factory' ? 'build.startedFactory' : 'build.startedPlant'), false);
     return { ok: true, text: tr(type === 'factory' ? 'build.buildingFactory' : 'build.buildingPlant') };
+  }
+
+  /** Pad buildings open on this match: by campaign level (both sides alike); all of them without a level. */
+  public isUnlocked(type: PadBuildingType): boolean {
+    return !this.level || this.level.n >= PAD_BUILDINGS[type].unlockLevel;
+  }
+
+  /** Pad buildings this side may build right now (open on the level). */
+  public unlockedPadBuildings(): PadBuildingType[] {
+    return (Object.keys(PAD_BUILDINGS) as PadBuildingType[]).filter(t => this.isUnlocked(t));
+  }
+
+  /** Free pads of a side that suit the building and the requested place, best first. */
+  public freePads(team: Team, type: PadBuildingType, where?: PadWhere): Pad[] {
+    const taken = new Set(this.buildings.filter(b => b.padId).map(b => b.padId));
+    const forwardOnly = PAD_BUILDINGS[type].forwardOnly;
+    return this.pads.filter(p => {
+      if (p.team !== team || taken.has(p.id)) return false;
+      if (forwardOnly && p.kind !== 'forward') return false;
+      if (!where) return true;
+      if (where === 'base') return p.kind === 'base';
+      if (where === 'forward') return p.kind === 'forward';
+      return p.flank === where;
+    });
+  }
+
+  public canBuildOnPad(team: Team, type: PadBuildingType, where?: PadWhere): { ok: boolean; reason?: string } {
+    const spec = PAD_BUILDINGS[type];
+    if (!this.isUnlocked(type)) return { ok: false, reason: tr('pad.locked', { n: spec.unlockLevel }) };
+    if (this.buildingCount(team, type) >= spec.maxCount) return { ok: false, reason: tr('pad.limit', { n: spec.maxCount }) };
+    if (!this.freePads(team, type, where).length) return { ok: false, reason: tr('pad.noPad') };
+    const econ = this.teams[team].economy;
+    if (econ.metal < spec.metal) return { ok: false, reason: tr('build.needMetal', { n: spec.metal }) };
+    if (econ.components < spec.components) return { ok: false, reason: tr('build.needComponents', { n: spec.components }) };
+    return { ok: true };
+  }
+
+  /**
+   * Orders a pad building (turret, repair dock, radar, drop-off point). Like any building it is paid
+   * now and a harvester builds it. Base pads are taken front first; `where` picks a forward flank.
+   */
+  public buildOnPad(team: Team, type: PadBuildingType, where?: PadWhere, workers = 1): { ok: boolean; text: string } {
+    const check = this.canBuildOnPad(team, type, where);
+    if (!check.ok) return { ok: false, text: check.reason || tr('build.impossible') };
+    const pad = this.freePads(team, type, where)[0];
+    const spec = PAD_BUILDINGS[type];
+    const econ = this.teams[team].economy;
+    econ.metal -= spec.metal;
+    econ.components -= spec.components;
+    const site = this.addBuilding(team, type, pad.pos, false);
+    site.padId = pad.id;
+    site.workersWanted = workers >= 2 ? 2 : 1;
+    site.cost = { metal: spec.metal, components: spec.components };
+    this.siteTimer = 0;
+    const name = tr(`building.${type}` as MessageKey);
+    this.pushEvent(team, 'info', tr('pad.started', { name }), false);
+    return { ok: true, text: tr('pad.building', { name }) };
+  }
+
+  /** Puts a ready pad building on a pad (campaign fortifications). */
+  public placeReady(team: Team, type: PadBuildingType, where?: PadWhere): Building | null {
+    const pad = this.freePads(team, type, where)[0];
+    if (!pad) return null;
+    const b = this.addBuilding(team, type, pad.pos, true);
+    b.padId = pad.id;
+    return b;
   }
 
   public harvesterCount(team: Team): number {
@@ -468,6 +560,8 @@ export class GameState {
         return this.buildStructure(team, 'power_plant', action.workers).text;
       case 'build_factory':
         return this.buildStructure(team, 'factory', action.workers).text;
+      case 'build':
+        return this.buildOnPad(team, action.building, action.where, action.workers).text;
       case 'set_batch_size': {
         econ.batchSize = Math.max(GAME_BALANCE.BATCH_SIZE_MIN, Math.min(GAME_BALANCE.BATCH_SIZE_MAX, Math.round(action.size)));
         return tr('act.batchSize', { n: econ.batchSize });
@@ -580,6 +674,7 @@ export class GameState {
         if (b.team !== team || b.built < 1) continue;
         if (b.type === 'command_center') capacity += GAME_BALANCE.HQ_BUILTIN_POWER_KW;
         if (b.type === 'power_plant') capacity += GAME_BALANCE.POWER_PLANT_KW;
+        if (isPadType(b.type)) demand += PAD_BUILDINGS[b.type].powerKw;
         if (b.type === 'factory' && !b.paused && (b.harvesterBuild || (b.job && !this.isArmyCapped(team)))) {
           demand += GAME_BALANCE.POWER_FACTORY_KW;
         }
@@ -627,7 +722,10 @@ export class GameState {
           h.state = 'moving';
         }
         this.addEffect('build_complete', b.pos, b.team, b.radius);
-        this.pushEvent(b.team, 'build_complete', tr(b.type === 'factory' ? 'event.factoryOnline' : 'event.plantOnline'), false);
+        const done = isPadType(b.type)
+          ? tr('pad.online', { name: tr(`building.${b.type}` as MessageKey) })
+          : tr(b.type === 'factory' ? 'event.factoryOnline' : 'event.plantOnline');
+        this.pushEvent(b.team, 'build_complete', done, false);
       }
     }
   }
@@ -902,7 +1000,9 @@ export class GameState {
       // under threat a harvester keeps running home (an empty one used to flip between fleeing and mining every tick)
       if ((u.carrying >= u.capacity && !u.buildSiteId) || threatened) {
         u.state = 'delivering';
-        if (dist(u.pos, hq.pos) < hq.radius + u.radius + 0.4) {
+        // unload at the nearest drop-off point; under fire run to the HQ
+        const drop = threatened ? hq : (this.dropOffNear(u.team, u.pos) ?? hq);
+        if (dist(u.pos, drop.pos) < drop.radius + u.radius + 0.4) {
           if (u.carrying > 0) {
             const income = u.carrying * this.incomeMul[u.team];
             econ.metal += income;
@@ -914,7 +1014,7 @@ export class GameState {
           u.targetId = null;
           u.state = threatened ? 'idle' : 'moving';
         } else {
-          this.steer(u, hq.pos, u.speed, dt);
+          this.steer(u, drop.pos, u.speed, dt);
         }
         continue;
       }
@@ -987,7 +1087,8 @@ export class GameState {
       if (p.metalRemaining <= 0) continue;
       const crowd = this.units.filter(o => o.kind === 'harvester' && o.team === u.team && o.targetId === p.id).length;
       const danger = this.nearestEnemyCombat(u.team, p.pos, 15) ? 70 : 0;
-      const score = dist(p.pos, hq.pos) * 1.2 + dist(u.pos, p.pos) * 0.3 + crowd * 7 + danger;
+      const drop = this.dropOffNear(u.team, p.pos) ?? hq;
+      const score = dist(p.pos, drop.pos) * 1.2 + dist(u.pos, p.pos) * 0.3 + crowd * 7 + danger;
       if (!best || score < best.score) best = { id: p.id, type: 'ore', score };
     }
     if (best) {
@@ -1045,37 +1146,33 @@ export class GameState {
       // Retreat & repair cycle: below the plan's threshold → walk to the HQ → repair to ~full → rejoin.
       // Order matters: a unit that arrives this tick must start repairing this tick, otherwise the
       // combat code below overwrites its state and it never heals.
-      if (
-        plan.retreatHpThreshold > 0 &&
-        hpPct < plan.retreatHpThreshold &&
-        u.state !== 'retreating' &&
-        u.state !== 'repairing' &&
-        ownHQ
-      ) {
+      // the HQ bay or the nearest repair dock, whichever is closer
+      const repair = plan.retreatHpThreshold > 0 || u.state === 'retreating' || u.state === 'repairing' ? this.repairPoint(u) : null;
+      if (plan.retreatHpThreshold > 0 && hpPct < plan.retreatHpThreshold && u.state !== 'retreating' && u.state !== 'repairing' && repair) {
         u.state = 'retreating';
         u.targetId = null;
       }
       if (u.state === 'retreating') {
-        if (!ownHQ) {
+        if (!repair) {
           u.state = 'moving';
-        } else if (dist(u.pos, ownHQ.pos) <= GAME_BALANCE.REPAIR_RADIUS) {
+        } else if (dist(u.pos, repair.pos) <= repair.radius) {
           u.state = 'repairing';
         } else {
-          this.steer(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          this.steer(u, repair.pos, u.stats.effectiveSpeed, dt);
           this.coolDown(u, dt, false);
           continue;
         }
       }
       if (u.state === 'repairing') {
-        if (!ownHQ || hpPct >= 96) {
+        if (!repair || hpPct >= 96) {
           u.state = 'moving';
           u.committed = false;
           u.rallySince = this.gameTime;
         } else {
-          const d = dist(u.pos, ownHQ.pos);
-          if (d > GAME_BALANCE.REPAIR_RADIUS) this.steer(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          const d = dist(u.pos, repair.pos);
+          if (d > repair.radius) this.steer(u, repair.pos, u.stats.effectiveSpeed, dt);
           else this.brake(u, dt);
-          u.hp = Math.min(u.maxHp, u.hp + GAME_BALANCE.REPAIR_HP_PER_SEC * team.economy.powerEfficiency * dt);
+          u.hp = Math.min(u.maxHp, u.hp + repair.rate * team.economy.powerEfficiency * dt);
           this.coolDown(u, dt, false);
           continue;
         }
@@ -1164,6 +1261,48 @@ export class GameState {
   /** Our buildings took fire in the last few seconds. */
   public baseUnderFire(team: Team): boolean {
     return this.buildings.some(b => b.team === team && this.gameTime - b.lastDamagedAt < GAME_BALANCE.BASE_ALERT_SEC);
+  }
+
+  /** Where a damaged machine gets repaired: the HQ bay or the nearest ready repair dock (faster), whichever is closer. */
+  public repairPoint(u: { team: Team; pos: Vector2D }): { pos: Vector2D; radius: number; rate: number } | null {
+    let best: { pos: Vector2D; radius: number; rate: number } | null = null;
+    let bestD = Infinity;
+    for (const b of this.buildings) {
+      if (b.team !== u.team || b.built < 1) continue;
+      const spot =
+        b.type === 'command_center'
+          ? { pos: b.pos, radius: GAME_BALANCE.REPAIR_RADIUS, rate: GAME_BALANCE.REPAIR_HP_PER_SEC }
+          : b.type === 'repair_dock'
+            ? { pos: b.pos, radius: REPAIR_DOCK.RADIUS, rate: REPAIR_DOCK.HP_PER_SEC }
+            : null;
+      if (!spot) continue;
+      const d = dist(u.pos, b.pos);
+      if (d < bestD) {
+        bestD = d;
+        best = spot;
+      }
+    }
+    return best;
+  }
+
+  /** Where harvesters unload: the HQ or the ready drop-off point nearest to `pos`. */
+  public dropOffNear(team: Team, pos: Vector2D): Building | undefined {
+    let best: Building | undefined;
+    let bestD = Infinity;
+    for (const b of this.buildings) {
+      if (b.team !== team || b.built < 1 || (b.type !== 'command_center' && b.type !== 'depot')) continue;
+      const d = dist(pos, b.pos);
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  /** The side has a ready radar: exact count of the enemy army and what its factories build. */
+  public hasRadar(team: Team): boolean {
+    return this.buildings.some(b => b.team === team && b.type === 'radar' && b.built >= 1);
   }
 
   /** The enemy machine nearest to our HQ while our buildings are under fire, if one is close to the base. */
@@ -1506,14 +1645,20 @@ export class GameState {
     this.sound.shot(kind, shooter.team);
   }
 
+  /** The HQ's roof gun and defence turrets: shoot the nearest enemy our side sees in a clear line. */
   private updateTurrets(dt: number) {
     for (const b of this.buildings) {
-      if (b.type !== 'command_center') continue;
+      const tower = b.type === 'turret';
+      if (b.type !== 'command_center' && !(tower && b.built >= 1)) continue;
       b.turretCooldown -= dt;
       if (b.turretCooldown > 0) continue;
-      const target = this.nearestEnemyUnit(b.team, b.pos, GAME_BALANCE.HQ_TURRET_RANGE + b.radius, true);
+      const range = (tower ? TURRET.RANGE : GAME_BALANCE.HQ_TURRET_RANGE) + b.radius;
+      const target = this.nearestEnemyUnit(b.team, b.pos, range, true);
       if (!target) continue;
-      b.turretCooldown = GAME_BALANCE.HQ_TURRET_INTERVAL;
+      // a turret fires slower when the base is short of power
+      b.turretCooldown = tower
+        ? TURRET.INTERVAL / Math.max(0.3, this.teams[b.team].economy.powerEfficiency)
+        : GAME_BALANCE.HQ_TURRET_INTERVAL;
       const from = { x: b.pos.x, y: b.pos.y };
       this.projectiles.push({
         id: `proj_${this.nextId++}`,
@@ -1525,10 +1670,10 @@ export class GameState {
         pos: { ...from },
         progress: 0,
         speed: 55,
-        damage: GAME_BALANCE.HQ_TURRET_DAMAGE,
+        damage: tower ? TURRET.DAMAGE : GAME_BALANCE.HQ_TURRET_DAMAGE,
         kind: 'turret',
         splash: 0,
-        armorPierce: 0.2,
+        armorPierce: tower ? TURRET.ARMOR_PIERCE : 0.2,
       });
       this.sound.shot('turret', b.team);
     }
@@ -1600,15 +1745,20 @@ export class GameState {
     b.hp -= Math.max(1, raw * (1 - GAME_BALANCE.BUILDING_ARMOR * (1 - pierce)));
     b.lastDamagedAt = this.gameTime;
     if (this.throttled(`base_attack_${b.team}`, 25)) {
-      const what = b.type === 'command_center' ? 'event.attackHq' : b.type === 'factory' ? 'event.attackFactory' : 'event.attackPlant';
-      this.pushEvent(b.team, 'base_attack', tr(what), true);
+      const text = isPadType(b.type)
+        ? tr('pad.attacked', { name: tr(`building.${b.type}` as MessageKey) })
+        : tr(b.type === 'command_center' ? 'event.attackHq' : b.type === 'factory' ? 'event.attackFactory' : 'event.attackPlant');
+      this.pushEvent(b.team, 'base_attack', text, true);
     }
     if (b.hp <= 0) {
       this.addEffect('big_explosion', b.pos, b.team, b.radius * 1.4);
       this.sound.explosion(true);
       if (b.type !== 'command_center') {
         this.buildings = this.buildings.filter(x => x.id !== b.id);
-        this.pushEvent(b.team, 'base_attack', tr(b.type === 'factory' ? 'event.factoryDestroyed' : 'event.plantDestroyed'), true);
+        const lost = isPadType(b.type)
+          ? tr('pad.destroyed', { name: tr(`building.${b.type}` as MessageKey) })
+          : tr(b.type === 'factory' ? 'event.factoryDestroyed' : 'event.plantDestroyed');
+        this.pushEvent(b.team, 'base_attack', lost, true);
       }
     }
   }
@@ -1755,9 +1905,13 @@ export class GameState {
     return out.sort((a, b) => recent(a) - recent(b) || b.count - a.count || a.lastSeenSec - b.lastSeenSec);
   }
 
-  /** What this team knows about the enemy army: machines in sight and the last contact. */
+  /** What this team knows about the enemy army: machines in sight, the last contact, and with a radar the exact count and production. */
   public enemyIntel(team: Team): EnemyIntel {
-    return this.vision.intel(this, team);
+    const intel = this.vision.intel(this, team);
+    if (!this.hasRadar(team)) return intel;
+    const foe = opposite(team);
+    const producing = [...new Set(this.buildings.filter(b => b.team === foe && b.job).map(b => b.job!.design.name))];
+    return { ...intel, radar: { total: this.fieldArmyCount(foe), producing } };
   }
 
   public recentEvents(team: Team, max = 5, sinceSec = 90): GameEvent[] {

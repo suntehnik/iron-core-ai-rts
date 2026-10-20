@@ -93,9 +93,12 @@ describe('campaign levels', () => {
 
   it('the enemy gets the level edge: garrison, tougher HQ, income; AI vs AI keeps the sides equal', () => {
     const s = new GameState({ level: levelConfig(6) });
+    const edge = levelConfig(6).enemy;
     const garrison = s.units.filter((u): u is CombatUnit => u.kind === 'combat' && u.team === 'enemy' && !!u.garrison);
-    expect(garrison).toHaveLength(5);
-    expect(s.getHQ('enemy')!.maxHp).toBe(GAME_BALANCE.COMMAND_CENTER_HP * 1.5);
+    expect(edge.garrison).toBeGreaterThan(0);
+    expect(garrison).toHaveLength(edge.garrison!);
+    expect(edge.hqHpMul).toBeGreaterThan(1);
+    expect(s.getHQ('enemy')!.maxHp).toBe(Math.round(GAME_BALANCE.COMMAND_CENTER_HP * edge.hqHpMul!));
     expect(s.getHQ('player')!.maxHp).toBe(GAME_BALANCE.COMMAND_CENTER_HP);
     expect(s.teams.enemy.economy.totals.unitsBuilt).toBe(0); // a garrison is not production
     expect(s.armySummary('enemy').combatUnits).toBe(0); // nor part of the field army
@@ -138,7 +141,7 @@ describe('campaign levels', () => {
       s.setPlan('enemy', { ...s.teams.enemy.plan, stance: 'advance' });
       for (let t = 0; t < 90; t += 0.1) s.update(0.1);
       const garrison = s.units.filter((u): u is CombatUnit => u.kind === 'combat' && !!u.garrison);
-      expect(garrison).toHaveLength(3);
+      expect(garrison).toHaveLength(levelConfig(5).enemy.garrison!);
       for (const g of garrison) {
         expect(g.committed).toBe(false);
         // it may chase an intruder off, but stays inside the base (the waves go 40+ units out)

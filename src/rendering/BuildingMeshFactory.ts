@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { BuildingType, Team } from '../types/game';
+import { PAD_BUILDINGS } from '../config/balance';
+import { BuildingType, PadBuildingType, Team } from '../types/game';
 import { TeamPalette, geoCrystal } from './RobotMeshFactory';
 import { PALETTE, box, cyl, glow, part, toon } from './toon';
 
@@ -50,7 +51,9 @@ export class BuildingMeshFactory {
     const front = team === 'player' ? 1 : -1; // doors face the enemy side
 
     // Concrete foundation pad
-    const pad = new THREE.Mesh(cyl(type === 'command_center' ? 6.2 : type === 'factory' ? 5 : 4, type === 'command_center' ? 6.5 : 5.2, 0.2, 24), toon('#cbb68b'));
+    const padSpec = type in PAD_BUILDINGS ? PAD_BUILDINGS[type as PadBuildingType] : null;
+    const padR = padSpec ? padSpec.radius + 0.7 : type === 'command_center' ? 6.2 : type === 'factory' ? 5 : 4;
+    const pad = new THREE.Mesh(cyl(padR, padSpec ? padR + 0.2 : type === 'command_center' ? 6.5 : 5.2, 0.2, 24), toon('#cbb68b'));
     pad.position.y = 0.1;
     pad.receiveShadow = true;
     root.add(pad);
@@ -136,6 +139,89 @@ export class BuildingMeshFactory {
       spinners.push(crane);
       model.add(part(cyl(0.45, 0.6, 2.4, 10), steel, -front * 2.2, 4.0, 1.6, { outline: true }));
       height = 6;
+    } else if (type === 'turret') {
+      model.add(part(cyl(1.4, 1.6, 0.9, 12), steelDark, 0, 0.45, 0, { outline: true }));
+      model.add(part(cyl(1.1, 1.25, 0.8, 12), main, 0, 1.3, 0, { outline: true }));
+      const stripe = hazardStripe(2.2, 2.2);
+      stripe.position.y = 0.95;
+      stripe.scale.set(0.9, 0.5, 0.9);
+      model.add(stripe);
+      turret = new THREE.Group();
+      turret.position.set(0, 1.95, 0);
+      turret.add(part(box(1.3, 0.7, 1.1), cream, 0, 0.2, 0, { outline: true }));
+      for (const z of [-0.25, 0.25]) {
+        const barrel = part(cyl(0.11, 0.13, 1.7, 8), steelDark, 1.1, 0.3, z, { outline: true });
+        barrel.rotation.z = Math.PI / 2;
+        turret.add(barrel);
+      }
+      turret.add(part(box(0.1, 0.14, 0.6), glow(palette.glow), 0.68, 0.45, 0, { shadow: false }));
+      model.add(turret);
+      height = 3.2;
+    } else if (type === 'repair_dock') {
+      model.add(part(box(4.4, 0.45, 4.4), steelDark, 0, 0.25, 0, { outline: true }));
+      const stripe = hazardStripe(4.5, 4.5);
+      stripe.position.y = 0.4;
+      model.add(stripe);
+      const ring = part(cyl(1.6, 1.6, 0.06, 20), glow('#5bd36a', 0.8), 0, 0.52, 0, { shadow: false });
+      model.add(ring);
+      pulse.push(ring);
+      // green cross on a post
+      const sign = new THREE.Group();
+      sign.position.set(-front * 1.9, 0, -1.9);
+      sign.add(part(cyl(0.12, 0.12, 2.6, 6), steel, 0, 1.3, 0));
+      sign.add(part(box(0.9, 0.28, 0.12), glow('#5bd36a'), 0, 2.7, 0, { shadow: false }));
+      sign.add(part(box(0.28, 0.9, 0.12), glow('#5bd36a'), 0, 2.7, 0, { shadow: false }));
+      model.add(sign);
+      // service crane
+      const crane = new THREE.Group();
+      crane.position.set(front * 1.8, 0, 1.8);
+      crane.add(part(box(0.3, 3.0, 0.3), toon(PALETTE.yellow), 0, 1.5, 0, { outline: true }));
+      crane.add(part(box(0.3, 0.25, 2.2), toon(PALETTE.yellow), 0, 2.95, -0.9, { outline: true }));
+      crane.add(part(box(0.08, 0.8, 0.08), steelDark, 0, 2.4, -1.8));
+      model.add(crane);
+      spinners.push(crane);
+      height = 3.6;
+    } else if (type === 'radar') {
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          const leg = part(cyl(0.1, 0.14, 4.2, 6), steel, sx * 0.8, 2.1, sz * 0.8);
+          leg.rotation.set(sz * 0.12, 0, -sx * 0.12);
+          model.add(leg);
+        }
+      }
+      model.add(part(box(1.8, 0.3, 1.8), main, 0, 4.2, 0, { outline: true }));
+      model.add(part(box(1.0, 0.8, 1.0), cream, 0, 4.75, 0, { outline: true }));
+      const dish = new THREE.Group();
+      dish.position.set(0, 5.3, 0);
+      dish.add(part(cyl(0.14, 0.14, 0.8, 6), steelDark, 0, 0.3, 0));
+      const d = part(cyl(1.5, 0.3, 0.4, 16), cream, 0, 0.9, 0, { outline: true });
+      d.rotation.z = 0.8;
+      dish.add(d);
+      dish.add(part(box(0.12, 0.12, 0.12), glow(palette.glow), 0.9, 1.4, 0, { shadow: false }));
+      model.add(dish);
+      spinners.push(dish);
+      height = 6.8;
+    } else if (type === 'depot') {
+      model.add(part(box(4.6, 0.5, 4.0), steelDark, 0, 0.25, 0, { outline: true }));
+      const stripe = hazardStripe(4.7, 4.1);
+      stripe.position.y = 0.42;
+      model.add(stripe);
+      // ore hopper
+      model.add(part(cyl(1.3, 0.6, 1.4, 10), main, 0, 1.3, 0, { outline: true }));
+      model.add(part(cyl(1.4, 1.4, 0.25, 10), cream, 0, 2.05, 0, { outline: true }));
+      for (let i = 0; i < 2; i++) {
+        const crate = new THREE.Group();
+        crate.position.set(-front * 1.6, 0.85, -1.2 + i * 2.4);
+        crate.add(part(box(1.0, 0.7, 1.0), toon(PALETTE.yellow), 0, 0, 0, { outline: true }));
+        const c = part(geoCrystal(), toon('#9fb3c8'), 0, 0.5, 0, { outline: true });
+        c.scale.setScalar(1.6);
+        crate.add(c);
+        model.add(crate);
+      }
+      const f = flag(palette, 3.2);
+      f.position.set(front * 1.9, 0.5, 1.6);
+      model.add(f);
+      height = 3.4;
     } else {
       model.add(part(cyl(2.6, 2.9, 1.6, 14), steelDark, 0, 0.8, 0, { outline: true }));
       model.add(part(cyl(2.0, 2.2, 2.6, 14), main, 0, 2.6, 0, { outline: true }));
@@ -168,7 +254,7 @@ export class BuildingMeshFactory {
 
     // Construction scaffold (shown while building)
     const scaffold = new THREE.Group();
-    const s = type === 'command_center' ? 3.8 : type === 'factory' ? 3.4 : 2.9;
+    const s = padSpec ? padSpec.radius * 0.95 : type === 'command_center' ? 3.8 : type === 'factory' ? 3.4 : 2.9;
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) scaffold.add(part(box(0.2, height * 0.8, 0.2), toon(PALETTE.yellow), sx * s, height * 0.4, sz * s));
     }

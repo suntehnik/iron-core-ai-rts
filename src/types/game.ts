@@ -81,7 +81,23 @@ export interface HarvesterUnit extends UnitBase {
 
 export type GameUnit = CombatUnit | HarvesterUnit;
 
-export type BuildingType = 'command_center' | 'factory' | 'power_plant';
+export type BuildingType = 'command_center' | 'factory' | 'power_plant' | PadBuildingType;
+
+/** Buildings placed on pads (base and forward), unlocked by campaign level. */
+export type PadBuildingType = 'turret' | 'repair_dock' | 'radar' | 'depot';
+
+/** Where a pad building goes: any base pad, a forward pad, or a forward pad on one flank. */
+export type PadWhere = 'base' | 'forward' | 'north' | 'center' | 'south';
+
+/** A building spot laid out by the map: base pads around the HQ, forward pads by the contested deposits. */
+export interface Pad {
+  id: string;
+  team: Team;
+  pos: Vector2D;
+  kind: 'base' | 'forward';
+  /** flank of a forward pad */
+  flank?: 'north' | 'center' | 'south';
+}
 
 export interface ProductionJob {
   design: RobotDesign;
@@ -115,6 +131,8 @@ export interface Building {
   workersWanted?: number;
   /** what the site cost: a cancelled site refunds part of it */
   cost?: { metal: number; components: number };
+  /** the pad a pad building stands on */
+  padId?: string;
   turretCooldown: number;
   lastDamagedAt: number;
 }
@@ -240,6 +258,7 @@ export type ProductionAction =
   | { type: 'build_harvester'; count: number }
   | { type: 'build_power_plant'; workers?: number }
   | { type: 'build_factory'; workers?: number }
+  | { type: 'build'; building: PadBuildingType; where?: PadWhere; workers?: number }
   | { type: 'set_batch_size'; size: number }
   | { type: 'set_component_reserve'; amount: number }
   | { type: 'set_production'; paused: boolean };
