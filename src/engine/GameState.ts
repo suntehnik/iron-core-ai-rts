@@ -27,6 +27,9 @@ import {
 } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { RobotBuilder, designSignature } from './RobotBuilder';
+import { KeepOut, MapSpec, generateTerrain } from './terrain/MapGenerator';
+import { Pathfinder } from './terrain/Pathfinding';
+import { TerrainGrid } from './terrain/TerrainGrid';
 import { t as tr } from '../i18n';
 
 export const DEFAULT_PLAN: TacticalPlan = {
@@ -51,6 +54,20 @@ const noopSound: SoundSink = { shot() {}, explosion() {}, batchReady() {} };
 export const opposite = (t: Team): Team => (t === 'player' ? 'enemy' : 'player');
 const dist = (a: Vector2D, b: Vector2D) => Math.hypot(a.x - b.x, a.y - b.y);
 
+/** A* searches allowed per simulation tick; units over the budget keep their old route a tick longer. */
+const PATH_BUDGET_PER_TICK = 6;
+/** Share of the body radius that may overlap trees while moving (the route itself keeps the full radius). */
+const TERRAIN_COLLISION_SLACK = 0.6;
+/** Bodies pushed closer than this share of their radius to trees or rocks are moved back out. */
+const TERRAIN_PUSHOUT = 0.8;
+
+/** Stable 0..0.4 s offset per unit so route re-checks of a whole wave do not land on one tick. */
+function navJitter(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 100) / 250;
+}
+
 export class GameState {
   public teams: Record<Team, TeamState>;
   public units: GameUnit[] = [];
@@ -58,6 +75,10 @@ export class GameState {
   public resourcePatches: ResourcePatch[] = [];
   public scrapPiles: ScrapWreckage[] = [];
   public projectiles: Projectile[] = [];
+  /** Forest, rocks and swamp; a flat field unless a map spec was given. */
+  public terrain: TerrainGrid;
+  private pathfinder: Pathfinder;
+  private pathBudget = 0;
   public effects: VisualEffect[] = [];
   public events: GameEvent[] = [];
 
@@ -83,13 +104,15 @@ export class GameState {
   /** Arena mode: an empty field without bases — used by the design test bench (DesignTrial). */
   public readonly arena: boolean;
 
-  constructor(options: { arena?: boolean } = {}) {
+  constructor(options: { arena?: boolean; map?: MapSpec } = {}) {
     this.arena = !!options.arena;
     this.teams = {
       player: this.createTeam('player', initialDesign('player')),
       enemy: this.createTeam('enemy', initialDesign('enemy')),
     };
-    if (!this.arena) this.initMap();
+    this.terrain = TerrainGrid.flat(GAME_BALANCE.MAP_WIDTH, GAME_BALANCE.MAP_HEIGHT);
+    this.pathfinder = new Pathfinder(this.terrain);
+    if (!this.arena) this.initMap(options.map);
   }
 
   private createTeam(team: Team, design: RobotDesign): TeamState {
@@ -124,7 +147,7 @@ export class GameState {
     };
   }
 
-  private initMap() {
+  private initMap(map?: MapSpec) {
     for (const team of ['player', 'enemy'] as Team[]) {
       this.addBuilding(team, 'command_center', buildingSlot(team, 'command_center'), true);
       this.addBuilding(team, 'factory', buildingSlot(team, 'factory', 0), true);
@@ -142,6 +165,8 @@ export class GameState {
     patch('res_mid_c', 50, 30, 6500, 4.5, 'contested');
     patch('res_mid_s', 50, 48, 4500, 4, 'contested');
 
+    if (map) this.generateMapTerrain(map);
+
     for (const team of ['player', 'enemy'] as Team[]) {
       const hq = buildingSlot(team, 'command_center');
       const dx = team === 'player' ? 4 : -4;
@@ -149,6 +174,37 @@ export class GameState {
       this.spawnHarvester(team, { x: hq.x + dx, y: hq.y + 3 });
     }
     this.recomputePower();
+  }
+
+  /**
+   * Grows forest, rocks and swamp around the fixed base layout: building slots, deposits and rally
+   * points stay free, and bases, deposits and rally points are connected by passages wide enough
+   * for a heavy chassis.
+   */
+  private generateMapTerrain(map: MapSpec) {
+    const keepOut: KeepOut[] = [];
+    const connect: Vector2D[] = [];
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const dir = team === 'player' ? 1 : -1;
+      const hq = buildingSlot(team, 'command_center');
+      keepOut.push({ pos: hq, radius: 13 });
+      connect.push({ x: hq.x + dir * 8, y: hq.y });
+      for (let i = 0; i < MAX_SLOTS.factory; i++) {
+        const f = buildingSlot(team, 'factory', i);
+        keepOut.push({ pos: f, radius: 8 });
+        connect.push({ x: f.x + dir * 5.5, y: f.y });
+      }
+      for (let i = 0; i < MAX_SLOTS.power_plant; i++) keepOut.push({ pos: buildingSlot(team, 'power_plant', i), radius: 5.5 });
+      const rally = this.rallyPoint(team);
+      keepOut.push({ pos: rally, radius: 9 });
+      connect.push(rally);
+    }
+    for (const p of this.resourcePatches) {
+      keepOut.push({ pos: p.pos, radius: p.radius + 4.5 });
+      connect.push(p.pos);
+    }
+    this.terrain = generateTerrain(map, GAME_BALANCE.MAP_WIDTH, GAME_BALANCE.MAP_HEIGHT, keepOut, connect);
+    this.pathfinder = new Pathfinder(this.terrain);
   }
 
   // ───────────────────────────── Construction ─────────────────────────────
@@ -403,6 +459,7 @@ export class GameState {
   public update(dt: number) {
     if (this.isPaused || this.gameOver) return;
     this.gameTime += dt;
+    this.pathBudget = PATH_BUDGET_PER_TICK;
 
     this.recomputePower();
     this.updateConstruction(dt);
@@ -631,7 +688,7 @@ export class GameState {
           u.targetId = null;
           u.state = threatened ? 'idle' : 'moving';
         } else {
-          this.moveToward(u, hq.pos, u.speed, dt);
+          this.steer(u, hq.pos, u.speed, dt);
         }
         continue;
       }
@@ -649,7 +706,7 @@ export class GameState {
           continue;
         }
         if (dist(u.pos, scrap.pos) > 1.4) {
-          this.moveToward(u, scrap.pos, u.speed, dt);
+          this.steer(u, scrap.pos, u.speed, dt);
           u.state = 'moving';
         } else {
           u.state = 'harvesting';
@@ -670,7 +727,7 @@ export class GameState {
         continue;
       }
       if (dist(u.pos, patch.pos) > patch.radius * 0.8 + 0.6) {
-        this.moveToward(u, patch.pos, u.speed, dt);
+        this.steer(u, patch.pos, u.speed, dt);
         u.state = 'moving';
       } else {
         u.state = 'harvesting';
@@ -778,7 +835,7 @@ export class GameState {
         } else if (dist(u.pos, ownHQ.pos) <= GAME_BALANCE.REPAIR_RADIUS) {
           u.state = 'repairing';
         } else {
-          this.moveToward(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          this.steer(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
           this.coolDown(u, dt, false);
           continue;
         }
@@ -790,7 +847,7 @@ export class GameState {
           u.rallySince = this.gameTime;
         } else {
           const d = dist(u.pos, ownHQ.pos);
-          if (d > GAME_BALANCE.REPAIR_RADIUS) this.moveToward(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
+          if (d > GAME_BALANCE.REPAIR_RADIUS) this.steer(u, ownHQ.pos, u.stats.effectiveSpeed, dt);
           else this.brake(u, dt);
           u.hp = Math.min(u.maxHp, u.hp + GAME_BALANCE.REPAIR_HP_PER_SEC * team.economy.powerEfficiency * dt);
           this.coolDown(u, dt, false);
@@ -843,7 +900,7 @@ export class GameState {
       // Movement
       let moving = false;
       if (goal && dist(u.pos, goal) > 1.2) {
-        moving = this.moveToward(u, goal, u.stats.effectiveSpeed, dt, true);
+        moving = this.steer(u, goal, u.stats.effectiveSpeed, dt, true);
       } else {
         this.brake(u, dt);
       }
@@ -1029,7 +1086,67 @@ export class GameState {
     }
   }
 
-  /** Acceleration-limited movement. Returns true when the unit actually moved. */
+  /**
+   * Moves a unit toward a goal: straight while the line is clear (as on an open field), otherwise
+   * along an A* route around trees and rocks. Swamp slows the step down.
+   */
+  private steer(u: GameUnit, goal: Vector2D, maxSpeed: number, dt: number, accelModel = false): boolean {
+    const heavy = u.kind === 'combat' && u.design.chassisId === 'heavy_quad';
+    const speed = maxSpeed * this.terrain.speedFactor(u.pos, heavy);
+    const next = this.terrain.hasObstacles ? this.waypoint(u, goal) : goal;
+    return this.moveToward(u, next, speed, dt, accelModel);
+  }
+
+  /** The point to head for now: the goal itself, or the current waypoint of a detour. */
+  private waypoint(u: GameUnit, goal: Vector2D): Vector2D {
+    const now = this.gameTime;
+    const r = u.radius;
+    let nav = u.nav;
+    if (!nav || now - nav.lastSteerAt > 1) {
+      nav = u.nav = { goal: { ...goal }, path: null, idx: 0, recheckAt: 0, plannedAt: -999, stuckPos: { ...u.pos }, stuckAt: now, lastSteerAt: now };
+    }
+    nav.lastSteerAt = now;
+
+    // Stuck detector: barely moved for 2 s while the goal is still far away → plan a fresh route
+    let stuck = false;
+    if (now - nav.stuckAt > 2) {
+      stuck = dist(u.pos, nav.stuckPos) < 0.6 && dist(u.pos, goal) > 3;
+      nav.stuckPos = { ...u.pos };
+      nav.stuckAt = now;
+    }
+
+    const goalMoved = dist(nav.goal, goal) > 2.5;
+    if (stuck || goalMoved || now >= nav.recheckAt) {
+      const jitter = navJitter(u.id);
+      if (!stuck && this.terrain.segmentClear(u.pos, goal, r * 0.9)) {
+        nav.path = null;
+        nav.goal = { ...goal };
+        nav.recheckAt = now + 0.35 + jitter;
+      } else if (stuck || goalMoved || !nav.path || now - nav.plannedAt > 4) {
+        if (this.pathBudget > 0) {
+          this.pathBudget--;
+          nav.path = this.pathfinder.findPath(u.pos, goal, r);
+          nav.idx = 0;
+          nav.plannedAt = now;
+          nav.goal = { ...goal };
+          nav.recheckAt = now + 0.8 + jitter;
+        } else {
+          nav.recheckAt = now; // over the tick's search budget: try again next tick
+        }
+      } else {
+        nav.recheckAt = now + 0.8 + jitter;
+        // skip waypoints that are already in a clear straight line
+        const path = nav.path;
+        while (nav.idx < path.length - 1 && this.terrain.segmentClear(u.pos, path[nav.idx + 1], r * 0.9)) nav.idx++;
+      }
+    }
+    const path = nav.path;
+    if (!path) return goal;
+    while (nav.idx < path.length - 1 && dist(u.pos, path[nav.idx]) < 1.2) nav.idx++;
+    return path[nav.idx];
+  }
+
+  /** Acceleration-limited movement that slides along trees and rocks. Returns true when the unit actually moved. */
   private moveToward(u: GameUnit, goal: Vector2D, maxSpeed: number, dt: number, accelModel = false): boolean {
     const dx = goal.x - u.pos.x;
     const dy = goal.y - u.pos.y;
@@ -1038,10 +1155,33 @@ export class GameState {
     const accel = accelModel && u.kind === 'combat' ? u.stats.accel : 12;
     u.vel = Math.min(maxSpeed, u.vel + accel * dt);
     const step = Math.min(d, u.vel * dt);
-    u.pos.x += (dx / d) * step;
-    u.pos.y += (dy / d) * step;
+    const nx = u.pos.x + (dx / d) * step;
+    const ny = u.pos.y + (dy / d) * step;
     const targetFacing = Math.atan2(dy, dx);
     u.facing = lerpAngle(u.facing, targetFacing, Math.min(1, dt * 6));
+    if (!this.terrain.hasObstacles) {
+      u.pos.x = nx;
+      u.pos.y = ny;
+      return step > 0.001;
+    }
+    const r = u.radius * TERRAIN_COLLISION_SLACK;
+    const here = this.terrain.clearanceAt(u.pos);
+    // a step is allowed when it keeps the body clear of trees, or at least gets it further from them
+    const ok = (x: number, y: number) => {
+      const c = this.terrain.clearanceAt({ x, y });
+      return c >= r || c > here;
+    };
+    if (ok(nx, ny)) {
+      u.pos.x = nx;
+      u.pos.y = ny;
+    } else if (ok(nx, u.pos.y)) {
+      u.pos.x = nx;
+    } else if (ok(u.pos.x, ny)) {
+      u.pos.y = ny;
+    } else {
+      u.vel *= 0.5;
+      return false;
+    }
     return step > 0.001;
   }
 
@@ -1083,6 +1223,8 @@ export class GameState {
           a.pos.y = bld.pos.y + (dy / d) * minD;
         }
       }
+      // the crowd must not shove a machine into the trees
+      this.terrain.pushOut(a.pos, a.radius * TERRAIN_PUSHOUT);
     }
   }
 
