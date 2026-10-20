@@ -403,6 +403,10 @@ describe('custom instructions for the teal commander (AI vs AI)', () => {
         }
       };
       await play(150);
+      // A battle event for the teal side guarantees a quick re-plan: under the fog of war whether
+      // the teal army gets hit in the first minutes depends on the match
+      ctrl.state.pushEvent('player', 'base_attack', 'Противник атакует командный центр!', true);
+      await play(10);
       ctrl.restart(); // the restart button keeps the mode and the orders
       await play(60);
 

@@ -73,8 +73,16 @@ function intelLine(state: GameState, team: Team): string {
   if (!seen.length) return 'вражеские модели пока не замечены';
   return seen
     .slice(0, 4)
-    .map(s => `${s.design.name} ×${s.count} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
+    .map(s => `${s.design.name} ×${s.count}, ${s.inSight ? 'в поле зрения' : `видели ${s.lastSeenSec} с назад`} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
     .join('; ');
+}
+
+/** The enemy army as far as our machines and buildings see it (fog of war, forest blocks sight). */
+function enemyArmyLine(state: GameState, team: Team): string {
+  const i = state.enemyIntel(team);
+  if (i.visible) return `в поле зрения ${i.visible} боевых машин, остальное скрыто туманом войны`;
+  if (i.lastContactAgo === null) return 'контакта ещё не было, противник скрыт туманом войны';
+  return `сейчас не видно; последний контакт ${i.lastContactAgo} с назад (${i.lastCount} машин)`;
 }
 
 function armyLine(state: GameState, team: Team): string {
@@ -160,6 +168,7 @@ export const TACTICIAN_SYSTEM = `Ты — «Кобра», офицер упра�
 - retreatHpThreshold: 0–60 — при каком % прочности машина уходит на ремонт к штабу (0 — не отступать)
 - guardHarvesters: true/false — прикрывать своих добытчиков
 Инструкции командира главнее всего. Учитывай состав армий, конструкции и события. Если меняешь план сам — коротко объясни почему.
+О противнике известно только то, что видят наши машины и здания: лес закрывает обзор.
 Ответ — только JSON: {"reply":"1–2 предложения командиру","plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"суть плана до 12 слов"}}`;
 
 export function tacticianUserPrompt(
@@ -175,7 +184,8 @@ export function tacticianUserPrompt(
   lines.push(`ДЕЙСТВУЮЩИЕ ИНСТРУКЦИИ КОМАНДИРА: ${standingOrders.length ? standingOrders.map(s => `"${s}"`).join('; ') : 'нет'}`);
   lines.push(`ТЕКУЩИЙ ПЛАН: ${planLine(t.plan)}`);
   lines.push(`НАША АРМИЯ: ${armyLine(state, 'player')}; серийная модель ${describeDesign(t.design)}`);
-  lines.push(`АРМИЯ ВРАГА (замечено): ${intelLine(state, 'player')}`);
+  lines.push(`АРМИЯ ВРАГА: ${enemyArmyLine(state, 'player')}`);
+  lines.push(`ЗАМЕЧЕННЫЕ МОДЕЛИ ВРАГА: ${intelLine(state, 'player')}`);
   lines.push(`ШТАБЫ: наш ${state.baseHpPct('player')}%, вражеский ${state.baseHpPct('enemy')}%`);
   lines.push(`СОБЫТИЯ: ${eventsLine(state, 'player')}`);
   return lines.join('\n');
@@ -220,6 +230,7 @@ export function commanderSystem(team: Team, vsAI: boolean, instructions?: string
 2) тактический план армии (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
 3) экономические действия. Добытчиков собирает завод вместо боевых машин — не заказывай их, пока армия не может держать фронт.
 Подбирай контр-конструкции против замеченных моделей противника, следи за экономикой: без добычи армия не растёт.
+Туман войны: ты видишь только то, что видят твои машины и здания, лес закрывает обзор, поэтому сведения о противнике неполные.
 ${instructionsBlock(instructions)}Ответ — только JSON: {"taunt":"реплика в адрес противника (${foe}) до 15 слов","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} или null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
 }
 
@@ -233,7 +244,7 @@ export function commanderUserPrompt(state: GameState, team: Team, instructions?:
     `ТВОЯ ЭКОНОМИКА: ${economyLine(state, team)}`,
     `ТВОЯ АРМИЯ: ${armyLine(state, team)}; потери ${t.economy.totals.unitsLost}, уничтожено врагов ${t.economy.totals.kills}`,
     `ЗАМЕЧЕННЫЕ МОДЕЛИ ПРОТИВНИКА: ${intelLine(state, team)}`,
-    `АРМИЯ ПРОТИВНИКА: ${state.armySummary(foe).combatUnits} боевых машин`,
+    `АРМИЯ ПРОТИВНИКА: ${enemyArmyLine(state, team)}`,
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
     `СОБЫТИЯ: ${eventsLine(state, team)}`,
     `КАТАЛОГ:\n${compactCatalog()}`,
@@ -261,7 +272,7 @@ export function commanderReplanPrompt(state: GameState, team: Team, trigger: str
     `ТВОЙ ПЛАН: ${planLine(t.plan)}`,
     `ТВОЯ АРМИЯ: ${armyLine(state, team)}`,
     `ЗАМЕЧЕННЫЕ МОДЕЛИ ПРОТИВНИКА: ${intelLine(state, team)}`,
-    `АРМИЯ ПРОТИВНИКА: ${state.armySummary(foe).combatUnits} боевых машин`,
+    `АРМИЯ ПРОТИВНИКА: ${enemyArmyLine(state, team)}`,
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
     ...instructionsReminder(instructions),
   ].join('\n');

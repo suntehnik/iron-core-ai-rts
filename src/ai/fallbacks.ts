@@ -223,6 +223,17 @@ export interface EnemyDraft {
   actions: ProductionAction[];
 }
 
+/**
+ * The rule-based commander plays by the fog of war too: it counts the enemy machines in sight, or
+ * the last contact if it was recent; with no recent contact it assumes parity and stays careful.
+ */
+function estimateEnemyArmy(state: GameState, team: Team, mine: number): number {
+  const i = state.enemyIntel(team);
+  if (i.visible) return i.visible;
+  if (i.lastContactAgo !== null && i.lastContactAgo < 90) return i.lastCount;
+  return mine;
+}
+
 /** Rule-based counter-building commander (the classic game AI) for either side. */
 export function localCommanderDecision(state: GameState, team: Team): EnemyDraft {
   const t = state.teams[team];
@@ -264,7 +275,7 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
   }
 
   const mine = state.armySummary(team).combatUnits;
-  const theirs = state.armySummary(foe).combatUnits;
+  const theirs = estimateEnemyArmy(state, team, mine);
   if (mine >= theirs * 1.3 + 2) plan.stance = 'advance';
   else if (mine + 3 < theirs) plan.stance = 'defend_base';
   else plan.stance = state.gameTime > 240 ? 'advance' : 'hold_center';

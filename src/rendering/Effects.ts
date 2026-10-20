@@ -22,11 +22,12 @@ export class Effects {
 
   constructor(private scene: THREE.Scene) {}
 
-  ingest(effects: VisualEffect[]) {
+  /** Spawns new effects; `show` filters out the ones the viewer must not see (fog of war). */
+  ingest(effects: VisualEffect[], show: (e: VisualEffect) => boolean = () => true) {
     for (const e of effects) {
       if (e.id <= this.lastEffectId) continue;
       this.lastEffectId = e.id;
-      this.spawn(e);
+      if (show(e)) this.spawn(e);
     }
   }
 

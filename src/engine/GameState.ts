@@ -30,6 +30,7 @@ import { RobotBuilder, designSignature } from './RobotBuilder';
 import { KeepOut, MapSpec, generateTerrain } from './terrain/MapGenerator';
 import { Pathfinder } from './terrain/Pathfinding';
 import { TerrainGrid } from './terrain/TerrainGrid';
+import { EnemyIntel, Vision } from './Vision';
 import { t as tr } from '../i18n';
 
 export const DEFAULT_PLAN: TacticalPlan = {
@@ -79,6 +80,8 @@ export class GameState {
   public terrain: TerrainGrid;
   private pathfinder: Pathfinder;
   private pathBudget = 0;
+  /** Fog of war: which enemy units each side sees now. */
+  public readonly vision: Vision;
   public effects: VisualEffect[] = [];
   public events: GameEvent[] = [];
 
@@ -97,6 +100,13 @@ export class GameState {
   private throttle: Record<string, number> = {};
   /** Enemy designs each team has seen, by signature: a re-issued design with a new id or reordered parts is not new. */
   private seenDesigns: Record<Team, Set<string>> = { player: new Set(), enemy: new Set() };
+  /** Last sighting of each enemy design: the scouting report agents get instead of the live enemy army. */
+  private designIntel: Record<Team, Map<string, { design: RobotDesign; lastSeenAt: number; lastCount: number }>> = {
+    player: new Map(),
+    enemy: new Map(),
+  };
+  /** Reused by target acquisition (called for every machine every tick). */
+  private candidates: { target: GameUnit | Building; score: number }[] = [];
   private sightingTimer = 0;
   private combatTick = 0;
   private minedWindow: Record<Team, { t: number; amount: number }[]> = { player: [], enemy: [] };
@@ -112,6 +122,8 @@ export class GameState {
     };
     this.terrain = TerrainGrid.flat(GAME_BALANCE.MAP_WIDTH, GAME_BALANCE.MAP_HEIGHT);
     this.pathfinder = new Pathfinder(this.terrain);
+    // the design-trial arena is an open test range: both squads see each other
+    this.vision = new Vision(!this.arena);
     if (!this.arena) this.initMap(options.map);
   }
 
@@ -176,6 +188,13 @@ export class GameState {
     this.recomputePower();
   }
 
+  /** Replaces the battlefield terrain (hand-made maps, tests) and the router that walks it. */
+  public setTerrain(grid: TerrainGrid) {
+    this.terrain = grid;
+    this.pathfinder = new Pathfinder(grid);
+    for (const u of this.units) u.nav = undefined;
+  }
+
   /**
    * Grows forest, rocks and swamp around the fixed base layout: building slots, deposits and rally
    * points stay free, and bases, deposits and rally points are connected by passages wide enough
@@ -203,8 +222,7 @@ export class GameState {
       keepOut.push({ pos: p.pos, radius: p.radius + 4.5 });
       connect.push(p.pos);
     }
-    this.terrain = generateTerrain(map, GAME_BALANCE.MAP_WIDTH, GAME_BALANCE.MAP_HEIGHT, keepOut, connect);
-    this.pathfinder = new Pathfinder(this.terrain);
+    this.setTerrain(generateTerrain(map, GAME_BALANCE.MAP_WIDTH, GAME_BALANCE.MAP_HEIGHT, keepOut, connect));
   }
 
   // ───────────────────────────── Construction ─────────────────────────────
@@ -465,6 +483,7 @@ export class GameState {
     this.updateConstruction(dt);
     this.updateFabricators(dt);
     this.updateProduction(dt);
+    this.vision.update(this, dt);
     this.updateHarvesters(dt);
     this.updateCombatUnits(dt);
     this.updateTurrets(dt);
@@ -774,7 +793,7 @@ export class GameState {
     let best: CombatUnit | null = null;
     let bestD = radius;
     for (const o of this.units) {
-      if (o.team === team || o.kind !== 'combat' || o.state === 'dead') continue;
+      if (o.team === team || o.kind !== 'combat' || o.state === 'dead' || !this.vision.sees(team, o.id)) continue;
       const d = dist(o.pos, pos);
       if (d < bestD) {
         bestD = d;
@@ -855,8 +874,10 @@ export class GameState {
         }
       }
 
-      // Target acquisition
-      const target = this.acquireTarget(u);
+      // Target acquisition: only what our side sees; direct fire also needs the shooter's own line of sight
+      const acquired = this.acquireTarget(u);
+      const target = acquired?.target ?? null;
+      const los = acquired?.los ?? false;
       u.targetId = target ? target.id : null;
 
       let goal: Vector2D | null = null;
@@ -869,7 +890,8 @@ export class GameState {
         else if (plan.engagementRange === 'close_brawl') desired = Math.max(2.2, Math.min(range * 0.5, 6));
         else desired = range * 0.8;
 
-        if (d > desired) {
+        if (d > desired || !los) {
+          // out of range, or trees in the way: close in (the route goes around the grove)
           goal = target.pos;
         } else if (
           plan.engagementRange === 'max_range' &&
@@ -882,7 +904,7 @@ export class GameState {
           // Kite: step back while keeping the gun on target
           goal = { x: u.pos.x - (target.pos.x - u.pos.x), y: u.pos.y - (target.pos.y - u.pos.y) };
         }
-        engaging = d <= range && !u.isOverheated;
+        engaging = d <= range && !u.isOverheated && los;
       } else {
         // Reflex, no LLM: machines near home go for a raider at the base while the commander re-plans
         const r = raider[u.team];
@@ -993,7 +1015,7 @@ export class GameState {
         const fast = u.design.tacticalRole === 'skirmisher' || u.stats.effectiveSpeed >= 4.4;
         if (fast) {
           const harv = this.units
-            .filter(o => o.team === enemyTeam && o.kind === 'harvester')
+            .filter(o => o.team === enemyTeam && o.kind === 'harvester' && this.vision.sees(u.team, o.id))
             .sort((a, b) => dist(a.pos, u.pos) - dist(b.pos, u.pos))[0];
           if (harv) return harv.pos;
           const patch = this.resourcePatches.find(p => p.zone === (enemyTeam === 'enemy' ? 'enemy_safe' : 'player_safe') && p.metalRemaining > 0);
@@ -1021,16 +1043,21 @@ export class GameState {
     return { x: enemyHQ.pos.x, y };
   }
 
-  private acquireTarget(u: CombatUnit): GameUnit | Building | null {
+  /**
+   * Picks a target by the plan's priority among enemies our side sees. Direct-fire weapons prefer a
+   * target in their own line of sight (a slightly worse one beats one behind trees); the siege
+   * cannon lobs shells over the forest at anything an ally spots.
+   */
+  private acquireTarget(u: CombatUnit): { target: GameUnit | Building; los: boolean } | null {
     const plan = this.teams[u.team].plan;
     const enemyTeam = opposite(u.team);
     const aggro = u.stats.effectiveRange + GAME_BALANCE.AGGRO_EXTRA_RANGE;
     const myHarvesters = plan.guardHarvesters ? this.units.filter(o => o.team === u.team && o.kind === 'harvester') : [];
 
-    let best: GameUnit | Building | null = null;
-    let bestScore = Infinity;
+    const cands = this.candidates;
+    cands.length = 0;
     for (const e of this.units) {
-      if (e.team !== enemyTeam || e.state === 'dead') continue;
+      if (e.team !== enemyTeam || e.state === 'dead' || !this.vision.sees(u.team, e.id)) continue;
       const d = dist(u.pos, e.pos);
       if (d > aggro) continue;
       let score = d;
@@ -1056,10 +1083,7 @@ export class GameState {
           if (e.kind === 'harvester') score += 3;
       }
       if (myHarvesters.length && myHarvesters.some(h => dist(h.pos, e.pos) < 13)) score -= 15;
-      if (score < bestScore) {
-        bestScore = score;
-        best = e;
-      }
+      cands.push({ target: e, score });
     }
     for (const b of this.buildings) {
       if (b.team !== enemyTeam) continue;
@@ -1068,12 +1092,18 @@ export class GameState {
       let score = d + 6;
       if (plan.targetPriority === 'buildings') score -= 25;
       if (b.type === 'command_center') score -= 2;
-      if (score < bestScore) {
-        bestScore = score;
-        best = b;
-      }
+      cands.push({ target: b, score });
     }
-    return best;
+    if (!cands.length) return null;
+    cands.sort((a, b) => a.score - b.score);
+    const best = cands[0];
+    if (u.stats.weaponKind === 'explosive' || !this.terrain.hasSightBlockers) return { target: best.target, los: true };
+    for (let i = 0; i < Math.min(4, cands.length); i++) {
+      const c = cands[i];
+      if (c.score - best.score > 8) break;
+      if (this.terrain.lineOfSight(u.pos, c.target.pos)) return { target: c.target, los: true };
+    }
+    return { target: best.target, los: false };
   }
 
   private coolDown(u: CombatUnit, dt: number, firing: boolean) {
@@ -1267,7 +1297,7 @@ export class GameState {
       if (b.type !== 'command_center') continue;
       b.turretCooldown -= dt;
       if (b.turretCooldown > 0) continue;
-      const target = this.nearestEnemyUnit(b.team, b.pos, GAME_BALANCE.HQ_TURRET_RANGE + b.radius);
+      const target = this.nearestEnemyUnit(b.team, b.pos, GAME_BALANCE.HQ_TURRET_RANGE + b.radius, true);
       if (!target) continue;
       b.turretCooldown = GAME_BALANCE.HQ_TURRET_INTERVAL;
       const from = { x: b.pos.x, y: b.pos.y };
@@ -1290,12 +1320,14 @@ export class GameState {
     }
   }
 
-  private nearestEnemyUnit(team: Team, pos: Vector2D, radius: number): GameUnit | null {
+  /** Nearest enemy unit; with `needSight` only one our side sees and in a clear line from `pos` (turrets). */
+  private nearestEnemyUnit(team: Team, pos: Vector2D, radius: number, needSight = false): GameUnit | null {
     let best: GameUnit | null = null;
     let bestD = radius;
     for (const o of this.units) {
       if (o.team === team || o.state === 'dead') continue;
       const d = dist(o.pos, pos);
+      if (needSight && d < bestD && (!this.vision.sees(team, o.id) || !this.terrain.lineOfSight(pos, o.pos))) continue;
       if (d < bestD) {
         bestD = d;
         best = o;
@@ -1402,13 +1434,13 @@ export class GameState {
     for (const u of this.units) {
       if (u.kind !== 'combat' || u.state === 'dead') continue;
       const observer = opposite(u.team);
+      if (!this.vision.sees(observer, u.id)) continue;
       const seen = this.seenDesigns[observer];
       const signature = designSignature(u.design);
+      const memo = this.designIntel[observer].get(signature);
+      if (memo && memo.lastSeenAt === this.gameTime) memo.lastCount++;
+      else this.designIntel[observer].set(signature, { design: u.design, lastSeenAt: this.gameTime, lastCount: 1 });
       if (seen.has(signature)) continue;
-      const near =
-        this.units.some(o => o.team === observer && dist(o.pos, u.pos) < 28) ||
-        this.buildings.some(b => b.team === observer && dist(b.pos, u.pos) < 30);
-      if (!near) continue;
       seen.add(signature);
       const chassis = CHASSIS_CATALOG[u.design.chassisId] ? chassisName(u.design.chassisId) : u.design.chassisId;
       const weapons = u.design.modules
@@ -1489,19 +1521,28 @@ export class GameState {
     };
   }
 
-  /** Enemy designs this team has actually seen on the battlefield (no omniscience). */
-  public observedEnemyDesigns(team: Team): { design: RobotDesign; count: number }[] {
-    const seen = this.seenDesigns[team];
-    const map = new Map<string, { design: RobotDesign; count: number }>();
+  /**
+   * The scouting report: enemy designs this team has seen (no omniscience). `count` is how many are
+   * in sight now, or how many were seen at the last sighting; models seen in the last minute come first.
+   */
+  public observedEnemyDesigns(team: Team): { design: RobotDesign; count: number; inSight: number; lastSeenSec: number }[] {
+    const inSight = new Map<string, number>();
     for (const u of this.units) {
-      if (u.team === team || u.kind !== 'combat') continue;
+      if (u.team === team || u.kind !== 'combat' || u.state === 'dead' || !this.vision.sees(team, u.id)) continue;
       const signature = designSignature(u.design);
-      if (!seen.has(signature)) continue;
-      const entry = map.get(signature);
-      if (entry) entry.count++;
-      else map.set(signature, { design: u.design, count: 1 });
+      inSight.set(signature, (inSight.get(signature) ?? 0) + 1);
     }
-    return [...map.values()].sort((a, b) => b.count - a.count);
+    const out = [...this.designIntel[team].entries()].map(([signature, m]) => {
+      const now = inSight.get(signature) ?? 0;
+      return { design: m.design, count: now || m.lastCount, inSight: now, lastSeenSec: Math.round(this.gameTime - m.lastSeenAt) };
+    });
+    const recent = (x: { lastSeenSec: number }) => (x.lastSeenSec <= 60 ? 0 : 1);
+    return out.sort((a, b) => recent(a) - recent(b) || b.count - a.count || a.lastSeenSec - b.lastSeenSec);
+  }
+
+  /** What this team knows about the enemy army: machines in sight and the last contact. */
+  public enemyIntel(team: Team): EnemyIntel {
+    return this.vision.intel(this, team);
   }
 
   public recentEvents(team: Team, max = 5, sinceSec = 90): GameEvent[] {

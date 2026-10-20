@@ -95,8 +95,16 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
     if (!seen.length) return 'no enemy models spotted yet';
     return seen
       .slice(0, 4)
-      .map(s => `${mark(s.design.name)} ×${s.count} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
+      .map(s => `${mark(s.design.name)} ×${s.count}, ${s.inSight ? 'in sight' : `seen ${s.lastSeenSec} s ago`} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
       .join('; ');
+  }
+
+  /** The enemy army as far as our machines and buildings see it (fog of war, forest blocks sight). */
+  function enemyArmyLine(state: GameState, team: Team): string {
+    const i = state.enemyIntel(team);
+    if (i.visible) return `${i.visible} combat robots in sight, the rest is hidden by the fog of war`;
+    if (i.lastContactAgo === null) return 'no contact yet, the enemy is hidden by the fog of war';
+    return `none in sight; last contact ${i.lastContactAgo} s ago (${i.lastCount} robots)`;
   }
 
   function armyLine(state: GameState, team: Team): string {
@@ -157,6 +165,7 @@ Plan parameters:
 - retreatHpThreshold: 0–60 — at what % integrity a robot goes back to the HQ for repairs (0 = never retreat)
 - guardHarvesters: true/false — cover our harvesters
 The commander's instructions come first. Take the armies, the designs and the events into account. If you change the plan on your own, briefly explain why.
+We know only what our machines and buildings see: forest blocks sight.
 ${readable}
 Answer with JSON only: {"reply":"1–2 sentences to the commander","plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"the plan in up to 12 words"}}`;
 
@@ -168,7 +177,8 @@ Answer with JSON only: {"reply":"1–2 sentences to the commander","plan":{"stan
     lines.push(`COMMANDER'S STANDING INSTRUCTIONS: ${standingOrders.length ? standingOrders.map(s => `"${mark(s)}"`).join('; ') : 'none'}`);
     lines.push(`CURRENT PLAN: ${planLine(t.plan)}`);
     lines.push(`OUR ARMY: ${armyLine(state, 'player')}; serial model ${describeDesign(t.design)}`);
-    lines.push(`ENEMY ARMY (spotted): ${intelLine(state, 'player')}`);
+    lines.push(`ENEMY ARMY: ${enemyArmyLine(state, 'player')}`);
+    lines.push(`SPOTTED ENEMY MODELS: ${intelLine(state, 'player')}`);
     lines.push(`HQS: ours ${state.baseHpPct('player')}%, enemy ${state.baseHpPct('enemy')}%`);
     lines.push(`EVENTS: ${eventsLine(state, 'player')}`);
     return lines.join('\n');
@@ -200,6 +210,7 @@ Every ~${GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC} seconds you get a report and d
 2) the army plan (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
 3) economic actions. The factory builds harvesters instead of combat robots — do not order them while the army cannot hold the front.
 Counter the enemy models you have spotted and watch the economy: without mining the army does not grow.
+Fog of war: you see only what your machines and buildings see, and forest blocks sight, so the enemy data is partial.
 ${readable}
 ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the enemy (${foe}), up to 15 words","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
   }
@@ -214,7 +225,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `YOUR ECONOMY: ${economyLine(state, team)}`,
       `YOUR ARMY: ${armyLine(state, team)}; losses ${t.economy.totals.unitsLost}, enemies destroyed ${t.economy.totals.kills}`,
       `SPOTTED ENEMY MODELS: ${intelLine(state, team)}`,
-      `ENEMY ARMY: ${state.armySummary(foe).combatUnits} combat robots`,
+      `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
       `HQS: yours ${state.baseHpPct(team)}%, enemy ${state.baseHpPct(foe)}%`,
       `EVENTS: ${eventsLine(state, team)}`,
       `CATALOG:\n${compactCatalog()}`,
@@ -239,7 +250,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `YOUR PLAN: ${planLine(t.plan)}`,
       `YOUR ARMY: ${armyLine(state, team)}`,
       `SPOTTED ENEMY MODELS: ${intelLine(state, team)}`,
-      `ENEMY ARMY: ${state.armySummary(foe).combatUnits} combat robots`,
+      `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
       `HQS: yours ${state.baseHpPct(team)}%, enemy ${state.baseHpPct(foe)}%`,
       ...instructionsReminder(instructions),
     ].join('\n');

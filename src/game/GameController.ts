@@ -227,6 +227,7 @@ export class GameController {
   attachScene(container: HTMLElement) {
     this.scene?.dispose();
     this.scene = new SceneManager(container);
+    this.scene.setFogTeam(this.fogTeam());
     this.lastFrame = performance.now();
     cancelAnimationFrame(this.raf);
     this.raf = requestAnimationFrame(this.loop);
@@ -279,9 +280,15 @@ export class GameController {
     this.bump();
   }
 
+  /** The human plays teal and sees through teal eyes; the AI-vs-AI spectator sees the whole field. */
+  fogTeam(): Team | null {
+    return this.mode === 'human' ? 'player' : null;
+  }
+
   private setMode(mode: GameMode) {
     this.mode = mode;
     this.director.setMode(mode);
+    this.scene?.setFogTeam(this.fogTeam());
     // In the normal mode the teal side is the human: its AI commander does not exist
     this.director.setCommanderInstructions('player', mode === 'spectator' ? this.allyInstructions : '');
     this.timeScale = 1;

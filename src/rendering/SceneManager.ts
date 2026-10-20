@@ -7,6 +7,8 @@ import { BuildingMeshFactory, BuildingRig } from './BuildingMeshFactory';
 import { Effects } from './Effects';
 import { RobotMeshFactory, RobotRig } from './RobotMeshFactory';
 import { TerrainView } from './TerrainView';
+import { FogView } from './FogView';
+import { FOG_CELL } from '../engine/Vision';
 import { box, glow, sphere } from './toon';
 
 interface UnitView {
@@ -43,6 +45,9 @@ export class SceneManager {
   private rallyMarkers: Record<Team, THREE.Group> = {} as Record<Team, THREE.Group>;
   private terrainView: TerrainView | null = null;
   private terrainRef: TerrainGrid | null = null;
+  private fog: FogView;
+  /** The side whose eyes the camera uses (fog of war); null — the spectator sees everything. */
+  private fogTeam: Team | null = 'player';
 
   private target = new THREE.Vector3(30, 0, 33);
   private zoom = 30; // half-height of the view in world units
@@ -70,6 +75,8 @@ export class SceneManager {
     this.setupLights();
     this.setupGround();
     this.setupRallyMarkers();
+    this.fog = new FogView(Math.ceil(W / FOG_CELL), Math.ceil(H / FOG_CELL), W, H);
+    this.scene.add(this.fog.mesh);
     this.effects = new Effects(this.scene);
     this.updateCamera();
     this.bindControls();
@@ -255,6 +262,11 @@ export class SceneManager {
     this.updateCamera();
   }
 
+  /** Fog of war for this side's view, or none (AI vs AI spectating). */
+  setFogTeam(team: Team | null) {
+    this.fogTeam = team;
+  }
+
   /** Centre the camera on a map position (minimap clicks). */
   /** Whole battlefield in view (AI-vs-AI spectating). */
   overview() {
@@ -297,8 +309,14 @@ export class SceneManager {
     this.syncPatches(state.resourcePatches);
     this.syncScrap(state.scrapPiles);
     this.syncBuildings(state, dt);
-    this.syncUnits(state.units, lookup, state.gameTime, dt);
-    this.syncProjectiles(state.projectiles);
+    const fogTeam = state.vision.enabled ? this.fogTeam : null;
+    // enemy machines out of sight are not drawn, nor are their shots and flashes in the fog
+    const hidden = (u: GameUnit) => !!fogTeam && u.team !== fogTeam && !state.vision.sees(fogTeam, u.id);
+    const fogged = (team: Team | 'neutral', x: number, y: number) =>
+      !!fogTeam && team !== fogTeam && !state.vision.pointVisible(state, fogTeam, x, y);
+    this.fog.update(fogTeam ? state.vision.fogGrid(state, fogTeam) : null, dt);
+    this.syncUnits(state.units, lookup, state.gameTime, dt, hidden);
+    this.syncProjectiles(state.projectiles, fogged);
     for (const team of ['player', 'enemy'] as Team[]) {
       const m = this.rallyMarkers[team];
       const p = state.rallyPoint(team);
@@ -306,7 +324,7 @@ export class SceneManager {
       m.visible = team === 'player' && state.teams.player.plan.stance === 'advance';
       m.scale.setScalar(1 + Math.sin(this.time * 3) * 0.06);
     }
-    this.effects.ingest(state.effects);
+    this.effects.ingest(state.effects, e => !fogged(e.team, e.pos.x, e.pos.y));
     this.effects.update(state.isPaused ? 0 : dt);
     this.renderer.render(this.scene, this.camera);
   }
@@ -353,7 +371,13 @@ export class SceneManager {
     (fill.material as THREE.SpriteMaterial).color.set(c);
   }
 
-  private syncUnits(units: GameUnit[], lookup: Map<string, GameUnit | Building>, gameTime: number, dt: number) {
+  private syncUnits(
+    units: GameUnit[],
+    lookup: Map<string, GameUnit | Building>,
+    gameTime: number,
+    dt: number,
+    hidden: (u: GameUnit) => boolean,
+  ) {
     const alive = new Set<string>();
     for (const u of units) {
       if (u.state === 'dead') continue;
@@ -368,6 +392,11 @@ export class SceneManager {
         this.units.set(u.id, view);
       }
       const { rig } = view;
+      rig.root.visible = !hidden(u);
+      if (!rig.root.visible) {
+        view.hpBg.visible = view.hpFill.visible = false;
+        continue;
+      }
       rig.root.position.set(u.pos.x, 0, u.pos.y);
       rig.root.rotation.y = -u.facing;
 
@@ -443,6 +472,8 @@ export class SceneManager {
         let bestD = GAME_BALANCE.HQ_TURRET_RANGE + b.radius;
         for (const u of state.units) {
           if (u.team === b.team) continue;
+          // an HQ turret of ours must not point at an enemy hidden by the fog
+          if (this.fogTeam && state.vision.enabled && u.team !== this.fogTeam && !state.vision.sees(this.fogTeam, u.id)) continue;
           const d = Math.hypot(u.pos.x - b.pos.x, u.pos.y - b.pos.y);
           if (d < bestD) {
             bestD = d;
@@ -510,7 +541,7 @@ export class SceneManager {
     }
   }
 
-  private syncProjectiles(list: Projectile[]) {
+  private syncProjectiles(list: Projectile[], fogged: (team: Team, x: number, y: number) => boolean) {
     const alive = new Set<string>();
     for (const p of list) {
       alive.add(p.id);
@@ -526,6 +557,7 @@ export class SceneManager {
       const arc = p.kind === 'explosive' ? Math.sin(p.progress * Math.PI) * 4 : 0;
       mesh.position.set(p.pos.x, 1.6 + arc, p.pos.y);
       mesh.rotation.y = -Math.atan2(p.to.y - p.from.y, p.to.x - p.from.x);
+      mesh.visible = !fogged(p.team, p.pos.x, p.pos.y);
     }
     for (const [id, m] of this.projectiles) {
       if (!alive.has(id)) {
@@ -547,6 +579,7 @@ export class SceneManager {
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('resize', this.onResize);
     this.terrainView?.dispose();
+    this.fog.dispose();
     this.renderer.dispose();
     // Remove the canvas: a stale canvas left in the DOM covered the live scene (black screen bug)
     if (el.parentElement) el.parentElement.removeChild(el);
