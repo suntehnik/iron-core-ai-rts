@@ -1,5 +1,6 @@
 import { GAME_BALANCE } from '../config/balance';
 import { commanderDesignName, commanderTaunt } from '../config/commanders';
+import { Doctrine } from '../config/levels';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { ProductionAction, TacticalPlan, Team } from '../types/game';
@@ -234,6 +235,26 @@ function estimateEnemyArmy(state: GameState, team: Team, mine: number): number {
   return mine;
 }
 
+/**
+ * Army stance by the level's doctrine: a defensive general holds its base and counter-attacks only
+ * with a clear edge; an aggressive one pushes early.
+ */
+function doctrineStance(doctrine: Doctrine, mine: number, theirs: number, time: number): TacticalPlan['stance'] {
+  switch (doctrine) {
+    case 'defensive':
+      // holds the line in front of its wall, falls back home early, counter-attacks only with a clear edge
+      if (mine >= theirs * 1.4 + 3 || time > 600) return 'advance';
+      return mine + 2 < theirs ? 'defend_base' : 'hold_center';
+    case 'aggressive':
+      if (mine >= theirs + 1 || time > 120) return 'advance';
+      return mine + 4 < theirs ? 'defend_base' : 'hold_center';
+    default:
+      if (mine >= theirs * 1.3 + 2) return 'advance';
+      if (mine + 3 < theirs) return 'defend_base';
+      return time > 240 ? 'advance' : 'hold_center';
+  }
+}
+
 /** Rule-based counter-building commander (the classic game AI) for either side. */
 export function localCommanderDecision(state: GameState, team: Team): EnemyDraft {
   const t = state.teams[team];
@@ -276,9 +297,7 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
 
   const mine = state.armySummary(team).combatUnits;
   const theirs = estimateEnemyArmy(state, team, mine);
-  if (mine >= theirs * 1.3 + 2) plan.stance = 'advance';
-  else if (mine + 3 < theirs) plan.stance = 'defend_base';
-  else plan.stance = state.gameTime > 240 ? 'advance' : 'hold_center';
+  plan.stance = doctrineStance(state.doctrine[team] ?? 'balanced', mine, theirs, state.gameTime);
   plan.guardHarvesters = state.recentEvents(team, 5).some(e => e.type === 'harvester_attacked');
   plan.summaryRu = describePlan(plan);
 

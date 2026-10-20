@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
-import { Cpu, Eye, MessageSquarePlus, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
+import { Cpu, Eye, Flag, Lock, MessageSquarePlus, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
 import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
 import { nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
 import { LLM_PROVIDERS } from '../config/llmProviders';
 import { GameController } from '../game/GameController';
 import { CommanderPortrait, EngineerPortrait } from './Portraits';
-import { LanguageSwitch, cx, useCompactHud } from './ui';
+import { LanguageSwitch, cx, formatTime, useCompactHud } from './ui';
 import { t } from '../i18n';
 import { commanderName } from '../config/commanders';
+import { CAMPAIGN, ENDLESS_FROM, levelConfig } from '../config/levels';
+import { enemyEdge, levelDescription, levelName } from '../game/levelText';
 
 export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: () => void }> = ({ ctrl, onOpenSettings }) => {
   const cloud = ctrl.director.cloudEnabled();
@@ -69,7 +71,9 @@ export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: (
           </button>
         </div>
 
-        <div className={cx(compact ? 'mt-3 grid grid-cols-2 gap-2' : 'mt-5 flex flex-col gap-2')}>
+        <LevelPicker ctrl={ctrl} compact={compact} />
+
+        <div className={cx(compact ? 'mt-2 grid grid-cols-2 gap-2' : 'mt-3 flex flex-col gap-2')}>
           <button
             type="button"
             onClick={() => ctrl.start('human')}
@@ -138,6 +142,52 @@ export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: (
         {!compact && (
           <div className="text-[10px] text-slate-400 text-center mt-2">{t('brief.camera')}</div>
         )}
+      </div>
+    </div>
+  );
+};
+
+/** Campaign ladder: open levels can be replayed, the next locked one shows what it takes. */
+const LevelPicker: React.FC<{ ctrl: GameController; compact: boolean }> = ({ ctrl, compact }) => {
+  const { unlocked, best } = ctrl.campaign;
+  const selected = levelConfig(ctrl.selectedLevel);
+  const endless = unlocked >= ENDLESS_FROM;
+  const chip = (n: number, label: string) => {
+    const locked = n > unlocked;
+    const active = n === ctrl.selectedLevel || (n >= ENDLESS_FROM && ctrl.selectedLevel >= ENDLESS_FROM);
+    return (
+      <button
+        key={n}
+        type="button"
+        disabled={locked}
+        onClick={() => ctrl.selectLevel(n)}
+        title={locked ? t('campaign.locked', { n: n - 1 }) : levelName(levelConfig(n))}
+        className={cx(
+          'min-w-[34px] px-2 py-1 rounded-md text-xs font-heading font-bold tabular-nums flex items-center justify-center gap-1 border transition',
+          active ? 'bg-teal-600 border-teal-300/60 text-white' : locked ? 'bg-slate-900/60 border-white/5 text-slate-500 cursor-not-allowed' : 'bg-slate-800 border-white/10 text-slate-200 hover:bg-slate-700',
+        )}
+      >
+        {locked ? <Lock className="w-3 h-3" /> : null}
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div className={cx(compact ? 'mt-3' : 'mt-4', 'rounded-lg bg-slate-800/50 border border-white/10 p-2.5')}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="flex items-center gap-1 text-[11px] uppercase tracking-[0.15em] font-bold text-teal-300 mr-1">
+          <Flag className="w-3.5 h-3.5" /> {t('campaign.title')}
+        </span>
+        {CAMPAIGN.map(l => chip(l.n, String(l.n)))}
+        {endless && chip(unlocked, t('campaign.endlessChip', { n: ctrl.selectedLevel >= ENDLESS_FROM ? ctrl.selectedLevel : unlocked }))}
+      </div>
+      <div className="mt-2 text-xs">
+        <div className="font-semibold text-slate-100">
+          {t('campaign.level', { n: selected.n })} · {levelName(selected)}
+          {best[selected.n] ? <span className="ml-2 font-normal text-amber-300">{t('campaign.best', { time: formatTime(best[selected.n]) })}</span> : null}
+        </div>
+        {!compact && <div className="text-slate-300 mt-0.5 leading-snug">{levelDescription(selected)}</div>}
+        <div className="text-[11px] text-orange-200/90 mt-0.5 leading-snug">{enemyEdge(selected)}</div>
       </div>
     </div>
   );

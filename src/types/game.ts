@@ -62,6 +62,8 @@ export interface CombatUnit extends UnitBase {
   lane: number; // -1..1 lateral offset so the army spreads into a line
   /** joined an assault wave (until then the unit gathers at the rally point) */
   committed: boolean;
+  /** a campaign garrison: guards its HQ for the whole match and never joins a wave */
+  garrison?: boolean;
   rallySince: number;
   lastShotAt: number;
 }

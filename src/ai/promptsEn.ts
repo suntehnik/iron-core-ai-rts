@@ -1,6 +1,7 @@
 import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
 import { GAME_BALANCE } from '../config/balance';
 import { COMMANDERS, commanderName } from '../config/commanders';
+import { DOCTRINE_TEXT } from '../config/levels';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { ProductionProposal } from '../types/agent';
@@ -97,6 +98,16 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
       .slice(0, 4)
       .map(s => `${mark(s.design.name)} ×${s.count}, ${s.inSight ? 'in sight' : `seen ${s.lastSeenSec} s ago`} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
       .join('; ');
+  }
+
+  /** Campaign level rules for an AI commander: the doctrine and the chassis it may use. */
+  function levelLines(state: GameState, team: Team): string[] {
+    const out: string[] = [];
+    const doctrine = state.doctrine[team];
+    if (doctrine) out.push(`HQ DOCTRINE: ${DOCTRINE_TEXT[doctrine].en}`);
+    const chassis = state.allowedChassisOf(team);
+    if (chassis) out.push(`ALLOWED CHASSIS: only ${chassis.join(', ')}`);
+    return out;
   }
 
   /** The enemy army as far as our machines and buildings see it (fog of war, forest blocks sight). */
@@ -228,6 +239,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
       `HQS: yours ${state.baseHpPct(team)}%, enemy ${state.baseHpPct(foe)}%`,
       `EVENTS: ${eventsLine(state, team)}`,
+      ...levelLines(state, team),
       `CATALOG:\n${compactCatalog()}`,
       ...instructionsReminder(instructions),
     ].join('\n');

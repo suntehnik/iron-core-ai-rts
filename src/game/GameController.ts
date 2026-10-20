@@ -9,7 +9,8 @@ import { AI_WALLET } from '../config/tariffs';
 import { GAME_BALANCE } from '../config/balance';
 import { TrialReport, pickTrialOpponent, runDesignTrial, trialKey, trialVerdict } from '../engine/DesignTrial';
 import { GameState, SoundSink } from '../engine/GameState';
-import { DEFAULT_MAP } from '../engine/terrain/MapGenerator';
+import { levelConfig } from '../config/levels';
+import { CampaignProgress, loadCampaign, recordVictory, saveCampaign } from './Campaign';
 import { sounds } from '../engine/SoundEffects';
 import { SceneManager } from '../rendering/SceneManager';
 import { AgentId, ChatMessage, LLMSettings, ProductionProposal, TacticalDecision } from '../types/agent';
@@ -19,11 +20,6 @@ import { LANGS, Lang, getLanguage, languageFromLocale, setLanguage, t } from '..
 const SETTINGS_KEY = 'ironcore_settings_v2';
 const ALLY_INSTRUCTIONS_KEY = 'ironcore_ally_instructions_v1';
 const LANGUAGE_KEY = 'ironcore_lang';
-
-/** A fresh match on the battlefield map (forest groves and rock ridges). */
-function newMatchState(): GameState {
-  return new GameState({ map: DEFAULT_MAP });
-}
 
 export const DEFAULT_SETTINGS: LLMSettings = {
   provider: 'openrouter',
@@ -124,6 +120,11 @@ export class GameController {
   public timeScale = 1;
   /** Optional custom prompt for the teal commander in AI-vs-AI, set on the start screen (kept between visits) */
   public allyInstructions = loadAllyInstructions();
+  /** Campaign progress (kept in this browser) and the level the next match is played on */
+  public campaign: CampaignProgress = loadCampaign();
+  public selectedLevel = this.campaign.unlocked;
+  /** the match whose result has been recorded (each victory is counted once) */
+  private resultNoted: GameState | null = null;
   private trialCache = new Map<string, TrialReport>();
 
   private scene: SceneManager | null = null;
@@ -140,7 +141,7 @@ export class GameController {
     const lang = loadLanguage();
     if (lang) applyLanguage(lang);
     // Created after the language is known: unit and design names are in the game language
-    this.state = newMatchState();
+    this.state = this.freshState();
     this.settings = loadSettings() ?? { ...DEFAULT_SETTINGS };
     this.director = new AIDirector(this.settings, {
       chat: m => this.pushChat(m),
@@ -197,10 +198,7 @@ export class GameController {
       /* ignore */
     }
     if (!this.started) {
-      this.state = newMatchState();
-      this.attachSound();
-      this.director.resetMatch();
-      this.scene?.reset();
+      this.resetState();
       this.chat = [];
       this.greet();
     }
@@ -254,6 +252,7 @@ export class GameController {
         this.updateTrial();
         remaining -= step;
       }
+      this.noteResult();
     }
     this.scene?.render(this.state, dt);
 
@@ -270,8 +269,51 @@ export class GameController {
     }
   };
 
+  /**
+   * A new match on the selected level. The human plays against the level's enemy with its edge;
+   * AI vs AI uses the level's map with equal rules for both commanders.
+   */
+  private freshState(mode: GameMode = this.mode): GameState {
+    return new GameState({ level: levelConfig(this.selectedLevel), fair: mode === 'spectator' });
+  }
+
+  /** Replaces the waiting match (start screen) and resets the agents and the scene for it. */
+  private resetState(mode: GameMode = this.mode) {
+    this.state = this.freshState(mode);
+    this.attachSound();
+    this.director.resetMatch();
+    this.scene?.reset();
+  }
+
+  /** Picks a level on the start screen (only open ones); the waiting match shows its map behind the menu. */
+  selectLevel(n: number) {
+    if (n < 1 || n > this.campaign.unlocked || n === this.selectedLevel) return;
+    this.selectedLevel = n;
+    if (!this.started) this.resetState();
+    this.bump();
+  }
+
+  /** After a victory: on to the next level. */
+  nextLevel() {
+    const current = this.state.level?.n ?? this.selectedLevel;
+    this.selectedLevel = Math.min(this.campaign.unlocked, current + 1);
+    this.restart('human');
+  }
+
+  /** Records a won campaign match once: the next level opens and the best time is kept. */
+  private noteResult() {
+    const s = this.state;
+    if (!s.gameOver || this.resultNoted === s) return;
+    this.resultNoted = s;
+    if (this.mode !== 'human' || !s.level || s.gameOver !== 'player_won') return;
+    this.campaign = recordVictory(this.campaign, s.level.n, s.gameTime);
+    saveCampaign(this.campaign);
+  }
+
   /** 'human' — the player commands; 'spectator' — AI vs AI, two LLM commanders, the human only watches. */
   start(mode: GameMode = 'human') {
+    // the waiting match was built for the human; AI vs AI needs the same map without the enemy's edge
+    if (mode !== this.mode) this.resetState(mode);
     this.setMode(mode);
     this.started = true;
     this.state.isPaused = false;
@@ -323,7 +365,7 @@ export class GameController {
   }
 
   restart(mode: GameMode = this.mode) {
-    this.state = newMatchState();
+    this.state = this.freshState(mode);
     this.attachSound();
     this.director.resetMatch();
     this.setMode(mode);
@@ -349,6 +391,7 @@ export class GameController {
       this.director.update(this.state, dt);
       this.updateTrial();
     }
+    this.noteResult();
     this.scene?.render(this.state, dt);
     this.bump();
   }

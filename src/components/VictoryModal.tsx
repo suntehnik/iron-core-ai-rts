@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { Home, RotateCcw, Skull, Trophy } from 'lucide-react';
+import { ArrowRight, Home, RotateCcw, Skull, Trophy } from 'lucide-react';
 import { commanderName } from '../config/commanders';
 import { TEAM_COLORS } from '../config/balance';
 import { GameController } from '../game/GameController';
@@ -8,6 +8,8 @@ import { Team } from '../types/game';
 import { CommanderPortrait } from './Portraits';
 import { fmtCoins, formatTime } from './ui';
 import { t } from '../i18n';
+import { levelConfig } from '../config/levels';
+import { levelName } from '../game/levelText';
 
 export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const s = ctrl.state;
@@ -38,6 +40,11 @@ export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
         <p className="text-sm text-slate-300 mt-1">
           {won ? t('victory.wonText') : t('victory.lostText')}
         </p>
+        {s.level && (
+          <p className={`text-sm font-semibold mt-1 ${won ? 'text-amber-200' : 'text-slate-200'}`}>
+            {t(won ? 'victory.levelCleared' : 'victory.levelFailed', { n: s.level.n, name: levelName(s.level) })}
+          </p>
+        )}
         <div className="grid grid-cols-3 gap-2 mt-4 text-xs">
           <Stat label={t('stat.matchTime')} value={formatTime(s.gameTime)} />
           <Stat label={t('stat.metal')} value={Math.round(totals.metalMined + totals.scrapReclaimed)} />
@@ -49,7 +56,20 @@ export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
           <Stat label={t('stat.coins')} value={fmtCoins(b.spentThisMatch)} />
           <Stat label={t('stat.tokens')} value={`${b.services.production.tokensIn + b.services.tactical.tokensIn}/${b.services.production.tokensOut + b.services.tactical.tokensOut}`} />
         </div>
-        <Buttons ctrl={ctrl} again={t('victory.next')} />
+        {s.level ? (
+          won ? (
+            <Buttons
+              ctrl={ctrl}
+              again={t('victory.nextLevel', { n: s.level.n + 1, name: levelName(levelConfig(s.level.n + 1)) })}
+              icon={<ArrowRight className="w-5 h-5" />}
+              onAgain={() => ctrl.nextLevel()}
+            />
+          ) : (
+            <Buttons ctrl={ctrl} again={t('victory.retryLevel')} />
+          )
+        ) : (
+          <Buttons ctrl={ctrl} again={t('victory.next')} />
+        )}
       </div>
     </div>
   );
@@ -108,14 +128,14 @@ const Row: React.FC<{ label: string; v: (team: Team) => React.ReactNode }> = ({ 
   </tr>
 );
 
-const Buttons: React.FC<{ ctrl: GameController; again: string }> = ({ ctrl, again }) => (
+const Buttons: React.FC<{ ctrl: GameController; again: string; icon?: React.ReactNode; onAgain?: () => void }> = ({ ctrl, again, icon, onAgain }) => (
   <div className="mt-5 flex gap-2">
     <button
       type="button"
-      onClick={() => ctrl.restart()}
+      onClick={() => (onAgain ? onAgain() : ctrl.restart())}
       className="flex-1 py-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-heading font-bold flex items-center justify-center gap-2"
     >
-      <RotateCcw className="w-5 h-5" /> {again}
+      {icon ?? <RotateCcw className="w-5 h-5" />} {again}
     </button>
     <button
       type="button"

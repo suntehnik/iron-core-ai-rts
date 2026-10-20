@@ -229,7 +229,7 @@ export class AIDirector {
     const harvesters = state.harvesterCount(team) + state.harvestersInProduction(team);
     // Economy first: grow mining over time so production does not starve harvesters
     // Harvesters take factory time from the army, so grow mining gradually and not while defenceless
-    const army = state.combatCount(team);
+    const army = state.fieldArmyCount(team);
     const targetHarvesters = Math.min(6, 2 + Math.floor(state.gameTime / 75));
     const canSpareFactory = army >= 3 || harvesters < 2 || !state.buildings.some(b => b.team === team && b.type === 'factory');
     if (harvesters < targetHarvesters && canSpareFactory && (econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL || harvesters === 0)) {
@@ -621,6 +621,8 @@ export class AIDirector {
       this.busy[key] = false;
       return;
     }
+    // campaign levels limit the enemy's chassis: a design outside them is refitted or dropped
+    if (design) design = state.fitDesign(team, design);
     if (design && designSignature(design) !== designSignature(current().design)) state.setDesign(team, design);
     if (plan) state.setPlan(team, plan);
     for (const a of actions) state.applyProductionAction(team, a);

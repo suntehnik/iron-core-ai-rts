@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Box, Clock, Cog, Coins, Cpu, Eye, Home, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
+import { Box, Clock, Cog, Coins, Cpu, Eye, Flag, Home, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
 import { GameController, TIME_SCALES } from '../game/GameController';
 import { CoinPanel } from './CoinPanel';
 import { IconButton, cx, fmtCoins, formatTime } from './ui';
 import { t } from '../i18n';
+import { levelName } from '../game/levelText';
 
 const Resource: React.FC<{ icon: React.ReactNode; value: React.ReactNode; title: string; warn?: boolean; sub?: React.ReactNode }> = ({
   icon,
@@ -54,6 +55,17 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
           <Clock className="w-3.5 h-3.5" />
           <span className="font-heading font-bold tabular-nums text-sm">{formatTime(s.gameTime)}</span>
         </div>
+        {s.level && (
+          <div
+            className="flex items-center gap-1.5 px-2.5 text-amber-200"
+            title={ctrl.mode === 'spectator' ? t('campaign.map', { name: levelName(s.level) }) : `${t('campaign.level', { n: s.level.n })} · ${levelName(s.level)}`}
+          >
+            <Flag className="w-3.5 h-3.5" />
+            <span className="font-heading font-bold text-sm whitespace-nowrap">
+              {ctrl.mode === 'spectator' ? levelName(s.level) : t('campaign.levelShort', { n: s.level.n })}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Base health */}

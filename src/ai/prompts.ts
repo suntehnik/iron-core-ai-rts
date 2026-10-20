@@ -1,6 +1,7 @@
 import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
 import { GAME_BALANCE } from '../config/balance';
 import { COMMANDERS } from '../config/commanders';
+import { DOCTRINE_TEXT } from '../config/levels';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { TacticalPlan, Team } from '../types/game';
@@ -75,6 +76,16 @@ function intelLine(state: GameState, team: Team): string {
     .slice(0, 4)
     .map(s => `${s.design.name} ×${s.count}, ${s.inSight ? 'в поле зрения' : `видели ${s.lastSeenSec} с назад`} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
     .join('; ');
+}
+
+/** Campaign level rules for an AI commander: the doctrine and the chassis it may use. */
+function levelLines(state: GameState, team: Team): string[] {
+  const out: string[] = [];
+  const doctrine = state.doctrine[team];
+  if (doctrine) out.push(`ДОКТРИНА ШТАБА: ${DOCTRINE_TEXT[doctrine].ru}`);
+  const chassis = state.allowedChassisOf(team);
+  if (chassis) out.push(`ДОСТУПНЫЕ ШАССИ: только ${chassis.join(', ')}`);
+  return out;
 }
 
 /** The enemy army as far as our machines and buildings see it (fog of war, forest blocks sight). */
@@ -247,6 +258,7 @@ export function commanderUserPrompt(state: GameState, team: Team, instructions?:
     `АРМИЯ ПРОТИВНИКА: ${enemyArmyLine(state, team)}`,
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
     `СОБЫТИЯ: ${eventsLine(state, team)}`,
+    ...levelLines(state, team),
     `КАТАЛОГ:\n${compactCatalog()}`,
     ...instructionsReminder(instructions),
   ].join('\n');

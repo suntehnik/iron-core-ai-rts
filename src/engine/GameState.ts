@@ -25,7 +25,8 @@ import {
   Vector2D,
   VisualEffect,
 } from '../types/game';
-import { RobotDesign } from '../types/robot';
+import { ChassisType, RobotDesign } from '../types/robot';
+import { Doctrine, EnemyModifiers, LevelConfig } from '../config/levels';
 import { RobotBuilder, designSignature } from './RobotBuilder';
 import { KeepOut, MapSpec, generateTerrain } from './terrain/MapGenerator';
 import { Pathfinder } from './terrain/Pathfinding';
@@ -82,6 +83,14 @@ export class GameState {
   private pathBudget = 0;
   /** Fog of war: which enemy units each side sees now. */
   public readonly vision: Vision;
+  /** Campaign level of this match (map and the enemy's edge); null for a plain map or the arena. */
+  public readonly level: LevelConfig | null;
+  /** Doctrine of a side's AI commander set by the level; null — no doctrine line, balanced play. */
+  public doctrine: Record<Team, Doctrine | null> = { player: null, enemy: null };
+  /** Multiplier on the metal a side's harvesters bring home (the enemy's economic edge on a level). */
+  private incomeMul: Record<Team, number> = { player: 1, enemy: 1 };
+  /** Chassis a side's designs may use (campaign levels restrict the enemy); null — any. */
+  private allowedChassis: Record<Team, ChassisType[] | null> = { player: null, enemy: null };
   public effects: VisualEffect[] = [];
   public events: GameEvent[] = [];
 
@@ -114,8 +123,13 @@ export class GameState {
   /** Arena mode: an empty field without bases — used by the design test bench (DesignTrial). */
   public readonly arena: boolean;
 
-  constructor(options: { arena?: boolean; map?: MapSpec } = {}) {
+  /**
+   * `level` sets the map and gives the enemy the level's edge; with `fair` (AI vs AI) only the map is
+   * used and both sides play by the same rules. `map` alone is a plain map without a level.
+   */
+  constructor(options: { arena?: boolean; map?: MapSpec; level?: LevelConfig; fair?: boolean } = {}) {
     this.arena = !!options.arena;
+    this.level = options.arena ? null : (options.level ?? null);
     this.teams = {
       player: this.createTeam('player', initialDesign('player')),
       enemy: this.createTeam('enemy', initialDesign('enemy')),
@@ -124,7 +138,58 @@ export class GameState {
     this.pathfinder = new Pathfinder(this.terrain);
     // the design-trial arena is an open test range: both squads see each other
     this.vision = new Vision(!this.arena);
-    if (!this.arena) this.initMap(options.map);
+    if (!this.arena) this.initMap(this.level?.map ?? options.map);
+    if (this.level && !options.fair) {
+      this.applyEnemyModifiers(this.level.enemy);
+      this.doctrine.enemy = this.level.doctrine;
+      // a defensive general holds its base from the first second, before its first decision
+      if (this.level.doctrine === 'defensive') this.teams.enemy.plan = { ...this.teams.enemy.plan, stance: 'defend_base' };
+    }
+  }
+
+  /** The enemy's edge on a campaign level: economy, chassis, extra factory and harvesters, an army waiting, a tougher HQ. */
+  private applyEnemyModifiers(m: EnemyModifiers) {
+    const team: Team = 'enemy';
+    this.incomeMul[team] = m.incomeMul;
+    this.allowedChassis[team] = [...m.chassis];
+    const hq = this.getHQ(team);
+    if (m.extraFactory) this.addBuilding(team, 'factory', buildingSlot(team, 'factory', 1), true);
+    if (hq && m.hqHpMul) {
+      hq.maxHp = Math.round(hq.maxHp * m.hqHpMul);
+      hq.hp = hq.maxHp;
+    }
+    if (hq) {
+      for (let i = 0; i < (m.extraHarvesters ?? 0); i++) this.spawnHarvester(team, { x: hq.pos.x - 4, y: hq.pos.y + (i % 2 ? 7 : -7) });
+      const n = m.garrison ?? 0;
+      for (let i = 0; i < n; i++) {
+        const lane = n > 1 ? (i / (n - 1)) * 2 - 1 : 0;
+        this.spawnCombatBot(team, { x: hq.pos.x - 9, y: hq.pos.y + lane * 8 }, this.teams[team].design, 0);
+        const g = this.units[this.units.length - 1] as CombatUnit;
+        g.garrison = true;
+        g.lane = lane;
+        this.teams[team].economy.totals.unitsBuilt--; // a garrison, not production
+      }
+    }
+    this.recomputePower();
+  }
+
+  /** Chassis this side may use, or null when any is allowed. */
+  public allowedChassisOf(team: Team): ChassisType[] | null {
+    return this.allowedChassis[team];
+  }
+
+  /**
+   * The design within the side's allowed chassis: unchanged when allowed, otherwise moved to the
+   * heaviest allowed chassis and repaired; null when it cannot be made to fit (keep the current one).
+   */
+  public fitDesign(team: Team, design: RobotDesign): RobotDesign | null {
+    const allowed = this.allowedChassis[team];
+    if (!allowed || allowed.includes(design.chassisId)) return design;
+    const order: ChassisType[] = ['heavy_quad', 'medium_tracked', 'light_biped'];
+    const chassisId = order.find(c => allowed.includes(c)) ?? allowed[0];
+    const swapped: RobotDesign = { ...design, chassisId };
+    const fitted = RobotBuilder.calculateStats(swapped).isValid ? swapped : RobotBuilder.repairDesign(swapped).design;
+    return allowed.includes(fitted.chassisId) && RobotBuilder.calculateStats(fitted).isValid ? fitted : null;
   }
 
   private createTeam(team: Team, design: RobotDesign): TeamState {
@@ -215,11 +280,11 @@ export class GameState {
       }
       for (let i = 0; i < MAX_SLOTS.power_plant; i++) keepOut.push({ pos: buildingSlot(team, 'power_plant', i), radius: 5.5 });
       const rally = this.rallyPoint(team);
-      keepOut.push({ pos: rally, radius: 9 });
+      keepOut.push({ pos: rally, radius: 6, soft: true });
       connect.push(rally);
     }
     for (const p of this.resourcePatches) {
-      keepOut.push({ pos: p.pos, radius: p.radius + 4.5 });
+      keepOut.push({ pos: p.pos, radius: p.radius + 4.5, soft: true });
       connect.push(p.pos);
     }
     this.setTerrain(generateTerrain(map, GAME_BALANCE.MAP_WIDTH, GAME_BALANCE.MAP_HEIGHT, keepOut, connect));
@@ -570,6 +635,13 @@ export class GameState {
     return n;
   }
 
+  /** Combat machines the side can send into the field: the campaign garrison guards its HQ and does not count. */
+  public fieldArmyCount(team: Team): number {
+    let n = 0;
+    for (const u of this.units) if (u.team === team && u.kind === 'combat' && !u.garrison) n++;
+    return n;
+  }
+
   /** Factory status for the HUD */
   public factoryStatus(b: Building): string {
     if (b.built < 1) return tr('factory.building', { pct: Math.round(b.built * 100) });
@@ -698,10 +770,11 @@ export class GameState {
         u.state = 'delivering';
         if (dist(u.pos, hq.pos) < hq.radius + u.radius + 0.4) {
           if (u.carrying > 0) {
-            econ.metal += u.carrying;
-            if (u.targetType === 'scrap') econ.totals.scrapReclaimed += u.carrying;
-            else econ.totals.metalMined += u.carrying;
-            this.minedWindow[u.team].push({ t: this.gameTime, amount: u.carrying });
+            const income = u.carrying * this.incomeMul[u.team];
+            econ.metal += income;
+            if (u.targetType === 'scrap') econ.totals.scrapReclaimed += income;
+            else econ.totals.metalMined += income;
+            this.minedWindow[u.team].push({ t: this.gameTime, amount: income });
           }
           u.carrying = 0;
           u.targetId = null;
@@ -978,7 +1051,7 @@ export class GameState {
       const rally = this.rallyPoint(team);
       const waiting = this.units.filter(
         (u): u is CombatUnit =>
-          u.kind === 'combat' && u.team === team && !u.committed && u.state !== 'dead' && u.state !== 'retreating' && u.state !== 'repairing',
+          u.kind === 'combat' && u.team === team && !u.committed && !u.garrison && u.state !== 'dead' && u.state !== 'retreating' && u.state !== 'repairing',
       );
       if (!waiting.length) continue;
       const gathered = waiting.filter(u => dist(u.pos, rally) < 16);
@@ -1004,6 +1077,8 @@ export class GameState {
     const laneY = Math.max(6, Math.min(H - 6, H / 2 + u.lane * 17));
     const center = GAME_BALANCE.FRONTLINE_CENTER_X;
     const enemyTeam = opposite(u.team);
+    // the garrison stands guard in front of its HQ whatever the plan says
+    if (u.garrison && ownHQ) return { x: ownHQ.pos.x + dir * 9, y: ownHQ.pos.y + u.lane * 8 };
     switch (stance) {
       case 'hold_center':
         return { x: center - dir * 6, y: laneY };
@@ -1500,7 +1575,8 @@ export class GameState {
 
   public armySummary(team: Team): ArmySummary {
     const units = this.units.filter(u => u.team === team && u.state !== 'dead');
-    const combat = units.filter((u): u is CombatUnit => u.kind === 'combat');
+    // the campaign garrison never leaves its HQ: it is not part of the army the commander plans with
+    const combat = units.filter((u): u is CombatUnit => u.kind === 'combat' && !u.garrison);
     const byRole: Record<string, number> = {};
     const designs = new Map<string, number>();
     let hpSum = 0;
@@ -1513,7 +1589,7 @@ export class GameState {
     }
     return {
       combatUnits: combat.length,
-      harvesters: units.length - combat.length,
+      harvesters: units.filter(u => u.kind === 'harvester').length,
       avgHpPct: combat.length ? Math.round((hpSum / combat.length) * 100) : 0,
       byRole,
       frontX: frontX === null ? null : Math.round(frontX),
