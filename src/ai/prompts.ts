@@ -4,7 +4,7 @@ import { COMMANDERS } from '../config/commanders';
 import { DOCTRINE_TEXT } from '../config/levels';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
-import { PadBuildingType, TacticalPlan, Team } from '../types/game';
+import { PadBuildingType, PendingOrder, TacticalPlan, Team } from '../types/game';
 import { ProductionProposal } from '../types/agent';
 import { RobotDesign } from '../types/robot';
 
@@ -136,10 +136,23 @@ function intelLine(state: GameState, team: Team): string {
     .join('; ');
 }
 
-/** Orders the game refused in the last minute: the model sees the reason and stops repeating what it cannot pay for. */
-function refusalLines(state: GameState, team: Team): string[] {
+/** A waiting order as the models read it: action id, count and place, e.g. `harvester×2`, `turret (north)`. */
+export function queuedLabel(o: PendingOrder): string {
+  return `${o.what}${o.count > 1 ? `×${o.count}` : ''}${o.where ? ` (${o.where})` : ''}`;
+}
+
+/**
+ * What the side can pay for, the orders waiting in its queue and those the game refused in the last
+ * minute: the model sees the reasons and stops repeating what it cannot pay for.
+ */
+function orderLines(state: GameState, team: Team): string[] {
   const now = state.affordableNow(team);
-  const out = [`ПО КАРМАНУ СЕЙЧАС: ${now.length ? now.join(', ') : 'ничего — копи металл, новые заказы будут отклонены'}`];
+  const queue = state.pendingOrders[team];
+  const full = queue.length >= GAME_BALANCE.ORDER_QUEUE_MAX;
+  const out = [`ПО КАРМАНУ СЕЙЧАС: ${now.length ? now.join(', ') : full ? 'ничего, а очередь полна — новые заказы будут отклонены' : 'ничего — копи металл, новый заказ подождёт в очереди'}`];
+  if (queue.length) {
+    out.push(`ОЧЕРЕДЬ ЗАКАЗОВ (выполнятся сами, когда хватит ресурсов, — не повторяй): ${queue.map(o => `${queuedLabel(o)} — ${o.why}, ещё ${state.orderTimeLeft(o)} с`).join('; ')}`);
+  }
   const list = state.recentRefusals(team);
   if (list.length) out.push(`ИГРА ОТКАЗАЛА ЗА МИНУТУ (не повторяй, пока причина не исчезнет): ${list.map(r => `${r.what} — ${r.why} (${r.ago} с назад)`).join('; ')}`);
   return out;
@@ -218,7 +231,7 @@ export function engineerUserPrompt(state: GameState, order: string, pending: Pro
   lines.push(`НАША АРМИЯ: ${armyLine(state, 'player')}`);
   lines.push(`РАЗВЕДКА: ${intelLine(state, 'player')}`);
   lines.push(`СОБЫТИЯ: ${eventsLine(state, 'player')}`);
-  lines.push(...refusalLines(state, 'player'));
+  lines.push(...orderLines(state, 'player'));
   lines.push(`КАТАЛОГ:\n${compactCatalog()}`);
   return lines.join('\n');
 }
@@ -337,7 +350,7 @@ export function commanderUserPrompt(state: GameState, team: Team, instructions?:
     `АРМИЯ ПРОТИВНИКА: ${enemyArmyLine(state, team)}`,
     `ШТАБЫ: твой ${state.baseHpPct(team)}%, противника ${state.baseHpPct(foe)}%`,
     `СОБЫТИЯ: ${eventsLine(state, team)}`,
-    ...refusalLines(state, team),
+    ...orderLines(state, team),
     ...levelLines(state, team),
     `КАТАЛОГ:\n${compactCatalog()}`,
     ...instructionsReminder(instructions),

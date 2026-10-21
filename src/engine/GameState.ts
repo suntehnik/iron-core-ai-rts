@@ -22,9 +22,11 @@ import {
   GameEventType,
   GameUnit,
   HarvesterUnit,
+  OrderTarget,
   Pad,
   PadBuildingType,
   PadWhere,
+  PendingOrder,
   ProductionAction,
   Projectile,
   ResourcePatch,
@@ -83,6 +85,34 @@ export function basicDesign(design: RobotDesign): RobotDesign {
 
 function isPadType(type: BuildingType): type is PadBuildingType {
   return type in PAD_BUILDINGS;
+}
+
+/** Whether an order can go now; `short` marks a refusal for resources alone. */
+export interface OrderCheck {
+  ok: boolean;
+  reason?: string;
+  short?: boolean;
+}
+
+type NewOrder = Omit<PendingOrder, 'id' | 'queuedAt' | 'why'>;
+
+/** Harvesters one order may ask for. */
+const harvesterCount = (n: number) => Math.max(1, Math.min(4, Math.round(n || 1)));
+
+/** The economic order behind an action: a harvester or a building; null for settings (batch size, reserves). */
+function orderOf(action: ProductionAction): NewOrder | null {
+  switch (action.type) {
+    case 'build_harvester':
+      return { what: 'harvester', count: harvesterCount(action.count) };
+    case 'build_power_plant':
+      return { what: 'power_plant', workers: action.workers, count: 1 };
+    case 'build_factory':
+      return { what: 'factory', workers: action.workers, count: 1 };
+    case 'build':
+      return { what: action.building, where: action.where, workers: action.workers, count: 1 };
+    default:
+      return null;
+  }
 }
 
 /** Stable 0..0.4 s offset per unit so route re-checks of a whole wave do not land on one tick. */
@@ -385,7 +415,8 @@ export class GameState {
     return this.buildings.filter(b => b.team === team && b.type === type).length;
   }
 
-  public canBuild(team: Team, type: 'factory' | 'power_plant'): { ok: boolean; reason?: string } {
+  /** Whether the side can order the building now; `short` marks a refusal for resources alone (an agent's order then waits). */
+  public canBuild(team: Team, type: 'factory' | 'power_plant'): OrderCheck {
     const econ = this.teams[team].economy;
     const max = type === 'factory' ? GAME_BALANCE.MAX_FACTORIES : GAME_BALANCE.MAX_POWER_PLANTS;
     if (this.buildingCount(team, type) >= Math.min(max, MAX_SLOTS[type])) {
@@ -393,8 +424,8 @@ export class GameState {
     }
     const metal = type === 'factory' ? GAME_BALANCE.FACTORY_COST_METAL : GAME_BALANCE.POWER_PLANT_COST_METAL;
     const comps = type === 'factory' ? GAME_BALANCE.FACTORY_COST_COMPONENTS : 0;
-    if (econ.metal < metal) return { ok: false, reason: tr('build.needMetal', { n: metal }) };
-    if (econ.components < comps) return { ok: false, reason: tr('build.needComponents', { n: comps }) };
+    if (econ.metal < metal) return { ok: false, reason: tr('build.needMetal', { n: metal }), short: true };
+    if (econ.components < comps) return { ok: false, reason: tr('build.needComponents', { n: comps }), short: true };
     return { ok: true };
   }
 
@@ -454,15 +485,15 @@ export class GameState {
     });
   }
 
-  public canBuildOnPad(team: Team, type: PadBuildingType, where?: PadWhere): { ok: boolean; reason?: string } {
+  public canBuildOnPad(team: Team, type: PadBuildingType, where?: PadWhere): OrderCheck {
     const spec = PAD_BUILDINGS[type];
     if (!this.isUnlocked(type)) return { ok: false, reason: tr('pad.locked', { n: spec.unlockLevel }) };
     if (this.buildingCount(team, type) >= spec.maxCount) return { ok: false, reason: tr('pad.limit', { n: spec.maxCount }) };
     if (!this.freePads(team, type, where).length) return { ok: false, reason: tr('pad.noPad') };
     const econ = this.teams[team].economy;
-    if (econ.metal < spec.metal) return { ok: false, reason: tr('build.needMetal', { n: spec.metal }) };
-    if (econ.components < spec.components) return { ok: false, reason: tr('build.needComponents', { n: spec.components }) };
-    if (this.crystals && econ.crystals < (spec.crystals ?? 0)) return { ok: false, reason: tr('build.needCrystals', { n: spec.crystals ?? 0 }) };
+    if (econ.metal < spec.metal) return { ok: false, reason: tr('build.needMetal', { n: spec.metal }), short: true };
+    if (econ.components < spec.components) return { ok: false, reason: tr('build.needComponents', { n: spec.components }), short: true };
+    if (this.crystals && econ.crystals < (spec.crystals ?? 0)) return { ok: false, reason: tr('build.needCrystals', { n: spec.crystals ?? 0 }), short: true };
     return { ok: true };
   }
 
@@ -558,26 +589,30 @@ export class GameState {
     return n;
   }
 
+  /** Whether one more harvester can be ordered now; `short` when only metal is missing. */
+  public canOrderHarvester(team: Team): OrderCheck {
+    const total = this.harvesterCount(team) + this.harvestersInProduction(team);
+    if (total >= GAME_BALANCE.MAX_HARVESTERS) return { ok: false, reason: tr('harv.limit', { n: GAME_BALANCE.MAX_HARVESTERS }) };
+    if (!this.getHQ(team) && !this.buildings.some(b => b.team === team && b.type === 'factory')) return { ok: false, reason: tr('harv.nowhere') };
+    // No miners at all (none alive, none on order): the HQ issues an emergency harvester for free,
+    // otherwise "no metal → no harvester → no metal" would lock the economy forever.
+    if (total > 0 && this.teams[team].economy.metal < GAME_BALANCE.HARVESTER_COST_METAL) {
+      return { ok: false, reason: tr('build.needMetal', { n: GAME_BALANCE.HARVESTER_COST_METAL }), short: true };
+    }
+    return { ok: true };
+  }
+
   /**
    * Harvesters are built at a factory: the metal is paid when ordered, the machine rolls out
    * after HARVESTER_BUILD_SEC of factory time — time the combat batch does not get.
    */
   public orderHarvester(team: Team): { ok: boolean; text: string } {
+    const check = this.canOrderHarvester(team);
+    if (!check.ok) return { ok: false, text: check.reason || tr('build.impossible') };
     const t = this.teams[team];
     const econ = t.economy;
-    if (this.harvesterCount(team) + this.harvestersInProduction(team) >= GAME_BALANCE.MAX_HARVESTERS) {
-      return { ok: false, text: tr('harv.limit', { n: GAME_BALANCE.MAX_HARVESTERS }) };
-    }
     const hasFactory = this.buildings.some(b => b.team === team && b.type === 'factory');
-    if (!hasFactory && !this.getHQ(team)) {
-      return { ok: false, text: tr('harv.nowhere') };
-    }
-    // No miners at all (none alive, none on order): the HQ issues an emergency harvester for free,
-    // otherwise "no metal → no harvester → no metal" would lock the economy forever.
     const emergency = this.harvesterCount(team) + this.harvestersInProduction(team) === 0;
-    if (!emergency && econ.metal < GAME_BALANCE.HARVESTER_COST_METAL) {
-      return { ok: false, text: tr('build.needMetal', { n: GAME_BALANCE.HARVESTER_COST_METAL }) };
-    }
     if (!emergency) econ.metal -= GAME_BALANCE.HARVESTER_COST_METAL;
     t.harvesterQueue++;
     if (emergency) this.pushEvent(team, 'info', tr('harv.emergencyEvent'), false);
@@ -610,28 +645,12 @@ export class GameState {
     const econ = this.teams[team].economy;
     switch (action.type) {
       case 'build_harvester': {
-        const n = Math.max(1, Math.min(4, Math.round(action.count || 1)));
-        let ordered = 0;
-        let lastFail = '';
-        for (let i = 0; i < n; i++) {
-          const r = this.orderHarvester(team);
-          if (r.ok) ordered++;
-          else {
-            lastFail = r.text;
-            break;
-          }
-        }
+        const { ordered, fail } = this.orderHarvesters(team, harvesterCount(action.count));
         if (!ordered) {
-          this.noteRefusal(team, 'harvester', lastFail); // action ids, not UI text: the models read them
-          return tr('act.harvNotOrdered', { why: lastFail });
+          this.noteRefusal(team, 'harvester', fail); // action ids, not UI text: the models read them
+          return tr('act.harvNotOrdered', { why: fail });
         }
-        const factories = this.buildings.filter(b => b.team === team && b.type === 'factory');
-        const where = !factories.length
-          ? tr('act.harvByHq')
-          : factories.every(b => b.paused)
-            ? tr('act.harvWaitPaused')
-            : tr('act.harvByFactory', { n: ordered * GAME_BALANCE.HARVESTER_BUILD_SEC });
-        return `${tr('act.harvOrdered', { n: ordered, where })}${lastFail ? ` (${lastFail})` : ''}`;
+        return `${this.harvestersOrderedText(team, ordered)}${fail ? ` (${fail})` : ''}`;
       }
       case 'set_production': {
         const n = this.setFactoryPaused(team, null, action.paused);
@@ -663,6 +682,173 @@ export class GameState {
         return tr('act.crystalReserve', { n: econ.crystalReserve });
       }
     }
+  }
+
+  /** Orders up to n harvesters, stopping at the first refusal (its reason in `fail`). */
+  private orderHarvesters(team: Team, n: number): { ordered: number; fail: string } {
+    let ordered = 0;
+    for (let i = 0; i < n; i++) {
+      const r = this.orderHarvester(team);
+      if (!r.ok) return { ordered, fail: r.text };
+      ordered++;
+    }
+    return { ordered, fail: '' };
+  }
+
+  private harvestersOrderedText(team: Team, ordered: number): string {
+    const factories = this.buildings.filter(b => b.team === team && b.type === 'factory');
+    const where = !factories.length
+      ? tr('act.harvByHq')
+      : factories.every(b => b.paused)
+        ? tr('act.harvWaitPaused')
+        : tr('act.harvByFactory', { n: ordered * GAME_BALANCE.HARVESTER_BUILD_SEC });
+    return tr('act.harvOrdered', { n: ordered, where });
+  }
+
+  // ───────────────────────────── Agents' order queue ─────────────────────────────
+
+  /** Agents' orders waiting for resources, oldest first (the player's show in the production panel). */
+  public pendingOrders: Record<Team, PendingOrder[]> = { player: [], enemy: [] };
+
+  /**
+   * An agent's order (the engineer's confirmed proposal, an LLM commander's decision). Like
+   * applyProductionAction, except that a building or harvester the side cannot pay for yet waits
+   * in the team's queue (up to ORDER_QUEUE_MAX orders, ORDER_QUEUE_TTL_SEC each) and runs by itself
+   * once resources allow. Orders refused for any other reason (a limit, no free pad) are refused now.
+   */
+  public applyAgentAction(team: Team, action: ProductionAction): string {
+    const order = orderOf(action);
+    if (!order) return this.applyProductionAction(team, action);
+    // the same order again replaces the waiting one, so a repeated order is never doubled
+    const same = this.pendingOrders[team].find(o => o.what === order.what && o.where === order.where);
+    const check = this.checkOrder(team, order.what, order.where);
+    if (check.short) return this.enqueue(team, order, check.reason || tr('build.impossible'), same);
+    if (same) this.pendingOrders[team] = this.pendingOrders[team].filter(o => o !== same);
+    if (order.what !== 'harvester' || !check.ok) return this.applyProductionAction(team, action);
+    // harvesters: as many as the metal pays for now, the rest wait
+    const { ordered } = this.orderHarvesters(team, order.count);
+    const text = this.harvestersOrderedText(team, ordered);
+    if (ordered === order.count) return text;
+    const rest = this.canOrderHarvester(team);
+    if (!rest.short) return `${text} (${rest.reason})`;
+    return `${text}. ${this.enqueue(team, { ...order, count: order.count - ordered }, rest.reason || '')}`;
+  }
+
+  private enqueue(team: Team, order: NewOrder, why: string, same?: PendingOrder): string {
+    const name = this.orderName(order.what);
+    if (same) {
+      Object.assign(same, order, { queuedAt: this.gameTime, why });
+      return tr('queue.again', { name, why });
+    }
+    const queue = this.pendingOrders[team];
+    if (queue.length >= GAME_BALANCE.ORDER_QUEUE_MAX) {
+      const full = tr('queue.full', { n: GAME_BALANCE.ORDER_QUEUE_MAX });
+      this.noteRefusal(team, order.what, full);
+      return tr('queue.notQueued', { name, why, full });
+    }
+    queue.push({ ...order, id: `order_${team}_${this.nextId++}`, queuedAt: this.gameTime, why });
+    return tr('queue.added', { name, why, n: GAME_BALANCE.ORDER_QUEUE_TTL_SEC });
+  }
+
+  private checkOrder(team: Team, what: OrderTarget, where?: PadWhere): OrderCheck {
+    if (what === 'harvester') return this.canOrderHarvester(team);
+    if (what === 'factory' || what === 'power_plant') return this.canBuild(team, what);
+    return this.canBuildOnPad(team, what, where);
+  }
+
+  /** What one item of the order costs now (an emergency harvester is free). */
+  private orderCost(team: Team, what: OrderTarget): { metal: number; components: number; crystals: number } {
+    if (what === 'harvester') {
+      const free = this.harvesterCount(team) + this.harvestersInProduction(team) === 0;
+      return { metal: free ? 0 : GAME_BALANCE.HARVESTER_COST_METAL, components: 0, crystals: 0 };
+    }
+    if (what === 'factory') return { metal: GAME_BALANCE.FACTORY_COST_METAL, components: GAME_BALANCE.FACTORY_COST_COMPONENTS, crystals: 0 };
+    if (what === 'power_plant') return { metal: GAME_BALANCE.POWER_PLANT_COST_METAL, components: 0, crystals: 0 };
+    const spec = PAD_BUILDINGS[what];
+    return { metal: spec.metal, components: spec.components, crystals: this.crystals ? (spec.crystals ?? 0) : 0 };
+  }
+
+  /**
+   * Combat production keeps its money: a waiting order is paid only if every resource it spends
+   * still covers the next combat machine afterwards. No reserve while no factory can assemble one
+   * (none built or all paused, the army at its cap, the design waiting for a laboratory).
+   */
+  private leavesNextUnit(team: Team, cost: { metal: number; components: number; crystals: number }): boolean {
+    if (this.isArmyCapped(team)) return true;
+    if (!this.buildings.some(b => b.team === team && b.type === 'factory' && b.built >= 1 && !b.paused)) return true;
+    const unit = RobotBuilder.calculateStats(this.teams[team].design);
+    if (!unit.isValid || this.lockedParts(team, unit).length) return true;
+    const e = this.teams[team].economy;
+    if (cost.metal && e.metal - cost.metal < unit.metalCost) return false;
+    if (cost.components && e.components - cost.components < unit.componentCost) return false;
+    return !(this.crystals && cost.crystals && e.crystals - cost.crystals < unit.crystalCost);
+  }
+
+  /** Runs the waiting orders that can be paid now; drops the expired ones and those that became impossible. */
+  private updatePendingOrders() {
+    for (const team of ['player', 'enemy'] as Team[]) {
+      if (this.pendingOrders[team].length) this.pendingOrders[team] = this.pendingOrders[team].filter(o => this.keepPending(team, o));
+    }
+  }
+
+  /** One waiting order: runs it when it can be paid; false once it is done or dropped. */
+  private keepPending(team: Team, o: PendingOrder): boolean {
+    const name = this.orderName(o.what);
+    const ttl = GAME_BALANCE.ORDER_QUEUE_TTL_SEC;
+    if (this.gameTime - o.queuedAt >= ttl) {
+      this.noteRefusal(team, o.what, tr('queue.expiredWhy', { n: ttl, why: o.why }));
+      this.pushEvent(team, 'info', tr('queue.expired', { name, n: ttl }), false);
+      return false;
+    }
+    const check = this.checkOrder(team, o.what, o.where);
+    if (!check.ok) {
+      if (check.short) {
+        o.why = check.reason || o.why;
+        return true;
+      }
+      this.noteRefusal(team, o.what, check.reason || tr('build.impossible'));
+      this.pushEvent(team, 'info', tr('queue.dropped', { name, why: check.reason || '' }), false);
+      return false;
+    }
+    if (!this.leavesNextUnit(team, this.orderCost(team, o.what))) {
+      o.why = tr('queue.reserve');
+      return true;
+    }
+    if (o.what === 'harvester') {
+      // one at a time, each paid only while the next combat machine stays covered
+      let ordered = 0;
+      while (o.count > 0 && this.canOrderHarvester(team).ok && this.leavesNextUnit(team, this.orderCost(team, 'harvester'))) {
+        this.orderHarvester(team);
+        o.count--;
+        ordered++;
+      }
+      this.pushEvent(team, 'info', tr('queue.harvesters', { n: ordered }), false);
+      return o.count > 0;
+    }
+    if (o.what === 'factory' || o.what === 'power_plant') this.buildStructure(team, o.what, o.workers);
+    else this.buildOnPad(team, o.what, o.where, o.workers);
+    return false;
+  }
+
+  /** Removes a waiting order: nothing was paid for it yet. */
+  public cancelPendingOrder(team: Team, id: string): { ok: boolean; text: string } {
+    const o = this.pendingOrders[team].find(x => x.id === id);
+    if (!o) return { ok: false, text: tr('queue.noOrder') };
+    this.pendingOrders[team] = this.pendingOrders[team].filter(x => x !== o);
+    return { ok: true, text: tr('queue.cancelled', { name: this.orderName(o.what) }) };
+  }
+
+  /** Seconds a waiting order has left before it is dropped. */
+  public orderTimeLeft(o: PendingOrder): number {
+    return Math.max(0, Math.ceil(GAME_BALANCE.ORDER_QUEUE_TTL_SEC - (this.gameTime - o.queuedAt)));
+  }
+
+  /** An order target in the game language. */
+  public orderName(what: OrderTarget): string {
+    if (what === 'harvester') return tr('queue.harvester');
+    if (what === 'factory') return tr('queue.factory');
+    if (what === 'power_plant') return tr('prod.plantSite');
+    return tr(`building.${what}` as MessageKey);
   }
 
   // ───────────────────────────── Design & plan ─────────────────────────────
@@ -746,6 +932,7 @@ export class GameState {
     this.updateConstruction(dt);
     this.updateFabricators(dt);
     this.updateProduction(dt);
+    this.updatePendingOrders();
     this.vision.update(this, dt);
     this.updateHarvesters(dt);
     this.updateCombatUnits(dt);

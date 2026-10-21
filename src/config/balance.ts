@@ -107,6 +107,11 @@ export const GAME_BALANCE = {
   BASE_ALERT_SEC: 4,
   BASE_THREAT_RADIUS: 30, // attackers this close to the HQ count as a raid on the base
   BASE_DEFENSE_RECALL_RADIUS: 32, // machines this close to the HQ respond (covers the rally point)
+
+  // An agent's building or harvester order the side cannot pay for yet waits in a short queue
+  // and runs once resources allow, instead of being refused (the UI buttons still refuse at once).
+  ORDER_QUEUE_MAX: 3,
+  ORDER_QUEUE_TTL_SEC: 60,
 };
 
 /** Pad buildings (stage 2 of development): what they cost, do and when the campaign opens them. */

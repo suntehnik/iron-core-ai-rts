@@ -74,6 +74,30 @@ describe('player orders the agent cannot take right now', () => {
   });
 });
 
+describe('economic orders of an LLM commander', () => {
+  it('one the side cannot pay for yet waits in the order queue instead of being refused', async () => {
+    const mock = mockLLM(() => ({ taunt: '', design: null, plan: { stance: 'advance' }, actions: [{ type: 'build', building: 'turret', where: 'base' }] }));
+    const settings = { ...(await mock.start()), enemyUsesLLM: true, autonomousTactics: false };
+    try {
+      const s = new GameState();
+      const d = director(settings);
+      s.teams.enemy.economy.metal = 0;
+      for (let i = 0; i < 40 && !d.lastCall.enemy; i++) {
+        for (let k = 0; k < 10; k++) {
+          s.gameTime += 0.1;
+          d.update(s, 0.1);
+        }
+        await vi.waitFor(() => expect(d.busy.enemy).toBe(false));
+      }
+      expect(d.lastCall.enemy?.source).toBe('llm');
+      expect(s.pendingOrders.enemy).toMatchObject([{ what: 'turret', where: 'base' }]);
+      expect(s.recentRefusals('enemy')).toEqual([]);
+    } finally {
+      mock.server.close();
+    }
+  });
+});
+
 describe('enemy commander design updates', () => {
   // The model re-sends the serial design with its parts in another order
   const mock = mockLLM(() => ({
