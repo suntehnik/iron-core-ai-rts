@@ -122,6 +122,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
           <StatBar label={t('bar.range')} value={curBars.range} next={nextBars?.range} />
           <div className="text-[10px] text-slate-300 mt-0.5 tabular-nums">
             {t('console.costLine', { metal: shownStats.metalCost, comp: shownStats.componentCost, sec: shownStats.buildTimeSec })}
+            {ctrl.state.crystals && shownStats.crystalCost > 0 && <span className="text-fuchsia-300"> · {t('console.crystals', { n: shownStats.crystalCost })}</span>}
             {nextStats && nextStats.metalCost !== curStats.metalCost && (
               <span className={nextStats.metalCost > curStats.metalCost ? 'text-rose-300' : 'text-emerald-300'}>
                 {' '}({nextStats.metalCost > curStats.metalCost ? '+' : ''}

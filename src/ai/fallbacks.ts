@@ -1,11 +1,12 @@
-import { GAME_BALANCE } from '../config/balance';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
 import { commanderDesignName, commanderTaunt } from '../config/commanders';
-import { GameState, opposite } from '../engine/GameState';
+import { Doctrine } from '../config/levels';
+import { GameState, basicDesign, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
-import { ProductionAction, TacticalPlan, Team } from '../types/game';
+import { PadBuildingType, ProductionAction, TacticalPlan, Team } from '../types/game';
 import { ChassisType, RobotDesign, TacticalRole } from '../types/robot';
 import { describePlan } from './parsing';
-import { t as tr } from '../i18n';
+import { MessageKey, t as tr } from '../i18n';
 
 /**
  * Local heuristics used when the cloud LLM is unavailable (no key, offline, error, or the
@@ -67,6 +68,26 @@ export function localEngineer(order: string, current: RobotDesign): EngineerDraf
   ) {
     actions.push({ type: 'build_factory' });
     replies.push(tr('le.factory'));
+  }
+  // pad buildings by name ("поставь турель у базы", "build a repair dock")
+  const padWords: [PadBuildingType, string[]][] = [
+    ['turret', ['турел', 'turret', 'torrett']],
+    ['repair_dock', ['ремонтный док', 'ремонтн', 'repair dock', 'officina']],
+    ['radar', ['радарную вышк', 'радарная вышк', 'вышк', 'radar tower', 'torre radar']],
+    ['depot', ['пункт приём', 'пункт прием', 'drop-off', 'depot', 'punto di raccolta']],
+    ['lab', ['лаборатор', 'laborator']],
+    ['artillery', ['артиллерийск', 'artillery turret', "torretta d'artiglieria", 'torretta d’artiglieria']],
+  ];
+  const named = padWords.filter(([, words]) => has(p, ...words)).map(([b]) => b);
+  // "артиллерийская турель" is the artillery turret, not a turret as well
+  for (const building of named.includes('artillery') ? named.filter(b => b !== 'turret') : named) {
+    const forward = has(p, 'передов', 'фронт', 'forward', 'front', 'avanzat');
+    actions.push({ type: 'build', building, ...(forward || building === 'depot' ? { where: 'forward' as const } : { where: 'base' as const }) });
+    replies.push(tr('le.padBuilding', { name: tr(`building.${building}` as MessageKey) }));
+  }
+  if (has(p, 'кристалл', 'crystal', 'cristall') && numberIn(p) !== null) {
+    actions.push({ type: 'set_crystal_reserve', amount: numberIn(p)! });
+    replies.push(tr('le.crystals', { n: numberIn(p)! }));
   }
   if (has(p, 'парти', 'batch', 'lotto', 'lotti') && numberIn(p) !== null) {
     actions.push({ type: 'set_batch_size', size: numberIn(p)! });
@@ -223,6 +244,38 @@ export interface EnemyDraft {
   actions: ProductionAction[];
 }
 
+/**
+ * The rule-based commander plays by the fog of war too: it counts the enemy machines in sight, or
+ * the last contact if it was recent; with no recent contact it assumes parity and stays careful.
+ */
+function estimateEnemyArmy(state: GameState, team: Team, mine: number): number {
+  const i = state.enemyIntel(team);
+  if (i.radar) return i.radar.total;
+  if (i.visible) return i.visible;
+  if (i.lastContactAgo !== null && i.lastContactAgo < 90) return i.lastCount;
+  return mine;
+}
+
+/**
+ * Army stance by the level's doctrine: a defensive general holds its base and counter-attacks only
+ * with a clear edge; an aggressive one pushes early.
+ */
+function doctrineStance(doctrine: Doctrine, mine: number, theirs: number, time: number): TacticalPlan['stance'] {
+  switch (doctrine) {
+    case 'defensive':
+      // holds the line in front of its wall, falls back home early, counter-attacks only with a clear edge
+      if (mine >= theirs * 1.4 + 3 || time > 600) return 'advance';
+      return mine + 2 < theirs ? 'defend_base' : 'hold_center';
+    case 'aggressive':
+      if (mine >= theirs + 1 || time > 120) return 'advance';
+      return mine + 4 < theirs ? 'defend_base' : 'hold_center';
+    default:
+      if (mine >= theirs * 1.3 + 2) return 'advance';
+      if (mine + 3 < theirs) return 'defend_base';
+      return time > 240 ? 'advance' : 'hold_center';
+  }
+}
+
 /** Rule-based counter-building commander (the classic game AI) for either side. */
 export function localCommanderDecision(state: GameState, team: Team): EnemyDraft {
   const t = state.teams[team];
@@ -260,14 +313,16 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
       plan.engagementRange = 'balanced';
       plan.targetPriority = 'closest';
     }
+    // crystals are rare: without enough for a batch the general keeps to the basic version of the design
+    if (design && state.crystals && t.economy.crystals < RobotBuilder.calculateStats(design).crystalCost * t.economy.batchSize) {
+      design = { ...basicDesign(design), name: design.name };
+    }
     if (design && design.chassisId === t.design.chassisId && design.modules.join() === t.design.modules.join()) design = null;
   }
 
   const mine = state.armySummary(team).combatUnits;
-  const theirs = state.armySummary(foe).combatUnits;
-  if (mine >= theirs * 1.3 + 2) plan.stance = 'advance';
-  else if (mine + 3 < theirs) plan.stance = 'defend_base';
-  else plan.stance = state.gameTime > 240 ? 'advance' : 'hold_center';
+  const theirs = estimateEnemyArmy(state, team, mine);
+  plan.stance = doctrineStance(state.doctrine[team] ?? 'balanced', mine, theirs, state.gameTime);
   plan.guardHarvesters = state.recentEvents(team, 5).some(e => e.type === 'harvester_attacked');
   plan.summaryRu = describePlan(plan);
 
@@ -275,8 +330,25 @@ export function localCommanderDecision(state: GameState, team: Team): EnemyDraft
   const econ = t.economy;
   const harvesters = state.harvesterCount(team) + state.harvestersInProduction(team);
   if (harvesters < 5 && mine >= 3 && econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL) actions.push({ type: 'build_harvester', count: 1 });
-  if (econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
-  if (econ.metal > 750 && state.buildingCount(team, 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
+  // a harvester builds and stops mining meanwhile: only with enough miners and a quiet base
+  const canBuild = state.harvesterCount(team) >= 3 && !state.baseUnderFire(team) && state.constructionSites(team).length === 0;
+  const padOk = (type: PadBuildingType, extra = 0) => {
+    const spec = PAD_BUILDINGS[type];
+    return state.canBuildOnPad(team, type, type === 'depot' ? undefined : 'base').ok && econ.metal >= spec.metal + extra;
+  };
+  const raided = state.recentEvents(team, 5, 60).some(e => e.type === 'base_attack');
+  if (canBuild && econ.powerEfficiency < 0.95 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) actions.push({ type: 'build_power_plant' });
+  else if (canBuild && raided && state.buildingCount(team, 'turret') < 2 && padOk('turret', 100)) actions.push({ type: 'build', building: 'turret', where: 'base' });
+  else if (canBuild && state.labRequired && !state.hasLab(team) && state.buildingCount(team, 'lab') === 0 && padOk('lab', 150)) {
+    actions.push({ type: 'build', building: 'lab', where: 'base' });
+  } else if (canBuild && state.gameTime > 300 && state.buildingCount(team, 'artillery') < 2 && padOk('artillery', 250)) {
+    actions.push({ type: 'build', building: 'artillery', where: 'base' });
+  }
+  else if (canBuild && state.gameTime > 240 && state.buildingCount(team, 'repair_dock') === 0 && padOk('repair_dock', 150)) {
+    actions.push({ type: 'build', building: 'repair_dock', where: 'base' });
+  } else if (canBuild && state.gameTime > 300 && state.buildingCount(team, 'radar') === 0 && padOk('radar', 200)) {
+    actions.push({ type: 'build', building: 'radar', where: 'base' });
+  } else if (canBuild && econ.metal > 750 && state.buildingCount(team, 'factory') < GAME_BALANCE.MAX_FACTORIES) actions.push({ type: 'build_factory' });
 
   return { taunt: commanderTaunt(team, Math.random()), design, plan, actions };
 }

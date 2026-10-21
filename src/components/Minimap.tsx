@@ -36,7 +36,7 @@ function terrainLayer(grid: TerrainGrid): HTMLCanvasElement {
   return c;
 }
 
-/** Minimap with terrain and the camera frame; click to move the camera (brief §7). */
+/** Minimap with terrain, fog of war and the camera frame; click to move the camera (brief §7). */
 export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ ctrl, version }) => {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -50,6 +50,19 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
     ctx.fillStyle = '#26303b';
     ctx.fillRect(0, 0, MW, MH);
     ctx.drawImage(terrainLayer(s.terrain), 0, 0);
+    // Fog of war: darken what the player's side does not see; enemy machines there are not shown
+    const fogTeam = s.vision.enabled ? ctrl.fogTeam() : null;
+    if (fogTeam) {
+      const g = s.vision.fogGrid(s, fogTeam);
+      const cw = MW / g.cols;
+      const ch = MH / g.rows;
+      ctx.fillStyle = 'rgba(8,12,20,0.55)';
+      for (let fy = 0; fy < g.rows; fy++) {
+        for (let fx = 0; fx < g.cols; fx++) {
+          if (!g.cells[fy * g.cols + fx]) ctx.fillRect(Math.floor(fx * cw), Math.floor(fy * ch), Math.ceil(cw), Math.ceil(ch));
+        }
+      }
+    }
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.beginPath();
     ctx.moveTo(MW / 2, 0);
@@ -58,7 +71,7 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
 
     for (const p of s.resourcePatches) {
       if (p.metalRemaining <= 0) continue;
-      ctx.fillStyle = '#9fb3c8';
+      ctx.fillStyle = p.resource === 'crystal' ? '#d08bff' : '#9fb3c8';
       ctx.beginPath();
       ctx.arc(p.pos.x * kx, p.pos.y * ky, 2 + 2 * (p.metalRemaining / p.maxMetal), 0, Math.PI * 2);
       ctx.fill();
@@ -67,12 +80,13 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
     for (const sc of s.scrapPiles) ctx.fillRect(sc.pos.x * kx - 1, sc.pos.y * ky - 1, 2, 2);
     for (const b of s.buildings) {
       ctx.fillStyle = TEAM_COLORS[b.team].main;
-      const size = b.type === 'command_center' ? 9 : 6;
+      const size = b.type === 'command_center' ? 9 : b.type === 'factory' || b.type === 'power_plant' ? 6 : 4;
       ctx.globalAlpha = b.built < 1 ? 0.5 : 1;
       ctx.fillRect(b.pos.x * kx - size / 2, b.pos.y * ky - size / 2, size, size);
       ctx.globalAlpha = 1;
     }
     for (const u of s.units) {
+      if (fogTeam && u.team !== fogTeam && !s.vision.sees(fogTeam, u.id)) continue;
       ctx.fillStyle = u.kind === 'harvester' ? (u.team === 'player' ? '#a7f3d0' : '#fed7aa') : TEAM_COLORS[u.team].glow;
       ctx.fillRect(u.pos.x * kx - 1.5, u.pos.y * ky - 1.5, u.kind === 'combat' ? 3 : 2.5, u.kind === 'combat' ? 3 : 2.5);
     }

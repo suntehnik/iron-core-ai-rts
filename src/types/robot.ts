@@ -16,6 +16,10 @@ export interface RobotModule {
   heatDissipation: number; // heat dissipated per sec
   metalCost: number;
   componentCost: number;
+  /** crystals, charged only on maps with crystals */
+  crystalCost?: number;
+  /** 2 — an advanced part: on late campaign levels it needs a laboratory */
+  tier?: 2;
   buildTimeSec: number;
 
   // Specific stat bonuses
@@ -48,6 +52,8 @@ export interface ChassisConfig {
   recoilResistance: number;
   metalCost: number;
   componentCost: number;
+  /** crystals, charged only on maps with crystals */
+  crystalCost?: number;
   buildTimeSec: number;
 }
 
@@ -91,6 +97,10 @@ export interface CalculatedRobotStats {
   recoilUnstable: boolean;
   metalCost: number;
   componentCost: number;
+  /** crystals the robot costs where the map has crystals */
+  crystalCost: number;
+  /** advanced (tier 2) parts in the design: on late levels they need a laboratory */
+  labParts: string[];
   buildTimeSec: number;
   isValid: boolean;
   validationErrors: string[];

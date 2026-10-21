@@ -1,9 +1,19 @@
 import React from 'react';
-import { Factory, Minus, Pause, Pickaxe, Play, Plus, Zap } from 'lucide-react';
-import { GAME_BALANCE } from '../config/balance';
+import { Crosshair, Factory, FlaskConical, Gem, Lock, Minus, Package, Pause, Pickaxe, Play, Plus, Radar, Target, Wrench, X, Zap } from 'lucide-react';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
+import { PadBuildingType } from '../types/game';
 import { GameController } from '../game/GameController';
 import { Panel, ProgressBar, cx, usePanelOpen } from './ui';
-import { t } from '../i18n';
+import { MessageKey, t } from '../i18n';
+
+const PAD_ICONS: Record<PadBuildingType, React.ReactNode> = {
+  turret: <Crosshair className="w-3.5 h-3.5" />,
+  repair_dock: <Wrench className="w-3.5 h-3.5" />,
+  radar: <Radar className="w-3.5 h-3.5" />,
+  depot: <Package className="w-3.5 h-3.5" />,
+  lab: <FlaskConical className="w-3.5 h-3.5" />,
+  artillery: <Target className="w-3.5 h-3.5" />,
+};
 
 /** Mining, factory queues and base construction (brief §3, §7). */
 export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
@@ -12,7 +22,10 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
   const factories = s.buildings.filter(b => b.team === 'player' && b.type === 'factory');
   const plants = s.buildings.filter(b => b.team === 'player' && b.type === 'power_plant');
   const harvesters = s.units.filter(u => u.team === 'player' && u.kind === 'harvester');
-  const mining = harvesters.filter(h => h.kind === 'harvester' && (h.state === 'harvesting' || h.carrying > 0)).length;
+  const onSite = harvesters.filter(h => h.kind === 'harvester' && h.buildSiteId).length;
+  const mining = harvesters.filter(h => h.kind === 'harvester' && !h.buildSiteId && (h.state === 'harvesting' || h.carrying > 0)).length;
+  // sites other than factories (those show in their factory card): power plants and pad buildings
+  const otherSites = s.constructionSites('player').filter(b => b.type !== 'factory');
   const harvInProduction = s.harvestersInProduction('player');
   const allPaused = factories.length > 0 && factories.every(f => f.paused);
   const canPlant = s.canBuild('player', 'power_plant');
@@ -61,6 +74,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
                 <span className="font-semibold text-slate-100">{t('prod.factory', { n: i + 1 })}</span>
                 <span className="flex items-center gap-1.5">
                   <span className={cx('text-[10px]', status === t('factory.assembling') || status === t('factory.harvester') ? 'text-teal-300' : 'text-amber-300')}>{status}</span>
+                  {f.built < 1 && <CancelSite onClick={() => ctrl.cancelSite(f.id)} />}
                   {f.built >= 1 && (
                     <button
                       type="button"
@@ -102,6 +116,22 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
           );
         })}
 
+        {otherSites.map(p => (
+          <div key={p.id} className="rounded-lg border p-2 bg-slate-800/60 border-white/5" title={t('prod.workersHint')}>
+            <div className="flex items-center justify-between gap-1">
+              <span className="font-semibold text-slate-100 flex items-center gap-1">
+                {p.type === 'power_plant' ? <Zap className="w-3 h-3 text-amber-300" /> : <span className="text-amber-300">{PAD_ICONS[p.type as PadBuildingType]}</span>}
+                {p.type === 'power_plant' ? t('prod.plantSite') : t(`building.${p.type}` as MessageKey)}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[10px] text-amber-300">{s.siteStatus(p)}</span>
+                <CancelSite onClick={() => ctrl.cancelSite(p.id)} />
+              </span>
+            </div>
+            <ProgressBar value={p.built} color="#f2b134" className="mt-1.5" />
+          </div>
+        ))}
+
         <div className="flex items-center justify-between">
           <span className="text-slate-300">{t('prod.batchSize')}</span>
           <div className="flex items-center gap-1">
@@ -125,12 +155,40 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
           </div>
         </div>
 
+        {s.crystals && (
+          <div className="flex items-center justify-between" title={t('top.crystals')}>
+            <span className="text-slate-300 flex items-center gap-1">
+              <Gem className="w-3.5 h-3.5 text-fuchsia-300" /> {t('prod.crystals')}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+                onClick={() => ctrl.economyAction({ type: 'set_crystal_reserve', amount: econ.crystalReserve - 20 })}
+                aria-label={t('prod.less')}
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+              <span className="w-7 text-center font-bold tabular-nums">{econ.crystalReserve}</span>
+              <button
+                type="button"
+                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+                onClick={() => ctrl.economyAction({ type: 'set_crystal_reserve', amount: econ.crystalReserve + 20 })}
+                aria-label={t('prod.more')}
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <span className="text-slate-300 flex items-center gap-1">
             <Pickaxe className="w-3.5 h-3.5 text-amber-300" /> {t('prod.harvesters', { n: harvesters.length, max: GAME_BALANCE.MAX_HARVESTERS })}
           </span>
           <span className="text-[10px] text-slate-400">
             {t('prod.mining', { n: mining })}
+            {onSite > 0 && <span className="text-amber-200"> · {t('prod.onSite', { n: onSite })}</span>}
             {harvInProduction > 0 && <span className="text-amber-200"> · {t('prod.onLine', { n: harvInProduction })}</span>}
           </span>
         </div>
@@ -167,11 +225,49 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
             onClick={() => ctrl.economyAction({ type: 'build_factory' })}
             icon={<Factory className="w-3.5 h-3.5" />}
           />
+          {(Object.keys(PAD_BUILDINGS) as PadBuildingType[]).map(type => {
+            const spec = PAD_BUILDINGS[type];
+            const name = t(`building.${type}` as MessageKey);
+            if (!s.isUnlocked(type)) {
+              return (
+                <div key={type} className="flex items-center justify-between px-2 py-1 rounded-md border border-white/5 text-slate-500" title={t(`pad.desc.${type}` as MessageKey)}>
+                  <span className="flex items-center gap-1.5">
+                    <Lock className="w-3 h-3" /> {name}
+                  </span>
+                  <span className="text-[10px]">{t('pad.locked', { n: spec.unlockLevel })}</span>
+                </div>
+              );
+            }
+            const check = s.canBuildOnPad('player', type);
+            return (
+              <BuildButton
+                key={type}
+                label={`${name} (${s.buildingCount('player', type)}/${spec.maxCount})`}
+                cost={`${spec.metal} ${t('unit.metalShort')}${spec.components ? ` · ${spec.components} ${t('unit.componentsShort')}` : ''}${s.crystals && spec.crystals ? ` · ${t('console.crystals', { n: spec.crystals })}` : ''}`}
+                disabled={!check.ok}
+                title={check.ok ? t(`pad.desc.${type}` as MessageKey) : check.reason}
+                onClick={() => ctrl.economyAction({ type: 'build', building: type })}
+                icon={PAD_ICONS[type]}
+              />
+            );
+          })}
         </div>
       </div>
     </Panel>
   );
 };
+
+const CancelSite: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={t('prod.cancelSite')}
+    aria-label={t('prod.cancelSite')}
+    className="w-6 h-6 rounded-md border flex items-center justify-center transition bg-slate-700/70 border-white/10 text-slate-200 hover:bg-rose-700/60 hover:border-rose-300/50"
+  >
+    <X className="w-3 h-3" />
+  </button>
+);
 
 const BuildButton: React.FC<{ label: string; cost: string; disabled?: boolean; title?: string; onClick: () => void; icon: React.ReactNode }> = ({
   label,

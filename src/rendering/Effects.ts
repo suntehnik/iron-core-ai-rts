@@ -22,11 +22,12 @@ export class Effects {
 
   constructor(private scene: THREE.Scene) {}
 
-  ingest(effects: VisualEffect[]) {
+  /** Spawns new effects; `show` filters out the ones the viewer must not see (fog of war). */
+  ingest(effects: VisualEffect[], show: (e: VisualEffect) => boolean = () => true) {
     for (const e of effects) {
       if (e.id <= this.lastEffectId) continue;
       this.lastEffectId = e.id;
-      this.spawn(e);
+      if (show(e)) this.spawn(e);
     }
   }
 
@@ -70,6 +71,14 @@ export class Effects {
         }
         break;
       }
+      case 'weld':
+        // sparks of a harvester at work on a construction site
+        for (let i = 0; i < 5; i++) {
+          const v = rand(3);
+          v.y = 2 + Math.random() * 2;
+          this.add(box(0.08, 0.08, 0.08), i % 2 ? '#fff3c4' : '#ffb347', pos.clone().setY(0.9), 0.35, v, 9, 0, 1, true);
+        }
+        break;
       case 'build_complete':
         for (let i = 0; i < 16; i++) {
           const a = (i / 16) * Math.PI * 2;

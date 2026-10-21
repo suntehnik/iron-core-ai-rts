@@ -229,19 +229,21 @@ export class AIDirector {
     const harvesters = state.harvesterCount(team) + state.harvestersInProduction(team);
     // Economy first: grow mining over time so production does not starve harvesters
     // Harvesters take factory time from the army, so grow mining gradually and not while defenceless
-    const army = state.combatCount(team);
+    const army = state.fieldArmyCount(team);
     const targetHarvesters = Math.min(6, 2 + Math.floor(state.gameTime / 75));
     const canSpareFactory = army >= 3 || harvesters < 2 || !state.buildings.some(b => b.team === team && b.type === 'factory');
     if (harvesters < targetHarvesters && canSpareFactory && (econ.metal >= GAME_BALANCE.HARVESTER_COST_METAL || harvesters === 0)) {
       state.orderHarvester(team);
     }
-    if (econ.powerEfficiency < 0.9 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) {
+    // A harvester builds each building and stops mining meanwhile: build with enough miners and not under fire
+    const canBuild = state.harvesterCount(team) >= 3 && !state.baseUnderFire(team);
+    if (canBuild && econ.powerEfficiency < 0.9 && econ.metal >= GAME_BALANCE.POWER_PLANT_COST_METAL) {
       const building = state.buildings.some(b => b.team === team && b.type === 'power_plant' && b.built < 1);
       if (!building) state.buildStructure(team, 'power_plant');
     }
     // Metal piling up while components are short → fabricate more components
     econ.componentReserve = econ.metal > 500 ? Math.max(econ.componentReserve, 350) : Math.min(econ.componentReserve, 220);
-    if (state.buildingCount(team, 'factory') === 0 && econ.metal >= GAME_BALANCE.FACTORY_COST_METAL) {
+    if (state.buildingCount(team, 'factory') === 0 && state.harvesterCount(team) > 0 && econ.metal >= GAME_BALANCE.FACTORY_COST_METAL) {
       state.buildStructure(team, 'factory');
     }
   }
@@ -379,6 +381,8 @@ export class AIDirector {
       // A "new" design identical to the serial one is not a proposal worth confirming
       const design = normalized && designSignature(normalized.design) !== designSignature(current) ? normalized.design : null;
       if (normalized && !design) warnings.push(t('dir.unchanged'));
+      // a laboratory needed on late levels, the crystal price where the map has crystals
+      if (design) warnings.push(...state.designTechNotes('player', design));
       proposal = {
         id: newId('proposal'),
         order: text,
@@ -406,7 +410,7 @@ export class AIDirector {
         prevDesign: current,
         prevStats,
         actions: draft.actions,
-        warnings: error ? [t('dir.cloudDown', { why: error })] : [],
+        warnings: [...(error ? [t('dir.cloudDown', { why: error })] : []), ...(draft.design ? state.designTechNotes('player', draft.design) : [])],
         source: 'fallback',
         repaired: false,
       };
@@ -415,6 +419,13 @@ export class AIDirector {
 
     this.lastCall.engineer = call;
     this.busy.engineer = false;
+    // a building the level has not opened yet is dropped, and the player is told so instead of a false promise
+    const screened = state.screenActions(proposal.actions);
+    if (screened.notes.length) {
+      proposal.actions = screened.actions;
+      proposal.warnings.push(...screened.notes);
+      proposal.replyRu = `${proposal.replyRu.replace(/[.\s]+$/, '')}. ${screened.notes.join('. ')}.`;
+    }
     const hasContent = !!proposal.design || proposal.actions.length > 0;
     this.pendingProposal = hasContent ? proposal : null;
     const reply = this.say({
@@ -621,6 +632,8 @@ export class AIDirector {
       this.busy[key] = false;
       return;
     }
+    // campaign levels limit the enemy's chassis: a design outside them is refitted or dropped
+    if (design) design = state.fitDesign(team, design);
     if (design && designSignature(design) !== designSignature(current().design)) state.setDesign(team, design);
     if (plan) state.setPlan(team, plan);
     for (const a of actions) state.applyProductionAction(team, a);

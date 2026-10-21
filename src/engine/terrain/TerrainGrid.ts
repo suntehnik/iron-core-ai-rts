@@ -27,6 +27,7 @@ export class TerrainGrid {
   readonly cells: Uint8Array;
   readonly clearance: Float32Array;
   private obstacles = false;
+  private sightBlockers = false;
 
   constructor(
     readonly cols: number,
@@ -45,6 +46,11 @@ export class TerrainGrid {
   /** True when the map has impassable cells (on a flat map navigation is a straight line). */
   get hasObstacles(): boolean {
     return this.obstacles;
+  }
+
+  /** True when something on the map blocks line of sight (forest). */
+  get hasSightBlockers(): boolean {
+    return this.sightBlockers;
   }
 
   index(cx: number, cy: number): number {
@@ -77,6 +83,25 @@ export class TerrainGrid {
 
   blockedCell(i: number): boolean {
     return this.isBlockingCode(this.cells[i]);
+  }
+
+  /** Only forest hides what is behind it; rocks and swamp do not. */
+  blocksSightCell(i: number): boolean {
+    return this.cells[i] === TERRAIN_CODE.forest;
+  }
+
+  /** No forest between a and b (scouting and direct fire). */
+  lineOfSight(a: Vector2D, b: Vector2D): boolean {
+    if (!this.sightBlockers) return true;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const steps = Math.ceil(Math.hypot(dx, dy) / 0.5);
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const { cx, cy } = this.cellOf({ x: a.x + dx * t, y: a.y + dy * t });
+      if (this.cells[cy * this.cols + cx] === TERRAIN_CODE.forest) return false;
+    }
+    return true;
   }
 
   clearanceAt(p: Vector2D): number {
@@ -177,7 +202,9 @@ export class TerrainGrid {
     const d = this.clearance;
     const INF = 1e6;
     this.obstacles = false;
+    this.sightBlockers = false;
     for (let i = 0; i < d.length; i++) {
+      if (this.cells[i] === TERRAIN_CODE.forest) this.sightBlockers = true;
       if (this.blockedCell(i)) {
         d[i] = 0;
         this.obstacles = true;

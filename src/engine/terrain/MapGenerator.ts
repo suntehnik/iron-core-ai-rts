@@ -16,6 +16,15 @@ export interface MapSpec {
   swamps: number;
   /** mirror the player's half onto the enemy's (fair maps) */
   symmetric: boolean;
+  /** horizontal forest strips across the middle that split it into corridors */
+  bands?: { y: number; x0: number; x1: number; thickness: number }[];
+  /** radius of a swamp in the middle of the map */
+  centerSwamp?: number;
+  /**
+   * A forest wall across the whole map in front of the enemy base, between x0 and x1, with a single
+   * gate centred on gateY (late campaign levels). Not mirrored: it is the defender's advantage.
+   */
+  fortress?: { x0: number; x1: number; gateY: number; gate: number };
 }
 
 /** Map of the regular match until the campaign brings per-level maps. */
@@ -33,6 +42,8 @@ export const DEFAULT_MAP: MapSpec = {
 export interface KeepOut {
   pos: Vector2D;
   radius: number;
+  /** only trees and rocks are cleared, swamp stays (deposits and rally points may lie in a swamp) */
+  soft?: boolean;
 }
 
 /**
@@ -81,6 +92,9 @@ export function generateTerrain(
   const xMin = 12;
   const xMax = spec.symmetric ? half - 3 : cols - 12;
 
+  if (spec.centerSwamp) {
+    blob({ x: cols / 2, y: rows / 2 }, spec.centerSwamp, rnd, (x, y) => set(x, y, TERRAIN_CODE.swamp));
+  }
   for (let s = 0; s < spec.swamps; s++) {
     const c = { x: lerp(xMin, xMax, rnd()), y: lerp(6, rows - 6, rnd()) };
     blob(c, lerp(3, 6, rnd()), rnd, (x, y) => !blocked(x, y) && set(x, y, TERRAIN_CODE.swamp));
@@ -98,6 +112,15 @@ export function generateTerrain(
     };
     blob(c, lerp(spec.groveSize[0], spec.groveSize[1], rnd()), rnd, (x, y) => set(x, y, TERRAIN_CODE.forest));
   }
+  for (const b of spec.bands ?? []) {
+    const phase = rnd() * 10;
+    for (let cx = Math.floor(b.x0); cx <= Math.ceil(b.x1); cx++) {
+      const half = (b.thickness / 2) * (1 + 0.25 * Math.sin(cx * 0.9 + phase));
+      for (let cy = Math.floor(b.y - half - 1); cy <= Math.ceil(b.y + half + 1); cy++) {
+        if (Math.abs(cy + 0.5 - b.y) <= half) set(cx, cy, TERRAIN_CODE.forest);
+      }
+    }
+  }
   for (let k = 0; k < spec.ridges; k++) {
     const a = { x: lerp(xMin, xMax, rnd()), y: lerp(6, rows - 6, rnd()) };
     const ang = rnd() * Math.PI;
@@ -107,13 +130,17 @@ export function generateTerrain(
     stroke(a, b, thick, (x, y) => set(x, y, TERRAIN_CODE.rock));
   }
 
+  if (spec.fortress) fortressWall(spec.fortress, cols, rows, cells, rnd);
+
   // Keep-out areas are cleared on both halves (they are listed for both teams).
   for (const k of keepOut) {
     const r2 = k.radius * k.radius;
     for (let cy = Math.floor(k.pos.y - k.radius); cy <= Math.ceil(k.pos.y + k.radius); cy++) {
       for (let cx = Math.floor(k.pos.x - k.radius); cx <= Math.ceil(k.pos.x + k.radius); cx++) {
         if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue;
-        if ((cx + 0.5 - k.pos.x) ** 2 + (cy + 0.5 - k.pos.y) ** 2 <= r2) cells[cy * cols + cx] = TERRAIN_CODE.open;
+        if ((cx + 0.5 - k.pos.x) ** 2 + (cy + 0.5 - k.pos.y) ** 2 > r2) continue;
+        if (k.soft && !blocked(cx, cy)) continue;
+        cells[cy * cols + cx] = TERRAIN_CODE.open;
       }
     }
   }
@@ -195,6 +222,18 @@ function carve(grid: TerrainGrid, from: Vector2D, reachable: Uint8Array, symmetr
         grid.cells[grid.index(x, y)] = TERRAIN_CODE.open;
         if (symmetric) grid.cells[grid.index(cols - 1 - x, y)] = TERRAIN_CODE.open;
       }
+    }
+  }
+}
+
+/** A forest wall from the top edge to the bottom one with a single gate (the enemy's fortress line). */
+function fortressWall(f: NonNullable<MapSpec['fortress']>, cols: number, rows: number, cells: Uint8Array, rnd: () => number) {
+  const phase = rnd() * 10;
+  for (let cy = 0; cy < rows; cy++) {
+    if (Math.abs(cy + 0.5 - f.gateY) < f.gate / 2) continue;
+    const wobble = 0.7 * Math.sin(cy * 0.7 + phase);
+    for (let cx = Math.floor(f.x0 + wobble); cx <= Math.ceil(f.x1 + wobble); cx++) {
+      if (cx >= 0 && cx < cols) cells[cy * cols + cx] = TERRAIN_CODE.forest;
     }
   }
 }

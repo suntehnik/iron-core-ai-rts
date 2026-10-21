@@ -113,11 +113,15 @@ export class RobotBuilder {
     // 8. Production cost & time
     let metalCost = chassis.metalCost;
     let componentCost = chassis.componentCost;
+    let crystalCost = chassis.crystalCost ?? 0;
     let buildTimeSec = chassis.buildTimeSec;
+    const labParts: string[] = [];
     for (const mod of modules) {
       metalCost += mod.metalCost;
       componentCost += mod.componentCost;
+      crystalCost += mod.crystalCost ?? 0;
       buildTimeSec += mod.buildTimeSec;
+      if (mod.tier === 2 && !labParts.includes(mod.id)) labParts.push(mod.id);
     }
 
     const stats: CalculatedRobotStats = {
@@ -148,6 +152,8 @@ export class RobotBuilder {
       recoilUnstable,
       metalCost,
       componentCost,
+      crystalCost,
+      labParts,
       buildTimeSec,
       isValid: errors.length === 0,
       validationErrors: errors,
@@ -453,6 +459,8 @@ export class RobotBuilder {
       recoilUnstable: false,
       metalCost: 999,
       componentCost: 999,
+      crystalCost: 0,
+      labParts: [],
       buildTimeSec: 99,
       isValid: false,
       validationErrors: errors,

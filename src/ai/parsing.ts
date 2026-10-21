@@ -1,5 +1,5 @@
-import { GAME_BALANCE } from '../config/balance';
-import { EngagementRange, ProductionAction, Stance, TacticalPlan, TargetPriority } from '../types/game';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
+import { EngagementRange, PadBuildingType, PadWhere, ProductionAction, Stance, TacticalPlan, TargetPriority } from '../types/game';
 import { MessageKey, t } from '../i18n';
 
 export const STANCES: Stance[] = ['advance', 'hold_center', 'defend_base', 'raid_economy'];
@@ -53,12 +53,24 @@ export function normalizeActions(raw: unknown): ProductionAction[] {
       case 'build_harvester':
         out.push({ type: 'build_harvester', count: Math.max(1, Math.min(4, Math.round(Number(a.count) || 1))) });
         break;
+      case 'build': {
+        // a pad building: turret, repair dock, radar or drop-off point, optionally where and with two workers
+        const building = String(a.building ?? '');
+        if (!(building in PAD_BUILDINGS)) break;
+        const where = ['base', 'forward', 'north', 'center', 'south'].includes(String(a.where)) ? (String(a.where) as PadWhere) : undefined;
+        const action: ProductionAction = { type: 'build', building: building as PadBuildingType };
+        if (where) action.where = where;
+        if (Number(a.workers) >= 2) action.workers = 2;
+        out.push(action);
+        break;
+      }
       case 'build_power_plant':
-        out.push({ type: 'build_power_plant' });
+      case 'build_factory': {
+        // one harvester builds by default; two speed the site up 1.6×
+        const workers = Number(a.workers) >= 2 ? 2 : 1;
+        out.push(workers === 2 ? { type: a.type, workers } : { type: a.type });
         break;
-      case 'build_factory':
-        out.push({ type: 'build_factory' });
-        break;
+      }
       case 'set_batch_size': {
         const size = Math.round(Number(a.size));
         if (Number.isFinite(size)) {
@@ -72,6 +84,11 @@ export function normalizeActions(raw: unknown): ProductionAction[] {
       case 'set_component_reserve': {
         const amount = Math.round(Number(a.amount));
         if (Number.isFinite(amount)) out.push({ type: 'set_component_reserve', amount: Math.max(0, Math.min(600, amount)) });
+        break;
+      }
+      case 'set_crystal_reserve': {
+        const amount = Math.round(Number(a.amount));
+        if (Number.isFinite(amount)) out.push({ type: 'set_crystal_reserve', amount: Math.max(0, Math.min(400, amount)) });
         break;
       }
       case 'set_production': {
@@ -98,8 +115,14 @@ export function describeAction(a: ProductionAction): string {
       return t('action.batch', { n: a.size });
     case 'set_component_reserve':
       return t('action.reserve', { n: a.amount });
+    case 'set_crystal_reserve':
+      return t('act.crystalReserve', { n: a.amount });
     case 'set_production':
       return t(a.paused ? 'action.stopAll' : 'action.resumeAll');
+    case 'build': {
+      const spec = PAD_BUILDINGS[a.building];
+      return t('action.build', { name: t(`building.${a.building}` as MessageKey), metal: spec.metal, comp: spec.components });
+    }
   }
 }
 

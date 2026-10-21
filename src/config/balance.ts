@@ -1,5 +1,5 @@
 import { RobotDesign } from '../types/robot';
-import { Team, Vector2D } from '../types/game';
+import { Pad, PadBuildingType, Team, Vector2D } from '../types/game';
 import { t } from '../i18n';
 
 export const GAME_BALANCE = {
@@ -25,6 +25,14 @@ export const GAME_BALANCE = {
   FACTORY_BUILD_SEC: 24,
   MAX_FACTORIES: 2,
   MAX_POWER_PLANTS: 3,
+
+  // Construction by harvesters: a building rises only while a harvester works at the site, and
+  // that harvester does not mine meanwhile. Power does not matter (a base without power must be
+  // able to build a power plant).
+  MAX_ACTIVE_SITES: 2, // more sites wait in a queue for a worker
+  SECOND_WORKER_BONUS: 0.6, // two workers build 1.6× as fast
+  SITE_CANCEL_REFUND: 0.75,
+  SITE_REACH: 1.2, // a worker this close to the site's edge is at work
 
   // HQ self-defence turret (prevents instant loss to a single early rush)
   HQ_TURRET_RANGE: 16.5, // +10% (was 15)
@@ -100,6 +108,93 @@ export const GAME_BALANCE = {
   BASE_THREAT_RADIUS: 30, // attackers this close to the HQ count as a raid on the base
   BASE_DEFENSE_RECALL_RADIUS: 32, // machines this close to the HQ respond (covers the rally point)
 };
+
+/** Pad buildings (stage 2 of development): what they cost, do and when the campaign opens them. */
+export interface PadBuildingSpec {
+  hp: number;
+  radius: number;
+  buildSec: number;
+  metal: number;
+  components: number;
+  /** constant base power draw once built, kW (the repair dock draws only while repairing) */
+  powerKw: number;
+  maxCount: number;
+  /** campaign level from which both sides may build it */
+  unlockLevel: number;
+  /** forward pads only (the drop-off point) */
+  forwardOnly?: boolean;
+  /** crystals, charged only on maps with crystals */
+  crystals?: number;
+}
+
+export const PAD_BUILDINGS: Record<PadBuildingType, PadBuildingSpec> = {
+  turret: { hp: 900, radius: 1.8, buildSec: 12, metal: 120, components: 30, powerKw: 20, maxCount: 6, unlockLevel: 2 },
+  repair_dock: { hp: 1000, radius: 2.6, buildSec: 16, metal: 140, components: 20, powerKw: 0, maxCount: 2, unlockLevel: 3 },
+  radar: { hp: 700, radius: 2.2, buildSec: 18, metal: 160, components: 60, crystals: 20, powerKw: 40, maxCount: 1, unlockLevel: 4 },
+  depot: { hp: 900, radius: 2.8, buildSec: 18, metal: 180, components: 0, powerKw: 10, maxCount: 2, unlockLevel: 5, forwardOnly: true },
+  lab: { hp: 1200, radius: 2.8, buildSec: 30, metal: 250, components: 80, crystals: 40, powerKw: 50, maxCount: 1, unlockLevel: 6 },
+  artillery: { hp: 1000, radius: 2.0, buildSec: 20, metal: 220, components: 60, crystals: 30, powerKw: 40, maxCount: 3, unlockLevel: 7 },
+};
+
+/** Rare crystals: from this campaign level on, two deposits in the middle of the map. */
+export const CRYSTAL = {
+  FROM_LEVEL: 4,
+  CARRY: 25, // per trip (metal: 50)
+  RATE_MUL: 0.5, // mined at half the metal rate
+  DEFAULT_RESERVE: 60,
+  DEPOSIT: 1500,
+};
+
+/** From this campaign level on, advanced (tier 2) parts need a laboratory. */
+export const LAB_FROM_LEVEL = 6;
+
+/** Artillery turret: lobs shells over the forest at targets its side spots. */
+export const ARTILLERY = {
+  RANGE: 28,
+  MIN_RANGE: 5,
+  DAMAGE: 75,
+  INTERVAL: 3,
+  SPLASH: 2.5,
+  ARMOR_PIERCE: 0.1,
+};
+
+export const TURRET = {
+  RANGE: 15,
+  DAMAGE: 21, // every 0.6 s: ~35 DPS
+  INTERVAL: 0.6,
+  ARMOR_PIERCE: 0.2,
+};
+
+export const REPAIR_DOCK = {
+  RADIUS: 6,
+  HP_PER_SEC: 25,
+};
+
+export const RADAR_SIGHT = 40;
+
+/** Building pads of the player's side (the enemy's are mirrored): 8 around the base, 3 forward. */
+const PLAYER_PADS: Omit<Pad, 'id' | 'team'>[] = [
+  { pos: { x: 24, y: 30 }, kind: 'base' },
+  { pos: { x: 27, y: 23 }, kind: 'base' },
+  { pos: { x: 27, y: 37 }, kind: 'base' },
+  { pos: { x: 11, y: 21 }, kind: 'base' },
+  { pos: { x: 13, y: 13 }, kind: 'base' },
+  { pos: { x: 14, y: 48 }, kind: 'base' },
+  { pos: { x: 31, y: 15 }, kind: 'base' },
+  { pos: { x: 31, y: 45 }, kind: 'base' },
+  { pos: { x: 41, y: 15 }, kind: 'forward', flank: 'north' },
+  { pos: { x: 41, y: 30 }, kind: 'forward', flank: 'center' },
+  { pos: { x: 41, y: 45 }, kind: 'forward', flank: 'south' },
+];
+
+export function padSlots(team: Team): Pad[] {
+  return PLAYER_PADS.map((p, i) => ({
+    ...p,
+    id: `pad_${team}_${i}`,
+    team,
+    pos: team === 'player' ? { ...p.pos } : { x: GAME_BALANCE.MAP_WIDTH - p.pos.x, y: p.pos.y },
+  }));
+}
 
 /** A team's starting design with its name in the game language. */
 export function initialDesign(team: Team): RobotDesign {

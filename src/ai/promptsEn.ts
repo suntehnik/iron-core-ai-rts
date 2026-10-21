@@ -1,10 +1,11 @@
 import { CHASSIS_CATALOG, MODULES_CATALOG } from '../config/catalog';
-import { GAME_BALANCE } from '../config/balance';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
 import { COMMANDERS, commanderName } from '../config/commanders';
+import { DOCTRINE_TEXT } from '../config/levels';
 import { GameState, opposite } from '../engine/GameState';
 import { RobotBuilder } from '../engine/RobotBuilder';
 import { ProductionProposal } from '../types/agent';
-import { Team } from '../types/game';
+import { PadBuildingType, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { markRussian } from './llm/nativeBridge';
 import { PromptSet, cleanInstructions, planLine } from './prompts';
@@ -34,7 +35,7 @@ function compactCatalog(): string {
   const chassis = Object.values(CHASSIS_CATALOG)
     .map(
       c =>
-        `${c.id}: ${c.maxSlots} slots, base mass ${c.baseMass}/max ${c.maxMass} kg, source ${c.basePowerOutput} kW, ${c.baseSpeed} m/s, holds recoil ≤${c.recoilResistance}, ${c.metalCost}m/${c.componentCost}c`,
+        `${c.id}: ${c.maxSlots} slots, base mass ${c.baseMass}/max ${c.maxMass} kg, source ${c.basePowerOutput} kW, ${c.baseSpeed} m/s, holds recoil ≤${c.recoilResistance}, ${c.metalCost}m/${c.componentCost}c${c.crystalCost ? `/${c.crystalCost}cr` : ''}`,
     )
     .join('\n');
   const modules = Object.values(MODULES_CATALOG)
@@ -44,8 +45,9 @@ function compactCatalog(): string {
       if (m.powerOutput) parts.push(`+${m.powerOutput}kW`);
       if (m.heatGen) parts.push(`heat ${m.heatGen}`);
       if (m.heatDissipation > 0) parts.push(`cooling ${m.heatDissipation}`);
-      parts.push(`${m.metalCost}m/${m.componentCost}c`);
+      parts.push(`${m.metalCost}m/${m.componentCost}c${m.crystalCost ? `/${m.crystalCost}cr` : ''}`);
       const fx: string[] = [];
+      if (m.tier === 2) fx.push('advanced part');
       if (m.hpBonus) fx.push(`+${m.hpBonus}HP`);
       if (m.armorRating) fx.push(`armour ${Math.round(m.armorRating * 100)}%`);
       if (m.weaponDamage && m.weaponFireRate) {
@@ -87,7 +89,55 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
     e.powerCapacity
   } kW, mining ${e.miningRatePerMin}/min, harvesters ${state.harvesterCount(team)}/${GAME_BALANCE.MAX_HARVESTERS}${
     harvQueued ? ` (+${harvQueued} in production)` : ''
-  }, factories ${factories.length}${paused ? ` (paused: ${paused})` : ''}, power plants ${state.buildingCount(team, 'power_plant')}, batch size ${e.batchSize}, component reserve ${e.componentReserve}`;
+  }${builders(state, team) ? ` (${builders(state, team)} building)` : ''}, factories ${factories.length}${paused ? ` (paused: ${paused})` : ''}, power plants ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, batch size ${e.batchSize}, component reserve ${e.componentReserve}`;
+  }
+
+  /** Pad buildings open on this level: id, cost, how many stand and how many pads are free. */
+  function padBuildingsLine(state: GameState, team: Team): string {
+    const open = state.unlockedPadBuildings();
+    const closed = (Object.keys(PAD_BUILDINGS) as PadBuildingType[]).filter(t => !open.includes(t));
+    const openText = open
+      .map(type => {
+        const spec = PAD_BUILDINGS[type];
+        return `${type} — ${PAD_NAMES_EN[type]}, ${spec.metal}m/${spec.components}c${state.crystals && spec.crystals ? `/${spec.crystals}cr` : ''}, built ${state.buildingCount(team, type)}/${spec.maxCount}, free pads ${state.freePads(team, type).length}`;
+      })
+      .join('; ');
+    const closedText = closed.length
+      ? `CLOSED on this level, cannot be built: ${closed.map(t => `${t} (from level ${PAD_BUILDINGS[t].unlockLevel})`).join(', ')}`
+      : '';
+    return [openText || 'no pad buildings open', closedText].filter(Boolean).join('. ');
+  }
+
+  /** Crystals and the laboratory on this level, in one line; empty where neither applies. */
+  function techLine(state: GameState, team: Team): string {
+    const out: string[] = [];
+    if (state.crystals) {
+      const e = state.teams[team].economy;
+      out.push(`crystals ${Math.round(e.crystals)}, reserve ${e.crystalReserve} (while below it some harvesters bring crystals at half the metal rate; {"type":"set_crystal_reserve","amount":80} changes the reserve); parts priced in cr and the heavy chassis wait for crystals like for metal`);
+    }
+    if (state.labRequired) {
+      out.push(state.hasLab(team) ? 'laboratory built, advanced parts available' : 'advanced parts (plasma_blasters, sniper_railgun, sloped_reactive) are unavailable without a laboratory');
+    }
+    return out.join('; ');
+  }
+
+  /** Harvesters away from mining on construction sites. */
+  function builders(state: GameState, team: Team): number {
+    return state.constructionSites(team).reduce((n, b) => n + state.siteWorkers(b).length, 0);
+  }
+
+  /** Construction sites: progress and whether a worker is at it. */
+  function sitesLine(state: GameState, team: Team): string {
+    const sites = state.constructionSites(team);
+    if (!sites.length) return '';
+    return `, sites: ${sites
+      .map(b => {
+        const w = state.siteWorkers(b);
+        const at = w.filter(h => h.state === 'constructing').length;
+        const status = at ? `${at} building` : w.length ? 'worker on the way' : 'needs a worker';
+        return `${b.type === 'factory' ? 'factory' : 'power plant'} ${Math.round(b.built * 100)}% (${status})`;
+      })
+      .join('; ')}`;
   }
 
   function intelLine(state: GameState, team: Team): string {
@@ -95,8 +145,39 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
     if (!seen.length) return 'no enemy models spotted yet';
     return seen
       .slice(0, 4)
-      .map(s => `${mark(s.design.name)} ×${s.count} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
+      .map(s => `${mark(s.design.name)} ×${s.count}, ${s.inSight ? 'in sight' : `seen ${s.lastSeenSec} s ago`} (${s.design.chassisId}: ${s.design.modules.join(', ')})`)
       .join('; ');
+  }
+
+  /** Orders the game refused in the last minute: the model sees the reason and stops repeating what it cannot pay for. */
+  function refusalLines(state: GameState, team: Team): string[] {
+    const now = state.affordableNow(team);
+    const out = [`AFFORDABLE NOW: ${now.length ? now.join(', ') : 'nothing — save metal, new orders will be refused'}`];
+    const list = state.recentRefusals(team);
+    if (list.length) out.push(`THE GAME REFUSED IN THE LAST MINUTE (do not repeat until the reason is gone): ${list.map(r => `${r.what} — ${mark(r.why)} (${r.ago} s ago)`).join('; ')}`);
+    return out;
+  }
+
+  /** Campaign level rules for an AI commander: the doctrine and the chassis it may use. */
+  function levelLines(state: GameState, team: Team): string[] {
+    const out: string[] = [];
+    const doctrine = state.doctrine[team];
+    if (doctrine) out.push(`HQ DOCTRINE: ${DOCTRINE_TEXT[doctrine].en}`);
+    const chassis = state.allowedChassisOf(team);
+    if (chassis) out.push(`ALLOWED CHASSIS: only ${chassis.join(', ')}`);
+    return out;
+  }
+
+  /** The enemy army as far as our machines and buildings see it (fog of war, forest blocks sight). */
+  function enemyArmyLine(state: GameState, team: Team): string {
+    const i = state.enemyIntel(team);
+    if (i.radar) {
+      const making = i.radar.producing.length ? `, its factories build ${i.radar.producing.map(n => `"${mark(n)}"`).join(', ')}` : '';
+      return `radar: the enemy has ${i.radar.total} combat robots${making}; ${i.visible} in sight`;
+    }
+    if (i.visible) return `${i.visible} combat robots in sight, the rest is hidden by the fog of war`;
+    if (i.lastContactAgo === null) return 'no contact yet, the enemy is hidden by the fog of war';
+    return `none in sight; last contact ${i.lastContactAgo} s ago (${i.lastCount} robots)`;
   }
 
   function armyLine(state: GameState, team: Team): string {
@@ -124,21 +205,27 @@ Rules:
 - If the commander capped the cost, keep within the cap relative to the current cost.
 - Changes apply to the next batches; robots already built do not change.
 - If the order is about production (harvesters, power plant, factory, batch size, component reserve, stopping/starting the lines) rather than the design, return "design": null and the actions.
+- A harvester builds each building (factory, power plant): it goes to the site and does not mine meanwhile. At most ${GAME_BALANCE.MAX_ACTIVE_SITES} sites are worked at once, the rest wait. "workers":2 sends two harvesters and builds 1.6× as fast.
+- Pad buildings: action "build" only with an open "building" from the PAD BUILDINGS line (do not promise a closed one; say from which level it opens); put the laboratory, radar and repair dock at the base (base), turrets at the base or forward, the drop-off point forward only. A harvester still has to build it: say "laid down" or "building", not "done"; "where": base, forward, or north / center / south (a forward flank). The drop-off point goes on forward pads only.
 - The factory builds harvesters (${GAME_BALANCE.HARVESTER_BUILD_SEC} s each) instead of combat robots. "set_production" with paused=true stops all factories (to save metal and free power), paused=false starts them.
 - If the commander capped the cost growth, return the cap in percent in "costLimitPct" (a quarter = 25, a third = 33, half = 50), otherwise null. Cost = chassis metal + metal of all modules.
 - In "reply" and "compromise" do not use part ids: name the parts in plain words (siege cannon, reinforced armour). Give the model a short name.
 - ${readable}
 Answer with JSON only:
-{"reply":"1–2 short sentences to the commander","design":{"name":"short model name","chassis":"chassis id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"what was sacrificed, or an empty string"}`;
+{"reply":"1–2 short sentences to the commander","design":{"name":"short model name","chassis":"chassis id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"build","building":"turret","where":"base"} | {"type":"set_batch_size","size":3} | {"type":"set_component_reserve","amount":200} | {"type":"set_production","paused":true}],"costLimitPct":null,"compromise":"what was sacrificed, or an empty string"}`;
 
   function engineerUserPrompt(state: GameState, order: string, pending: ProductionProposal | null): string {
     const t = state.teams.player;
     const lines = [`COMMANDER'S ORDER: "${mark(order)}"`, `CURRENT SERIAL MODEL: ${describeDesign(t.design)}`];
     if (pending?.design) lines.push(`UNCONFIRMED PROPOSAL (the commander is refining it): ${describeDesign(pending.design)}`);
     lines.push(`ECONOMY: ${economyLine(state, 'player')}`);
+    lines.push(`PAD BUILDINGS: ${padBuildingsLine(state, 'player')}`);
+    const tech = techLine(state, 'player');
+    if (tech) lines.push(`CRYSTALS AND TECH: ${tech}`);
     lines.push(`OUR ARMY: ${armyLine(state, 'player')}`);
     lines.push(`SCOUTING: ${intelLine(state, 'player')}`);
     lines.push(`EVENTS: ${eventsLine(state, 'player')}`);
+    lines.push(...refusalLines(state, 'player'));
     lines.push(`CATALOG:\n${compactCatalog()}`);
     return lines.join('\n');
   }
@@ -157,6 +244,7 @@ Plan parameters:
 - retreatHpThreshold: 0–60 — at what % integrity a robot goes back to the HQ for repairs (0 = never retreat)
 - guardHarvesters: true/false — cover our harvesters
 The commander's instructions come first. Take the armies, the designs and the events into account. If you change the plan on your own, briefly explain why.
+We know only what our machines and buildings see: forest blocks sight.
 ${readable}
 Answer with JSON only: {"reply":"1–2 sentences to the commander","plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"the plan in up to 12 words"}}`;
 
@@ -168,7 +256,8 @@ Answer with JSON only: {"reply":"1–2 sentences to the commander","plan":{"stan
     lines.push(`COMMANDER'S STANDING INSTRUCTIONS: ${standingOrders.length ? standingOrders.map(s => `"${mark(s)}"`).join('; ') : 'none'}`);
     lines.push(`CURRENT PLAN: ${planLine(t.plan)}`);
     lines.push(`OUR ARMY: ${armyLine(state, 'player')}; serial model ${describeDesign(t.design)}`);
-    lines.push(`ENEMY ARMY (spotted): ${intelLine(state, 'player')}`);
+    lines.push(`ENEMY ARMY: ${enemyArmyLine(state, 'player')}`);
+    lines.push(`SPOTTED ENEMY MODELS: ${intelLine(state, 'player')}`);
     lines.push(`HQS: ours ${state.baseHpPct('player')}%, enemy ${state.baseHpPct('enemy')}%`);
     lines.push(`EVENTS: ${eventsLine(state, 'player')}`);
     return lines.join('\n');
@@ -198,10 +287,11 @@ Answer with JSON only: {"reply":"1–2 sentences to the commander","plan":{"stan
 Every ~${GAME_BALANCE.AI_COMMANDER_HEARTBEAT_SEC} seconds you get a report and decide:
 1) the design for the next batches — only from the catalog, within the chassis limits (slots, mass, power, recoil); null if no change is needed;
 2) the army plan (stance: advance|hold_center|defend_base|raid_economy; engagementRange: max_range|balanced|close_brawl; targetPriority: closest|high_threat_heavies|scouts_harvesters|focus_fire|buildings; retreatHpThreshold 0–60; guardHarvesters);
-3) economic actions. The factory builds harvesters instead of combat robots — do not order them while the army cannot hold the front.
+3) economic actions. The factory builds harvesters instead of combat robots — do not order them while the army cannot hold the front. Harvesters build the buildings and do not mine meanwhile. Pad buildings use the "build" action (see the PAD BUILDINGS line).
 Counter the enemy models you have spotted and watch the economy: without mining the army does not grow.
+Fog of war: you see only what your machines and buildings see, and forest blocks sight, so the enemy data is partial.
 ${readable}
-${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the enemy (${foe}), up to 15 words","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant"} | {"type":"build_factory"} | {"type":"set_batch_size","size":3}]}`;
+${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the enemy (${foe}), up to 15 words","design":{"name":"...","chassis":"id","modules":["id",...],"role":"frontline|skirmisher|artillery|anti_armor|balanced"} or null,"plan":{"stance":"...","engagementRange":"...","targetPriority":"...","retreatHpThreshold":0,"guardHarvesters":false,"summary":"..."},"actions":[{"type":"build_harvester","count":1} | {"type":"build_power_plant","workers":1} | {"type":"build_factory","workers":1} | {"type":"build","building":"turret","where":"base"} | {"type":"set_batch_size","size":3}]}`;
   }
 
   function commanderUserPrompt(state: GameState, team: Team, instructions?: string): string {
@@ -212,11 +302,15 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `YOUR SERIAL MODEL: ${describeDesign(t.design)}`,
       `YOUR PLAN: ${planLine(t.plan)}`,
       `YOUR ECONOMY: ${economyLine(state, team)}`,
+      `PAD BUILDINGS: ${padBuildingsLine(state, team)}`,
+      ...(techLine(state, team) ? [`CRYSTALS AND TECH: ${techLine(state, team)}`] : []),
       `YOUR ARMY: ${armyLine(state, team)}; losses ${t.economy.totals.unitsLost}, enemies destroyed ${t.economy.totals.kills}`,
       `SPOTTED ENEMY MODELS: ${intelLine(state, team)}`,
-      `ENEMY ARMY: ${state.armySummary(foe).combatUnits} combat robots`,
+      `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
       `HQS: yours ${state.baseHpPct(team)}%, enemy ${state.baseHpPct(foe)}%`,
       `EVENTS: ${eventsLine(state, team)}`,
+      ...refusalLines(state, team),
+      ...levelLines(state, team),
       `CATALOG:\n${compactCatalog()}`,
       ...instructionsReminder(instructions),
     ].join('\n');
@@ -239,7 +333,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `YOUR PLAN: ${planLine(t.plan)}`,
       `YOUR ARMY: ${armyLine(state, team)}`,
       `SPOTTED ENEMY MODELS: ${intelLine(state, team)}`,
-      `ENEMY ARMY: ${state.armySummary(foe).combatUnits} combat robots`,
+      `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
       `HQS: yours ${state.baseHpPct(team)}%, enemy ${state.baseHpPct(foe)}%`,
       ...instructionsReminder(instructions),
     ].join('\n');
@@ -261,6 +355,15 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
 const cache = new Map<string, PromptSet>();
 
 /** English prompt set for a reply language (built once per combination). */
+const PAD_NAMES_EN: Record<PadBuildingType, string> = {
+  turret: 'turret (defence, range 15)',
+  lab: 'laboratory (unlocks the advanced parts)',
+  artillery: 'artillery turret (lobs shells over the forest, range 28, at spotted targets)',
+  repair_dock: 'repair dock (repairs 25/s away from the HQ)',
+  radar: 'radar tower (sight 40, exact enemy report)',
+  depot: 'drop-off point (unload ore near far deposits, forward only)',
+};
+
 export function englishPrompts(options: EnglishPromptOptions): PromptSet {
   const key = `${options.replyLanguage}|${options.markForTranslation}`;
   let set = cache.get(key);
