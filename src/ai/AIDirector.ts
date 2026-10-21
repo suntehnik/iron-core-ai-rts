@@ -452,7 +452,8 @@ export class AIDirector {
       state.setDesign('player', p.design);
       results.push(t('dir.approved', { name: p.design.name }));
     }
-    for (const a of p.actions) results.push(state.applyProductionAction('player', a));
+    // what the base cannot pay for yet waits in the order queue instead of being refused
+    for (const a of p.actions) results.push(state.applyAgentAction('player', a));
     this.pendingProposal = null;
     this.events.proposal(null);
     const reply = this.say({ id: newId('confirm'), role: 'engineer', text: `${results.join('. ')}.`, timestamp: Date.now(), source: 'local' });
@@ -636,7 +637,11 @@ export class AIDirector {
     if (design) design = state.fitDesign(team, design);
     if (design && designSignature(design) !== designSignature(current().design)) state.setDesign(team, design);
     if (plan) state.setPlan(team, plan);
-    for (const a of actions) state.applyProductionAction(team, a);
+    // a model's unaffordable order waits in the queue; the rule-based commander orders only what it can pay for
+    for (const a of actions) {
+      if (source === 'llm') state.applyAgentAction(team, a);
+      else state.applyProductionAction(team, a);
+    }
     if (taunt) this.events.intercept(taunt, source, team);
     this.busy[key] = false;
     this.events.changed();

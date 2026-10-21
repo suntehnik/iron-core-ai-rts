@@ -8,7 +8,7 @@ import { ProductionProposal } from '../types/agent';
 import { PadBuildingType, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { markRussian } from './llm/nativeBridge';
-import { PromptSet, cleanInstructions, planLine } from './prompts';
+import { PromptSet, cleanInstructions, planLine, queuedLabel } from './prompts';
 
 /**
  * English agent prompts: for the English and Italian game, and for the on-device model of the iOS app
@@ -149,10 +149,15 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
       .join('; ');
   }
 
-  /** Orders the game refused in the last minute: the model sees the reason and stops repeating what it cannot pay for. */
-  function refusalLines(state: GameState, team: Team): string[] {
+  /** What the side can pay for, the orders waiting in its queue and those the game refused in the last minute. */
+  function orderLines(state: GameState, team: Team): string[] {
     const now = state.affordableNow(team);
-    const out = [`AFFORDABLE NOW: ${now.length ? now.join(', ') : 'nothing — save metal, new orders will be refused'}`];
+    const queue = state.pendingOrders[team];
+    const full = queue.length >= GAME_BALANCE.ORDER_QUEUE_MAX;
+    const out = [`AFFORDABLE NOW: ${now.length ? now.join(', ') : full ? 'nothing, and the queue is full — new orders will be refused' : 'nothing — save metal, a new order will wait in the queue'}`];
+    if (queue.length) {
+      out.push(`ORDER QUEUE (runs by itself once resources allow — do not repeat): ${queue.map(o => `${queuedLabel(o)} — ${mark(o.why)}, ${state.orderTimeLeft(o)} s left`).join('; ')}`);
+    }
     const list = state.recentRefusals(team);
     if (list.length) out.push(`THE GAME REFUSED IN THE LAST MINUTE (do not repeat until the reason is gone): ${list.map(r => `${r.what} — ${mark(r.why)} (${r.ago} s ago)`).join('; ')}`);
     return out;
@@ -225,7 +230,7 @@ Answer with JSON only:
     lines.push(`OUR ARMY: ${armyLine(state, 'player')}`);
     lines.push(`SCOUTING: ${intelLine(state, 'player')}`);
     lines.push(`EVENTS: ${eventsLine(state, 'player')}`);
-    lines.push(...refusalLines(state, 'player'));
+    lines.push(...orderLines(state, 'player'));
     lines.push(`CATALOG:\n${compactCatalog()}`);
     return lines.join('\n');
   }
@@ -309,7 +314,7 @@ ${instructionsBlock(instructions)}Answer with JSON only: {"taunt":"a jab at the 
       `ENEMY ARMY: ${enemyArmyLine(state, team)}`,
       `HQS: yours ${state.baseHpPct(team)}%, enemy ${state.baseHpPct(foe)}%`,
       `EVENTS: ${eventsLine(state, team)}`,
-      ...refusalLines(state, team),
+      ...orderLines(state, team),
       ...levelLines(state, team),
       `CATALOG:\n${compactCatalog()}`,
       ...instructionsReminder(instructions),

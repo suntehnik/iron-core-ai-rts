@@ -29,6 +29,79 @@ const until = async (cond: () => boolean, ms = 120000) => {
   while (!cond() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 50));
 };
 
+const ECONOMIC = new Set<ProductionAction['type']>(['build_harvester', 'build_power_plant', 'build_factory', 'build']);
+const orderTarget = (a: ProductionAction) =>
+  a.type === 'build' ? a.building : a.type === 'build_harvester' ? 'harvester' : a.type === 'build_factory' ? 'factory' : 'power_plant';
+
+/** Fate of the economic orders of one side: done at once, queued, refused at once, dropped from the queue later. */
+interface OrderTally {
+  orders: number;
+  now: number;
+  queued: number;
+  refused: number;
+  dropped: number;
+  waitingAtEnd: number;
+}
+
+/**
+ * Records every economic order the commanders give and counts the refused ones: refused at once, or
+ * dropped from the order queue later (expired, became impossible). Fallback orders are recorded apart.
+ */
+function watchOrders(state: GameState) {
+  const applied: Record<Team, ProductionAction[]> = { player: [], enemy: [] };
+  const results: Record<Team, string[]> = { player: [], enemy: [] };
+  const tally: Record<Team, OrderTally> = {
+    player: { orders: 0, now: 0, queued: 0, refused: 0, dropped: 0, waitingAtEnd: 0 },
+    enemy: { orders: 0, now: 0, queued: 0, refused: 0, dropped: 0, waitingAtEnd: 0 },
+  };
+  let inCall = false;
+  let refusedInCall = false;
+  const hooks = state as unknown as { noteRefusal(team: Team, what: string, why: string): void };
+  const note = hooks.noteRefusal.bind(state);
+  hooks.noteRefusal = (team, what, why) => {
+    if (inCall) refusedInCall = true;
+    else tally[team].dropped++; // from the queue, during the simulation
+    note(team, what, why);
+  };
+  const direct = state.applyProductionAction.bind(state);
+  state.applyProductionAction = (team: Team, a: ProductionAction) => {
+    if (inCall) return direct(team, a); // the agent path falls through to it
+    inCall = true;
+    const text = direct(team, a);
+    inCall = false;
+    applied[team].push(a);
+    results[team].push(`[fallback] ${text}`);
+    return text;
+  };
+  const agent = state.applyAgentAction.bind(state);
+  state.applyAgentAction = (team: Team, a: ProductionAction) => {
+    inCall = true;
+    refusedInCall = false;
+    const text = agent(team, a);
+    inCall = false;
+    applied[team].push(a);
+    results[team].push(text);
+    if (ECONOMIC.has(a.type)) {
+      const t = tally[team];
+      t.orders++;
+      if (refusedInCall) t.refused++;
+      else if (state.pendingOrders[team].some(o => o.what === orderTarget(a) && o.queuedAt === state.gameTime)) t.queued++;
+      else t.now++;
+    }
+    return text;
+  };
+  const finish = () => {
+    for (const team of ['player', 'enemy'] as Team[]) tally[team].waitingAtEnd = state.pendingOrders[team].length;
+    return tally;
+  };
+  return { applied, results, finish };
+}
+
+const refusedShare = (t: OrderTally[]) => {
+  const orders = t.reduce((n, x) => n + x.orders, 0);
+  return orders ? t.reduce((n, x) => n + x.refused + x.dropped, 0) / orders : 0;
+};
+
 /** One engineer order on a level: what the model proposes and which actions it asks for. */
 async function engineerOrder(level: number, order: string, prepare?: (s: GameState) => void) {
   const state = new GameState({ level: levelConfig(level) });
@@ -81,17 +154,10 @@ describe.runIf(live)('live LLM on campaign levels', () => {
 
   it('LLM commanders play AI-vs-AI matches on the levels', async () => {
     const report: Record<string, unknown>[] = [];
+    const tallies: OrderTally[] = [];
     for (const level of levels) {
       const state = new GameState({ level: levelConfig(level), fair: false });
-      const applied: Record<Team, ProductionAction[]> = { player: [], enemy: [] };
-      const results: Record<Team, string[]> = { player: [], enemy: [] };
-      const original = state.applyProductionAction.bind(state);
-      state.applyProductionAction = (team: Team, a: ProductionAction) => {
-        const text = original(team, a);
-        applied[team].push(a);
-        results[team].push(text);
-        return text;
-      };
+      const { applied, results, finish } = watchOrders(state);
       const taunts: string[] = [];
       const d = new AIDirector(settings, { chat() {}, proposal() {}, tactical() {}, intercept: (t, src, team) => taunts.push(`${team}/${src}: ${t}`), changed() {} });
       d.setMode('spectator');
@@ -114,6 +180,8 @@ describe.runIf(live)('live LLM on campaign levels', () => {
         }
       }
       const b = d.billing.snapshot();
+      const orders = finish();
+      tallies.push(orders.player, orders.enemy);
       const entry = {
         level,
         gameSec: Math.round(state.gameTime),
@@ -123,6 +191,7 @@ describe.runIf(live)('live LLM on campaign levels', () => {
         lastCall: d.lastCall,
         actions: applied,
         actionResults: results,
+        orders,
         designs,
         designValid: (['player', 'enemy'] as Team[]).map(team => RobotBuilder.calculateStats(state.teams[team].design).isValid),
         factoryWaitsSec: waits,
@@ -134,9 +203,13 @@ describe.runIf(live)('live LLM on campaign levels', () => {
       report.push(entry);
       console.log(`\n=== L${level}: ${entry.outcome ?? 'no winner'} at ${entry.gameSec}s game / ${entry.realSec}s real; calls ally ${b.ally.calls} (err ${b.ally.errors}) enemy ${b.enemy.calls} (err ${b.enemy.errors}); tokens in/out ally ${b.ally.tokensIn}/${b.ally.tokensOut} enemy ${b.enemy.tokensIn}/${b.enemy.tokensOut}`);
       console.log('designs', JSON.stringify(designs), '\nactions', JSON.stringify(applied), '\nwaits', JSON.stringify(waits), '\npads', entry.padBuildings.join(' '));
+      console.log(`orders ${JSON.stringify(orders)}; refused ${Math.round(refusedShare([orders.player, orders.enemy]) * 100)}%`);
       expect(b.enemy.calls).toBeGreaterThan(0);
       expect(entry.designValid).toEqual([true, true]);
     }
+    // before the order queue about 45% of the models' economic orders were refused
+    const share = refusedShare(tallies);
+    console.log(`\n=== economic orders refused (at once or dropped from the queue): ${Math.round(share * 100)}% of ${tallies.reduce((n, x) => n + x.orders, 0)}`);
     if (env.CAMPAIGN_LIVE_REPORT) writeFileSync(env.CAMPAIGN_LIVE_REPORT, JSON.stringify(report, null, 2));
   }, 3600000);
 });

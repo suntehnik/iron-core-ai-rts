@@ -1,5 +1,5 @@
 import React from 'react';
-import { Crosshair, Factory, FlaskConical, Gem, Lock, Minus, Package, Pause, Pickaxe, Play, Plus, Radar, Target, Wrench, X, Zap } from 'lucide-react';
+import { Crosshair, Factory, FlaskConical, Gem, Hourglass, Lock, Minus, Package, Pause, Pickaxe, Play, Plus, Radar, Target, Wrench, X, Zap } from 'lucide-react';
 import { GAME_BALANCE, PAD_BUILDINGS } from '../config/balance';
 import { PadBuildingType } from '../types/game';
 import { GameController } from '../game/GameController';
@@ -26,6 +26,8 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
   const mining = harvesters.filter(h => h.kind === 'harvester' && !h.buildSiteId && (h.state === 'harvesting' || h.carrying > 0)).length;
   // sites other than factories (those show in their factory card): power plants and pad buildings
   const otherSites = s.constructionSites('player').filter(b => b.type !== 'factory');
+  // agents' orders the base cannot pay for yet (UI buttons never queue)
+  const pending = s.pendingOrders.player;
   const harvInProduction = s.harvestersInProduction('player');
   const allPaused = factories.length > 0 && factories.every(f => f.paused);
   const canPlant = s.canBuild('player', 'power_plant');
@@ -74,7 +76,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
                 <span className="font-semibold text-slate-100">{t('prod.factory', { n: i + 1 })}</span>
                 <span className="flex items-center gap-1.5">
                   <span className={cx('text-[10px]', status === t('factory.assembling') || status === t('factory.harvester') ? 'text-teal-300' : 'text-amber-300')}>{status}</span>
-                  {f.built < 1 && <CancelSite onClick={() => ctrl.cancelSite(f.id)} />}
+                  {f.built < 1 && <CancelButton title={t('prod.cancelSite')} onClick={() => ctrl.cancelSite(f.id)} />}
                   {f.built >= 1 && (
                     <button
                       type="button"
@@ -125,12 +127,33 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="text-[10px] text-amber-300">{s.siteStatus(p)}</span>
-                <CancelSite onClick={() => ctrl.cancelSite(p.id)} />
+                <CancelButton title={t('prod.cancelSite')} onClick={() => ctrl.cancelSite(p.id)} />
               </span>
             </div>
             <ProgressBar value={p.built} color="#f2b134" className="mt-1.5" />
           </div>
         ))}
+
+        {pending.length > 0 && (
+          <div className="rounded-lg border border-dashed border-amber-300/30 p-2 bg-slate-900/50" title={t('prod.queueHint')}>
+            <div className="text-[10px] text-amber-200/80 flex items-center gap-1">
+              <Hourglass className="w-3 h-3" /> {t('prod.queue')}
+            </div>
+            {pending.map(o => (
+              <div key={o.id} className="flex items-center gap-1.5 mt-1">
+                <span className="font-semibold text-slate-100 shrink-0">
+                  {s.orderName(o.what)}
+                  {o.count > 1 ? ` ×${o.count}` : ''}
+                </span>
+                <span className="flex-1 min-w-0 text-right text-[10px] text-amber-300 truncate" title={o.why}>
+                  {o.why}
+                </span>
+                <span className="shrink-0 text-[10px] text-slate-400 tabular-nums">{t('unit.sec', { n: s.orderTimeLeft(o) })}</span>
+                <CancelButton title={t('prod.queueCancel')} onClick={() => ctrl.cancelPendingOrder(o.id)} />
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-center justify-between">
           <span className="text-slate-300">{t('prod.batchSize')}</span>
@@ -257,13 +280,13 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
   );
 };
 
-const CancelSite: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+const CancelButton: React.FC<{ title: string; onClick: () => void }> = ({ title, onClick }) => (
   <button
     type="button"
     onClick={onClick}
-    title={t('prod.cancelSite')}
-    aria-label={t('prod.cancelSite')}
-    className="w-6 h-6 rounded-md border flex items-center justify-center transition bg-slate-700/70 border-white/10 text-slate-200 hover:bg-rose-700/60 hover:border-rose-300/50"
+    title={title}
+    aria-label={title}
+    className="w-6 h-6 shrink-0 rounded-md border flex items-center justify-center transition bg-slate-700/70 border-white/10 text-slate-200 hover:bg-rose-700/60 hover:border-rose-300/50"
   >
     <X className="w-3 h-3" />
   </button>

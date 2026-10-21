@@ -573,6 +573,12 @@ export class GameController {
     this.notify(text, 'info');
   }
 
+  /** Removes an agent's order that waits for resources (nothing was paid for it yet). */
+  cancelPendingOrder(id: string) {
+    sounds.playClick();
+    this.notify(this.state.cancelPendingOrder('player', id).text, 'info');
+  }
+
   /** Cancels one of the player's construction sites (75% of the price comes back). */
   cancelSite(id: string) {
     sounds.playClick();

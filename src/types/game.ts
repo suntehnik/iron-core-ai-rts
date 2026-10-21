@@ -272,6 +272,22 @@ export type ProductionAction =
   | { type: 'set_crystal_reserve'; amount: number }
   | { type: 'set_production'; paused: boolean };
 
+/** What an economic order builds: a harvester or a building. */
+export type OrderTarget = 'harvester' | 'power_plant' | 'factory' | PadBuildingType;
+
+/** An agent's order the side could not pay for yet: it waits in the team's queue and runs once it can. */
+export interface PendingOrder {
+  id: string;
+  what: OrderTarget;
+  where?: PadWhere;
+  workers?: number;
+  /** harvesters still to order (1 for a building) */
+  count: number;
+  queuedAt: number;
+  /** what it waits for now, in the game language */
+  why: string;
+}
+
 export interface ArmySummary {
   combatUnits: number;
   harvesters: number;
