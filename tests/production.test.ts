@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { GAME_BALANCE } from '../src/config/balance';
+import { AIDirector } from '../src/ai/AIDirector';
+import { GAME_BALANCE, PAD_BUILDINGS } from '../src/config/balance';
 import { localEngineer } from '../src/ai/fallbacks';
 import { normalizeActions } from '../src/ai/parsing';
+import { commanderUserPrompt } from '../src/ai/prompts';
+import { englishPrompts } from '../src/ai/promptsEn';
 import { GameState } from '../src/engine/GameState';
+import { RobotBuilder } from '../src/engine/RobotBuilder';
+import { RobotDesign } from '../src/types/robot';
 
 const step = (s: GameState, sec: number) => {
   for (let t = 0; t < sec; t += 1 / 20) s.update(1 / 20);
@@ -146,5 +151,85 @@ describe('order feedback', () => {
     const s = new GameState();
     s.setFactoryPaused('player', null, true);
     expect(s.applyProductionAction('player', { type: 'build_harvester', count: 1 })).toMatch(/остановленном заводе/);
+  });
+});
+
+describe('the fabricator stocks what the next robot needs', () => {
+  // 435 metal / 230 components: more components than the default reserve (180) and the AI's cap (220)
+  const pricey = (s: GameState): RobotDesign => ({
+    ...s.teams.player.design,
+    name: 'Railgun Tank',
+    chassisId: 'medium_tracked',
+    modules: ['sniper_railgun', 'autocannon_20mm', 'heat_radiator', 'radar_sensor', 'reinforced_steel'],
+  });
+
+  it('a design pricier than the reserve gets built instead of waiting forever; the reserve setting stays', () => {
+    const s = new GameState();
+    const design = pricey(s);
+    const unit = RobotBuilder.calculateStats(design);
+    expect(unit.isValid).toBe(true);
+    expect(unit.componentCost).toBeGreaterThan(220);
+    s.setFactoryPaused('enemy', null, true); // no enemy wave while the player waits for its first robot
+    s.teams.player.design = design;
+    s.teams.player.economy.metal = 3000;
+    s.teams.player.economy.components = 0;
+    expect(s.componentTarget('player')).toBe(unit.componentCost);
+    step(s, unit.componentCost / GAME_BALANCE.FABRICATOR_RATE_PER_SEC + unit.buildTimeSec + 10);
+    expect(s.teams.player.economy.totals.unitsBuilt).toBeGreaterThan(0);
+    expect(s.teams.player.economy.componentReserve).toBe(GAME_BALANCE.DEFAULT_COMPONENT_RESERVE);
+  });
+
+  it('the AI\'s capped reserve no longer stops the fabricator below the robot\'s price', () => {
+    const s = new GameState();
+    s.teams.enemy.design = pricey(s);
+    const e = s.teams.enemy.economy;
+    e.metal = 450; // under 500 the AI caps its reserve at 220
+    e.components = 225;
+    const offline = { provider: 'offline' as const, apiKey: '', model: '', baseUrl: '', enemyUsesLLM: false, autonomousTactics: false, chargeEnemyToPlayer: false, autoSpeakResponse: false, matchCoinLimit: 40, soundMuted: true };
+    const d = new AIDirector(offline, { chat() {}, proposal() {}, tactical() {}, intercept() {}, changed() {} });
+    d.update(s, 0.05);
+    expect(e.componentReserve).toBeLessThanOrEqual(220);
+    s.update(0.05);
+    expect(e.fabricatorActive).toBe(true);
+    expect(e.components).toBeGreaterThan(225);
+  });
+
+  it('waiting orders add their components; a cheap design keeps the plain reserve', () => {
+    const s = new GameState();
+    expect(s.componentTarget('player')).toBe(GAME_BALANCE.DEFAULT_COMPONENT_RESERVE);
+    const design = pricey(s);
+    s.teams.player.design = design;
+    s.teams.player.economy.metal = 0;
+    s.applyAgentAction('player', { type: 'build', building: 'radar', where: 'base' });
+    expect(s.componentTarget('player')).toBe(RobotBuilder.calculateStats(design).componentCost + PAD_BUILDINGS.radar.components);
+  });
+
+  it('a batch started before a redesign is covered until it is done', () => {
+    const s = new GameState();
+    s.teams.player.design = pricey(s);
+    const unit = RobotBuilder.calculateStats(s.teams.player.design);
+    const e = s.teams.player.economy;
+    e.metal = unit.metalCost;
+    e.components = unit.componentCost;
+    s.update(0.05); // the batch starts and pays for its first robot
+    for (let t = 0; t < unit.buildTimeSec + 1; t += 0.05) {
+      e.metal = 0; // nothing for the second one
+      e.components = 0;
+      s.update(0.05);
+    }
+    const job = playerFactory(s).job;
+    expect(job?.unitPaid).toBe(false);
+    s.teams.player.design = new GameState().teams.player.design; // a cheap redesign
+    expect(s.componentTarget('player')).toBe(job!.stats.componentCost);
+  });
+
+  it('the agents see the fabricator\'s target when it is above the reserve', () => {
+    const s = new GameState();
+    expect(commanderUserPrompt(s, 'enemy')).not.toContain('фабрикатор держит');
+    s.teams.enemy.design = pricey(s);
+    const n = RobotBuilder.calculateStats(s.teams.enemy.design).componentCost;
+    expect(commanderUserPrompt(s, 'enemy')).toContain(`резерв компонентов 180 (фабрикатор держит ${n} под следующую машину)`);
+    const en = englishPrompts({ replyLanguage: 'English', markForTranslation: false });
+    expect(en.commanderUser(s, 'enemy')).toContain(`component reserve 180 (the fabricator keeps ${n} for the next robot)`);
   });
 });

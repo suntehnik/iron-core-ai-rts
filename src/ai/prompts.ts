@@ -67,7 +67,13 @@ function economyLine(state: GameState, team: Team): string {
     e.powerCapacity
   } кВт, добыча ${e.miningRatePerMin}/мин, добытчиков ${harv}/${GAME_BALANCE.MAX_HARVESTERS}${
     harvQueued ? ` (+${harvQueued} в производстве)` : ''
-  }${builders(state, team) ? ` (на стройке ${builders(state, team)})` : ''}, заводов ${factories.length}${paused ? ` (на паузе: ${paused})` : ''}, электростанций ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, размер партии ${e.batchSize}, резерв компонентов ${e.componentReserve}`;
+  }${builders(state, team) ? ` (на стройке ${builders(state, team)})` : ''}, заводов ${factories.length}${paused ? ` (на паузе: ${paused})` : ''}, электростанций ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, размер партии ${e.batchSize}, резерв компонентов ${e.componentReserve}${componentFloor(state, team, ' (фабрикатор держит {n} под следующую машину)')}`;
+}
+
+/** The fabricator's target when the next robot or the queue needs more than the reserve: `{n}` in `text`; empty otherwise. */
+export function componentFloor(state: GameState, team: Team, text: string): string {
+  const target = state.componentTarget(team);
+  return target > state.teams[team].economy.componentReserve ? text.replace('{n}', String(target)) : '';
 }
 
 const PAD_NAMES_RU: Record<PadBuildingType, string> = {

@@ -1117,8 +1117,8 @@ export class GameState {
     for (const team of ['player', 'enemy'] as Team[]) {
       const econ = this.teams[team].economy;
       const hq = this.getHQ(team);
-      const wants = econ.components < econ.componentReserve && econ.metal > GAME_BALANCE.FABRICATOR_MIN_METAL_RESERVE;
-      econ.fabricatorActive = !!hq && wants;
+      const wants = !!hq && econ.metal > GAME_BALANCE.FABRICATOR_MIN_METAL_RESERVE && econ.components < this.componentTarget(team);
+      econ.fabricatorActive = wants;
       if (!econ.fabricatorActive) continue;
       const made = Math.min(
         GAME_BALANCE.FABRICATOR_RATE_PER_SEC * econ.powerEfficiency * dt,
@@ -1129,6 +1129,19 @@ export class GameState {
       econ.metal -= made * GAME_BALANCE.FABRICATOR_METAL_PER_COMPONENT;
       econ.totals.componentsMade += made;
     }
+  }
+
+  /**
+   * Components the fabricator stocks up to: the side's reserve, but never less than the next combat
+   * robot and the waiting orders need. A design pricier than the reserve would otherwise wait forever.
+   */
+  public componentTarget(team: Team): number {
+    let unit = RobotBuilder.calculateStats(this.teams[team].design).componentCost;
+    // a batch started before a redesign keeps its own design until it is done
+    for (const b of this.buildings) if (b.team === team && b.job && !b.job.unitPaid) unit = Math.max(unit, b.job.stats.componentCost);
+    let queued = 0;
+    for (const o of this.pendingOrders[team]) queued += this.orderCost(team, o.what).components;
+    return Math.max(this.teams[team].economy.componentReserve, unit + queued);
   }
 
   public isArmyCapped(team: Team): boolean {
