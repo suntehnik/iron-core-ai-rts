@@ -230,6 +230,8 @@ npx vite preview
 на localhost и в dev, помечает события `debug_mode` и пишет каждое в консоль браузера: `[analytics] match_start {…}`.
 В консоли Firebase → Analytics → DebugView события появляются через несколько секунд. Сами запросы видны во вкладке
 Network: `region1.google-analytics.com/g/collect`, параметры событий начинаются с `ep.` и `epn.`.
+В отчётах GA4 параметры событий видны только после регистрации: Admin → Custom definitions, строковые параметры как
+custom dimensions, числовые как custom metrics. До этого они есть только в DebugView и в экспорте в BigQuery.
 
 **Ключ Firebase.** `apiKey` в `src/analytics/firebase.ts` — публичный идентификатор веб-приложения, а не секрет, как
 ключи LLM. Ограничьте его в Google Cloud console: APIs & Services → Credentials → «Browser key (auto created by
