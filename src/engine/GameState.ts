@@ -709,6 +709,11 @@ export class GameState {
 
   /** Agents' orders waiting for resources, oldest first (the player's show in the production panel). */
   public pendingOrders: Record<Team, PendingOrder[]> = { player: [], enemy: [] };
+  /** Agents' economic orders this match: given, put in the queue, refused (at once, the queue full, or dropped from it later). */
+  public agentOrderTally: Record<Team, { orders: number; queued: number; refused: number }> = {
+    player: { orders: 0, queued: 0, refused: 0 },
+    enemy: { orders: 0, queued: 0, refused: 0 },
+  };
 
   /**
    * An agent's order (the engineer's confirmed proposal, an LLM commander's decision). Like
@@ -719,11 +724,13 @@ export class GameState {
   public applyAgentAction(team: Team, action: ProductionAction): string {
     const order = orderOf(action);
     if (!order) return this.applyProductionAction(team, action);
+    this.agentOrderTally[team].orders++;
     // the same order again replaces the waiting one, so a repeated order is never doubled
     const same = this.pendingOrders[team].find(o => o.what === order.what && o.where === order.where);
     const check = this.checkOrder(team, order.what, order.where);
     if (check.short) return this.enqueue(team, order, check.reason || tr('build.impossible'), same);
     if (same) this.pendingOrders[team] = this.pendingOrders[team].filter(o => o !== same);
+    if (!check.ok) this.agentOrderTally[team].refused++;
     if (order.what !== 'harvester' || !check.ok) return this.applyProductionAction(team, action);
     // harvesters: as many as the metal pays for now, the rest wait
     const { ordered } = this.orderHarvesters(team, order.count);
@@ -736,16 +743,20 @@ export class GameState {
 
   private enqueue(team: Team, order: NewOrder, why: string, same?: PendingOrder): string {
     const name = this.orderName(order.what);
+    const tally = this.agentOrderTally[team];
     if (same) {
       Object.assign(same, order, { queuedAt: this.gameTime, why });
+      tally.queued++;
       return tr('queue.again', { name, why });
     }
     const queue = this.pendingOrders[team];
     if (queue.length >= GAME_BALANCE.ORDER_QUEUE_MAX) {
       const full = tr('queue.full', { n: GAME_BALANCE.ORDER_QUEUE_MAX });
       this.noteRefusal(team, order.what, full);
+      tally.refused++;
       return tr('queue.notQueued', { name, why, full });
     }
+    tally.queued++;
     queue.push({ ...order, id: `order_${team}_${this.nextId++}`, queuedAt: this.gameTime, why });
     return tr('queue.added', { name, why, n: GAME_BALANCE.ORDER_QUEUE_TTL_SEC });
   }
@@ -796,6 +807,7 @@ export class GameState {
     const name = this.orderName(o.what);
     const ttl = GAME_BALANCE.ORDER_QUEUE_TTL_SEC;
     if (this.gameTime - o.queuedAt >= ttl) {
+      this.agentOrderTally[team].refused++;
       this.noteRefusal(team, o.what, tr('queue.expiredWhy', { n: ttl, why: o.why }));
       this.pushEvent(team, 'info', tr('queue.expired', { name, n: ttl }), false);
       return false;
@@ -806,6 +818,7 @@ export class GameState {
         o.why = check.reason || o.why;
         return true;
       }
+      this.agentOrderTally[team].refused++;
       this.noteRefusal(team, o.what, check.reason || tr('build.impossible'));
       this.pushEvent(team, 'info', tr('queue.dropped', { name, why: check.reason || '' }), false);
       return false;

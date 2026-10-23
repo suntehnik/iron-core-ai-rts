@@ -5,6 +5,7 @@ import { LLM_PROVIDERS, LLMProviderId, PROVIDER_ORDER, providerHint, providerLab
 import { listModels } from '../ai/llm/LLMClient';
 import { TranslationStatus, hasNativeBridge, nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
 import { GameController } from '../game/GameController';
+import { analytics } from '../analytics';
 import { LLMSettings } from '../types/agent';
 import { LanguageSwitch, cx } from './ui';
 import { Lang, t } from '../i18n';
@@ -15,6 +16,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
   const [testing, setTesting] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelsError, setModelsError] = useState('');
+  const [stats, setStats] = useState(analytics.enabled);
   const preset = LLM_PROVIDERS[s.provider];
   const proxy = ctrl.proxyStatus;
   // In the iOS app there is the on-device model and no dev-server proxy; in a browser it is the other way round
@@ -34,7 +36,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
   const runTest = async () => {
     setTesting(true);
     setTest(null);
-    setTest(await ctrl.director.testConnection(conn));
+    setTest(await ctrl.testConnection(conn));
     setTesting(false);
   };
 
@@ -51,6 +53,8 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
 
   const save = () => {
     ctrl.applySettings(s);
+    // an untouched switch is not an answer: the start screen still asks
+    if (stats !== analytics.enabled) analytics.setConsent(stats);
     onClose();
   };
 
@@ -196,6 +200,14 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
             <Toggle checked={s.autonomousTactics} onChange={v => setS({ ...s, autonomousTactics: v })} label={t('set.autoTactics')} hint={t('set.autoTacticsHint', { n: GAME_BALANCE.AI_EVENT_REPLAN_COOLDOWN_SEC })} />
             <Toggle checked={s.chargeEnemyToPlayer} onChange={v => setS({ ...s, chargeEnemyToPlayer: v })} label={t('set.chargeEnemy')} hint={t('set.chargeEnemyHint')} />
             <Toggle checked={s.autoSpeakResponse} onChange={v => setS({ ...s, autoSpeakResponse: v })} label={t('set.speak')} />
+            {analytics.available && (
+              <Toggle
+                checked={stats}
+                onChange={setStats}
+                label={t('set.stats')}
+                hint={analytics.debug ? `${t('set.statsHint')} ${t('set.statsDebug')}` : t('set.statsHint')}
+              />
+            )}
             <div className="flex items-center gap-2">
               <span className="text-slate-300">{t('set.coinLimit')}</span>
               <input
