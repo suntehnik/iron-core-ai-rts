@@ -41,7 +41,7 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
           icon={<Cog className="w-4 h-4" />}
           value={Math.floor(e.components)}
           title={t('top.components')}
-          sub={e.fabricatorActive ? t('top.fabricatorOn') : t('top.reserve', { n: e.componentReserve })}
+          sub={e.fabricatorActive ? t('top.fabricatorOn') : t('top.reserve', { n: s.componentTarget('player') })}
         />
         <Resource
           icon={<Zap className="w-4 h-4" />}

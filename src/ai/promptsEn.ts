@@ -8,7 +8,7 @@ import { ProductionProposal } from '../types/agent';
 import { PadBuildingType, Team } from '../types/game';
 import { RobotDesign } from '../types/robot';
 import { markRussian } from './llm/nativeBridge';
-import { PromptSet, cleanInstructions, planLine, queuedLabel } from './prompts';
+import { PromptSet, cleanInstructions, componentFloor, planLine, queuedLabel } from './prompts';
 
 /**
  * English agent prompts: for the English and Italian game, and for the on-device model of the iOS app
@@ -89,7 +89,7 @@ export function createEnglishPrompts({ replyLanguage, markForTranslation }: Engl
     e.powerCapacity
   } kW, mining ${e.miningRatePerMin}/min, harvesters ${state.harvesterCount(team)}/${GAME_BALANCE.MAX_HARVESTERS}${
     harvQueued ? ` (+${harvQueued} in production)` : ''
-  }${builders(state, team) ? ` (${builders(state, team)} building)` : ''}, factories ${factories.length}${paused ? ` (paused: ${paused})` : ''}, power plants ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, batch size ${e.batchSize}, component reserve ${e.componentReserve}`;
+  }${builders(state, team) ? ` (${builders(state, team)} building)` : ''}, factories ${factories.length}${paused ? ` (paused: ${paused})` : ''}, power plants ${state.buildingCount(team, 'power_plant')}${sitesLine(state, team)}, batch size ${e.batchSize}, component reserve ${e.componentReserve}${componentFloor(state, team, ' (the fabricator keeps {n} for the next robot)')}`;
   }
 
   /** Pad buildings open on this level: id, cost, how many stand and how many pads are free. */

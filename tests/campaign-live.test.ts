@@ -6,7 +6,8 @@ import { levelConfig } from '../src/config/levels';
 import { GameState } from '../src/engine/GameState';
 import { RobotBuilder } from '../src/engine/RobotBuilder';
 import { LLMSettings, ProductionProposal } from '../src/types/agent';
-import { ProductionAction, Team } from '../src/types/game';
+import { GAME_BALANCE } from '../src/config/balance';
+import { OrderTarget, ProductionAction, Team } from '../src/types/game';
 
 // Live campaign check against the OpenAI-compatible endpoint from .env.local. Runs only with LLM_LIVE=1.
 // CAMPAIGN_LIVE_LEVELS=3,5,6 picks the AI-vs-AI levels; CAMPAIGN_LIVE_SEC the game seconds per match;
@@ -97,6 +98,78 @@ function watchOrders(state: GameState) {
   return { applied, results, finish };
 }
 
+type Cost = { metal: number; components: number; crystals: number };
+type WaitReason = 'metal' | 'components' | 'crystals' | 'reserve:metal' | 'reserve:components' | 'reserve:crystals' | 'other';
+
+/**
+ * Why the queued orders wait, tick by tick: a real shortage of a resource, or the reserve kept for the
+ * next combat robot (and which resource that reserve holds). Also how each order ended and what the
+ * economy looked like meanwhile.
+ */
+function traceQueue(state: GameState) {
+  const priv = state as unknown as { orderCost(team: Team, what: OrderTarget): Cost };
+  const seen = new Map<string, { team: Team; what: OrderTarget; since: number; lastAge: number; bySec: Partial<Record<WaitReason, number>>; fabSec: number; prodSec: number }>();
+  const ended: { team: Team; what: OrderTarget; waited: number; fate: 'expired' | 'ran or dropped'; bySec: Partial<Record<WaitReason, number>>; fabSec: number; prodSec: number }[] = [];
+  const economy: Record<string, unknown>[] = [];
+  let lastEconomyAt = -999;
+  const reason = (team: Team, cost: Cost): WaitReason => {
+    const e = state.teams[team].economy;
+    if (e.metal < cost.metal) return 'metal';
+    if (e.components < cost.components) return 'components';
+    if (state.crystals && e.crystals < cost.crystals) return 'crystals';
+    const unit = RobotBuilder.calculateStats(state.teams[team].design);
+    if (cost.metal && e.metal - cost.metal < unit.metalCost) return 'reserve:metal';
+    if (cost.components && e.components - cost.components < unit.componentCost) return 'reserve:components';
+    if (state.crystals && cost.crystals && e.crystals - cost.crystals < unit.crystalCost) return 'reserve:crystals';
+    return 'other';
+  };
+  const sample = (dt: number) => {
+    const alive = new Set<string>();
+    for (const team of ['player', 'enemy'] as Team[]) {
+      const producing = state.buildings.some(b => b.team === team && b.type === 'factory' && !!b.job?.unitPaid);
+      for (const o of state.pendingOrders[team]) {
+        alive.add(o.id);
+        let rec = seen.get(o.id);
+        if (!rec) seen.set(o.id, (rec = { team, what: o.what, since: state.gameTime, lastAge: 0, bySec: {}, fabSec: 0, prodSec: 0 }));
+        rec.lastAge = state.gameTime - o.queuedAt;
+        const r = reason(team, priv.orderCost(team, o.what));
+        rec.bySec[r] = (rec.bySec[r] ?? 0) + dt;
+        if (state.teams[team].economy.fabricatorActive) rec.fabSec += dt;
+        if (producing) rec.prodSec += dt;
+      }
+    }
+    for (const [id, rec] of seen) {
+      if (alive.has(id)) continue;
+      seen.delete(id);
+      ended.push({ team: rec.team, what: rec.what, waited: Math.round(state.gameTime - rec.since), fate: rec.lastAge >= GAME_BALANCE.ORDER_QUEUE_TTL_SEC - 0.5 ? 'expired' : 'ran or dropped', bySec: rounded(rec.bySec), fabSec: Math.round(rec.fabSec), prodSec: Math.round(rec.prodSec) });
+    }
+    if (state.gameTime - lastEconomyAt >= 15) {
+      lastEconomyAt = state.gameTime;
+      for (const team of ['player', 'enemy'] as Team[]) {
+        const e = state.teams[team].economy;
+        const unit = RobotBuilder.calculateStats(state.teams[team].design);
+        economy.push({
+          t: Math.round(state.gameTime), team, metal: Math.round(e.metal), comps: Math.round(e.components), crystals: Math.round(e.crystals),
+          minePerMin: e.miningRatePerMin, harvesters: state.harvesterCount(team), fabricator: e.fabricatorActive,
+          unit: `${unit.metalCost}m/${unit.componentCost}c/${unit.crystalCost}cr ${unit.buildTimeSec}s`, batch: e.batchSize,
+          factories: state.buildings.filter(b => b.team === team && b.type === 'factory').map(b => state.factoryStatus(b)).join('|'),
+          queue: state.pendingOrders[team].map(o => o.what).join(','),
+        });
+      }
+    }
+  };
+  const summary = () => {
+    const total: Partial<Record<WaitReason, number>> = {};
+    for (const x of ended) for (const [k, v] of Object.entries(x.bySec)) total[k as WaitReason] = (total[k as WaitReason] ?? 0) + v;
+    return { waitSecByReason: rounded(total), ended, stillWaiting: [...seen.values()].map(r => ({ team: r.team, what: r.what, bySec: rounded(r.bySec) })), economy };
+  };
+  return { sample, summary };
+}
+
+function rounded<T extends Record<string, number | undefined>>(o: T): T {
+  return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v ?? 0)])) as T;
+}
+
 const refusedShare = (t: OrderTally[]) => {
   const orders = t.reduce((n, x) => n + x.orders, 0);
   return orders ? t.reduce((n, x) => n + x.refused + x.dropped, 0) / orders : 0;
@@ -158,6 +231,7 @@ describe.runIf(live)('live LLM on campaign levels', () => {
     for (const level of levels) {
       const state = new GameState({ level: levelConfig(level), fair: false });
       const { applied, results, finish } = watchOrders(state);
+      const queueTrace = traceQueue(state);
       const taunts: string[] = [];
       const d = new AIDirector(settings, { chat() {}, proposal() {}, tactical() {}, intercept: (t, src, team) => taunts.push(`${team}/${src}: ${t}`), changed() {} });
       d.setMode('spectator');
@@ -168,6 +242,7 @@ describe.runIf(live)('live LLM on campaign levels', () => {
         for (let k = 0; k < 10; k++) {
           state.update(0.1);
           d.update(state, 0.1);
+          queueTrace.sample(0.1);
         }
         await until(() => !d.busy.enemy && !d.busy.ally);
         for (const team of ['player', 'enemy'] as Team[]) {
@@ -182,6 +257,7 @@ describe.runIf(live)('live LLM on campaign levels', () => {
       const b = d.billing.snapshot();
       const orders = finish();
       tallies.push(orders.player, orders.enemy);
+      const queue = queueTrace.summary();
       const entry = {
         level,
         gameSec: Math.round(state.gameTime),
@@ -192,6 +268,7 @@ describe.runIf(live)('live LLM on campaign levels', () => {
         actions: applied,
         actionResults: results,
         orders,
+        queue,
         designs,
         designValid: (['player', 'enemy'] as Team[]).map(team => RobotBuilder.calculateStats(state.teams[team].design).isValid),
         factoryWaitsSec: waits,
@@ -204,6 +281,7 @@ describe.runIf(live)('live LLM on campaign levels', () => {
       console.log(`\n=== L${level}: ${entry.outcome ?? 'no winner'} at ${entry.gameSec}s game / ${entry.realSec}s real; calls ally ${b.ally.calls} (err ${b.ally.errors}) enemy ${b.enemy.calls} (err ${b.enemy.errors}); tokens in/out ally ${b.ally.tokensIn}/${b.ally.tokensOut} enemy ${b.enemy.tokensIn}/${b.enemy.tokensOut}`);
       console.log('designs', JSON.stringify(designs), '\nactions', JSON.stringify(applied), '\nwaits', JSON.stringify(waits), '\npads', entry.padBuildings.join(' '));
       console.log(`orders ${JSON.stringify(orders)}; refused ${Math.round(refusedShare([orders.player, orders.enemy]) * 100)}%`);
+      console.log(`queue waits by reason (s) ${JSON.stringify(queue.waitSecByReason)}; ended ${JSON.stringify(queue.ended)}`);
       expect(b.enemy.calls).toBeGreaterThan(0);
       expect(entry.designValid).toEqual([true, true]);
     }
