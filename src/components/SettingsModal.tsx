@@ -16,7 +16,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
   const [testing, setTesting] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelsError, setModelsError] = useState('');
-  const [stats, setStats] = useState(analytics.consent === 'granted');
+  const [stats, setStats] = useState(analytics.enabled);
   const preset = LLM_PROVIDERS[s.provider];
   const proxy = ctrl.proxyStatus;
   // In the iOS app there is the on-device model and no dev-server proxy; in a browser it is the other way round
@@ -54,7 +54,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
   const save = () => {
     ctrl.applySettings(s);
     // an untouched switch is not an answer: the start screen still asks
-    if (stats !== (analytics.consent === 'granted')) analytics.setConsent(stats);
+    if (stats !== analytics.enabled) analytics.setConsent(stats);
     onClose();
   };
 

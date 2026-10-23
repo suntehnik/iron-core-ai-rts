@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LLMError } from '../src/ai/llm/LLMClient';
-import { Analytics, AnalyticsBackend, AnalyticsEnv, Consent } from '../src/analytics/analytics';
+import { Analytics, AnalyticsBackend, AnalyticsEnv, Consent, ConsentPolicy } from '../src/analytics/analytics';
 import { EVENTS, USER_PROPERTIES, validateEvent, validateUserProperty } from '../src/analytics/events';
-import { analytics } from '../src/analytics';
+import { CONSENT_POLICY, analytics } from '../src/analytics';
 import { classifyLLMError, durationBucket, latencyBucket, providerKind } from '../src/analytics/matchStats';
 import { GAME_BALANCE } from '../src/config/balance';
 import { GameState } from '../src/engine/GameState';
@@ -12,7 +12,7 @@ import { LLMSettings } from '../src/types/agent';
 const ON: AnalyticsEnv = { off: null, debug: false, privacySignal: false };
 
 /** An Analytics with an in-memory consent store and a fake SDK that records what it was given. */
-function setup(opts: { env?: Partial<AnalyticsEnv>; saved?: Consent | null; backend?: 'ok' | 'unsupported' | 'blocked' } = {}) {
+function setup(opts: { env?: Partial<AnalyticsEnv>; policy?: ConsentPolicy; saved?: Consent | null; backend?: 'ok' | 'unsupported' | 'blocked' } = {}) {
   const sent: { name: string; params: Record<string, unknown> }[] = [];
   const user: Record<string, unknown>[] = [];
   const collection: boolean[] = [];
@@ -27,7 +27,7 @@ function setup(opts: { env?: Partial<AnalyticsEnv>; saved?: Consent | null; back
     return opts.backend === 'unsupported' ? null : backend;
   });
   const clearIdentifiers = vi.fn();
-  const a = new Analytics({ env: { ...ON, ...opts.env }, store, loader, clearIdentifiers });
+  const a = new Analytics({ env: { ...ON, ...opts.env }, policy: opts.policy ?? 'opt-in', store, loader, clearIdentifiers });
   return { a, sent, user, collection, store, loader, clearIdentifiers };
 }
 
@@ -58,7 +58,7 @@ describe('analytics switched off', () => {
   }
 
   it('a build without the SDK (the iOS app) is never available', () => {
-    const a = new Analytics({ env: ON, store: { get: () => 'granted', set: () => {} }, loader: null });
+    const a = new Analytics({ env: ON, policy: 'opt-out', store: { get: () => 'granted', set: () => {} }, loader: null });
     expect(a.available).toBe(false);
     expect(a.track('agent_order', order)).toBe(true);
   });
@@ -148,6 +148,56 @@ describe('consent', () => {
     for (let i = 0; i < 80; i++) a.track('design_trial', { cached: false });
     await a.ready();
     expect(sent).toHaveLength(50);
+  });
+});
+
+describe('the opt-out policy', () => {
+  it('the game ships opt-in', () => {
+    expect(CONSENT_POLICY).toBe('opt-in');
+  });
+
+  it('collects from the start without asking', async () => {
+    const { a, sent, loader } = setup({ policy: 'opt-out' });
+    expect(a.consent).toBe('unset');
+    expect(a.enabled).toBe(true);
+    expect(a.shouldAsk).toBe(false);
+    a.track('agent_order', order);
+    await a.ready();
+    expect(loader).toHaveBeenCalledWith(false);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('the settings switch turns it off and drops the identifiers', async () => {
+    const { a, sent, collection, clearIdentifiers, store } = setup({ policy: 'opt-out' });
+    await a.ready();
+    a.setConsent(false);
+    a.track('agent_order', order);
+    expect(store.value).toBe('denied');
+    expect(a.enabled).toBe(false);
+    expect(collection).toEqual([false]);
+    expect(clearIdentifiers).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([]);
+  });
+
+  it('stays off under Do Not Track or Global Privacy Control until an explicit "yes"', async () => {
+    const { a, sent, loader } = setup({ policy: 'opt-out', env: { privacySignal: true } });
+    a.track('agent_order', order);
+    await a.ready();
+    expect(a.active).toBe(false);
+    expect(loader).not.toHaveBeenCalled();
+    a.setConsent(true);
+    a.track('agent_order', order);
+    await a.ready();
+    expect(sent).toHaveLength(1);
+  });
+
+  it('an explicit "yes" under opt-out changes nothing', async () => {
+    const { a, collection, loader, store } = setup({ policy: 'opt-out' });
+    await a.ready();
+    a.setConsent(true);
+    expect(store.value).toBe('granted');
+    expect(collection).toEqual([]);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 });
 

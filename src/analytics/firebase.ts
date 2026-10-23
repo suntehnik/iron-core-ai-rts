@@ -22,7 +22,7 @@ const NO_ADS = { ad_storage: 'denied', ad_user_data: 'denied', ad_personalizatio
 
 export async function loadFirebase(debug: boolean): Promise<AnalyticsBackend | null> {
   if (!(await isSupported())) return null;
-  // The SDK is loaded only after the player agreed, so analytics storage (the _ga cookie) starts granted
+  // The SDK is loaded only when statistics are on (opt-in: after the player agreed), so analytics storage starts granted
   setConsent({ ...NO_ADS, analytics_storage: 'granted' });
   const app = initializeApp(FIREBASE_CONFIG);
   const analytics = initializeAnalytics(app, {

@@ -2,6 +2,13 @@ import { AnalyticsValue, EventName, EventParams, UserPropertyName, UserPropertyV
 
 /** The player's answer to "send anonymous statistics?"; 'unset' — not asked yet. */
 export type Consent = 'granted' | 'denied' | 'unset';
+/**
+ * How statistics start when the player has not answered. 'opt-in': off, the start screen asks once, and the
+ * _ga cookie and the Firebase installation id appear only after "yes". 'opt-out': on from the start with the same
+ * identifiers, not asked, the settings switch turns it off. There is no cookieless variant: GA4 ignores
+ * `client_storage: 'none'`, and Firebase keeps its installation id in IndexedDB anyway.
+ */
+export type ConsentPolicy = 'opt-in' | 'opt-out';
 /** Why collection is impossible here: vitest, the dev server, the iOS app, localhost without the debug flag, a browser the SDK does not support. */
 export type OffReason = 'test' | 'dev' | 'ios' | 'local' | 'unsupported';
 
@@ -9,7 +16,7 @@ export interface AnalyticsEnv {
   off: OffReason | null;
   /** `?analytics_debug=1`: collection on localhost and the dev server, events marked for GA DebugView and logged to the console */
   debug: boolean;
-  /** Do Not Track or Global Privacy Control: the player is not asked (the settings switch still works) */
+  /** Do Not Track or Global Privacy Control: never on without an explicit "yes" and never asked (the settings switch still works) */
   privacySignal: boolean;
 }
 
@@ -30,6 +37,7 @@ export interface ConsentStore {
 
 export interface AnalyticsDeps {
   env: AnalyticsEnv;
+  policy: ConsentPolicy;
   store: ConsentStore;
   /** null — the build has no SDK at all (the iOS app) */
   loader: BackendLoader | null;
@@ -43,8 +51,8 @@ type Pending = { kind: 'event' | 'user'; name: string; params: Record<string, An
 const QUEUE_MAX = 50;
 
 /**
- * Anonymous product analytics. Nothing is loaded or sent until the player agrees; each event is
- * checked against the schema in ./events, and one that breaks it is dropped whole.
+ * Anonymous product analytics. Under the opt-in policy nothing is loaded or sent until the player agrees;
+ * each event is checked against the schema in ./events, and one that breaks it is dropped whole.
  */
 export class Analytics {
   private env: AnalyticsEnv;
@@ -71,24 +79,35 @@ export class Analytics {
     return this.consentValue;
   }
 
+  /** The player's effective choice: an explicit answer, else the policy's default (off under a privacy signal). */
+  get enabled(): boolean {
+    if (this.consentValue !== 'unset') return this.consentValue === 'granted';
+    return this.deps.policy === 'opt-out' && !this.env.privacySignal;
+  }
+
   get active(): boolean {
-    return this.available && this.consentValue === 'granted';
+    return this.available && this.enabled;
   }
 
   get debug(): boolean {
     return this.env.debug;
   }
 
-  /** The start screen asks once, where collection is possible and the browser does not ask not to track. */
+  /** Opt-in: the start screen asks once, where collection is possible and the browser does not ask not to track. */
   get shouldAsk(): boolean {
-    return this.available && this.consentValue === 'unset' && !this.env.privacySignal;
+    return this.deps.policy === 'opt-in' && this.available && this.consentValue === 'unset' && !this.env.privacySignal;
   }
 
   setConsent(granted: boolean) {
     const next: Consent = granted ? 'granted' : 'denied';
     this.deps.store.set(next);
     if (next === this.consentValue) return;
+    const was = this.enabled;
     this.consentValue = next;
+    if (granted === was) {
+      this.emit();
+      return;
+    }
     if (granted) {
       this.backend?.setCollection(true);
       if (this.active) void this.load();

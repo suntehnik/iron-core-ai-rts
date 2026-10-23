@@ -1,10 +1,16 @@
 import { hasNativeBridge } from '../ai/llm/nativeBridge';
-import { Analytics, AnalyticsEnv, BackendLoader, Consent, ConsentStore } from './analytics';
+import { Analytics, AnalyticsEnv, BackendLoader, Consent, ConsentPolicy, ConsentStore } from './analytics';
 import { isLocalHost } from './matchStats';
 
 export * from './analytics';
 export * from './events';
 export { LLMMatchStats, classifyLLMError, durationBucket, latencyBucket, providerKind } from './matchStats';
+
+/**
+ * The one switch between the two consent models (see ConsentPolicy): 'opt-in' — off until the player says yes;
+ * 'opt-out' — on from the start (the _ga cookie included) until the player turns it off in the settings.
+ */
+export const CONSENT_POLICY: ConsentPolicy = 'opt-in';
 
 const CONSENT_KEY = 'ironcore_analytics_v1';
 const DEBUG_PARAM = 'analytics_debug';
@@ -68,4 +74,4 @@ function clearIdentifiers() {
 // The iOS build has no SDK at all: the dynamic import is cut out at build time
 const loader: BackendLoader | null = import.meta.env.MODE === 'ios' ? null : debug => import('./firebase').then(m => m.loadFirebase(debug));
 
-export const analytics = new Analytics({ env: detectEnv(), store: consentStore, loader, clearIdentifiers });
+export const analytics = new Analytics({ env: detectEnv(), policy: CONSENT_POLICY, store: consentStore, loader, clearIdentifiers });
