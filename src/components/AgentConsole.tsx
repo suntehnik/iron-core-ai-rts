@@ -218,7 +218,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
               key={q}
               type="button"
               disabled={busy}
-              onClick={() => void ctrl.sendOrder(t(q))}
+              onClick={() => void ctrl.sendOrder(t(q), agent, 'quick')}
               className="text-[10px] whitespace-nowrap px-2 py-1 rounded-full bg-slate-800/80 border border-white/10 text-slate-300 hover:bg-slate-700 disabled:opacity-40"
             >
               {t(q)}
