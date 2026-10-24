@@ -1,6 +1,7 @@
 import { AIDirector, GameMode } from '../ai/AIDirector';
 import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
-import { cloudReady } from '../ai/llm/LLMClient';
+import { LLMConnection, cloudReady } from '../ai/llm/LLMClient';
+import { OutcomeKind, PlanField, analytics, durationBucket, latencyBucket, providerKind } from '../analytics';
 import { hasNativeBridge, nativePrepareTranslation, refreshNativeStatus } from '../ai/llm/nativeBridge';
 import { commanderName } from '../config/commanders';
 import { VoiceService, voiceService } from '../ai/VoiceService';
@@ -125,6 +126,11 @@ export class GameController {
   public selectedLevel = this.campaign.unlocked;
   /** the match whose result has been recorded (each victory is counted once) */
   private resultNoted: GameState | null = null;
+  /** the match analytics follows (started with the player's consent); its end is reported once */
+  private trackedMatch: GameState | null = null;
+  /** the player's buildings already reported as built in the tracked match */
+  private builtSeen = new Set<string>();
+  private lastPlanTrack = { field: '', at: -Infinity };
   private trialCache = new Map<string, TrialReport>();
 
   private scene: SceneManager | null = null;
@@ -162,8 +168,14 @@ export class GameController {
         this.bump();
       },
       changed: () => this.bump(),
+      decided: (decision, p) => {
+        analytics.track('proposal_decision', { decision, source: p.source, has_design: !!p.design, actions: Math.min(50, p.actions.length) });
+        if (decision === 'confirm' && p.design) analytics.track('design_change', { chassis: p.design.chassisId, source: p.source });
+      },
     });
     this.director.billing.onWarning = text => this.notify(text, 'warn');
+    analytics.setUserProperty('highest_level', this.campaign.unlocked);
+    if (analytics.available) window.addEventListener('pagehide', () => this.endMatch('closed'));
     this.attachSound();
     sounds.setMuted(this.settings.soundMuted);
     this.greet();
@@ -203,6 +215,7 @@ export class GameController {
       this.greet();
     }
     if (lang === 'ru') void nativePrepareTranslation();
+    analytics.track('language_change', { lang, in_match: this.started });
     this.bump();
   }
 
@@ -265,6 +278,7 @@ export class GameController {
     this.uiTimer += dt;
     if (this.uiTimer >= 0.12) {
       this.uiTimer = 0;
+      this.trackBuilt();
       this.bump();
     }
   };
@@ -290,6 +304,7 @@ export class GameController {
     if (n < 1 || n > this.campaign.unlocked || n === this.selectedLevel) return;
     this.selectedLevel = n;
     if (!this.started) this.resetState();
+    analytics.track('level_pick', { level: n, unlocked: this.campaign.unlocked });
     this.bump();
   }
 
@@ -305,9 +320,15 @@ export class GameController {
     const s = this.state;
     if (!s.gameOver || this.resultNoted === s) return;
     this.resultNoted = s;
+    this.endMatch(s.gameOver === 'player_won' ? 'won' : 'lost');
     if (this.mode !== 'human' || !s.level || s.gameOver !== 'player_won') return;
+    const unlocked = this.campaign.unlocked;
     this.campaign = recordVictory(this.campaign, s.level.n, s.gameTime);
     saveCampaign(this.campaign);
+    if (this.campaign.unlocked > unlocked) {
+      analytics.track('campaign_progress', { level: s.level.n, unlocked: this.campaign.unlocked });
+      analytics.setUserProperty('highest_level', this.campaign.unlocked);
+    }
   }
 
   /** 'human' — the player commands; 'spectator' — AI vs AI, two LLM commanders, the human only watches. */
@@ -319,6 +340,7 @@ export class GameController {
     this.state.isPaused = false;
     if (mode === 'spectator') this.scene?.overview();
     sounds.playClick();
+    this.beginMatch();
     this.bump();
   }
 
@@ -354,7 +376,8 @@ export class GameController {
 
   /** Back to the start screen with a fresh match. */
   backToMenu() {
-    this.restart('human');
+    this.endMatch('quit');
+    this.newMatch('human');
     this.started = false;
     this.bump();
   }
@@ -365,6 +388,14 @@ export class GameController {
   }
 
   restart(mode: GameMode = this.mode) {
+    this.endMatch('restart');
+    this.newMatch(mode);
+    this.beginMatch();
+    this.bump();
+  }
+
+  /** Replaces the match with a fresh running one. */
+  private newMatch(mode: GameMode) {
     this.state = this.freshState(mode);
     this.attachSound();
     this.director.resetMatch();
@@ -381,7 +412,6 @@ export class GameController {
       this.pushChat({ id: `restart_${Date.now()}`, role: 'engineer', text: t('ctrl.restarted'), timestamp: Date.now(), source: 'local' });
     }
     this.started = true;
-    this.bump();
   }
 
   /** Dev/test helper: advance the simulation synchronously (the loop may be throttled in hidden tabs). */
@@ -488,10 +518,11 @@ export class GameController {
     this.bump();
   }
 
-  async sendOrder(text: string, agent: AgentId = this.activeAgent) {
+  async sendOrder(text: string, agent: AgentId = this.activeAgent, input: 'text' | 'voice' | 'quick' = 'text') {
     const t = text.trim();
     if (!t) return;
     sounds.playClick();
+    analytics.track('agent_order', { agent, input });
     this.pushChat({ id: `cmd_${this.nextId++}`, role: 'commander', to: agent, text: t, timestamp: Date.now(), source: 'local' });
     // "испытай" for a pending design runs the bench locally — no inference needed
     if (agent === 'engineer' && this.proposal?.design && TRIAL_COMMAND.test(t)) {
@@ -540,6 +571,7 @@ export class GameController {
         serial,
       });
     this.trialCache.set(key, report);
+    analytics.track('design_trial', { cached: !!cached });
     // A repeated bench run for the same pair gives no new information, so it is instant
     const delay = cached ? 0 : GAME_BALANCE.TRIAL_BENCH_SEC;
     this.trial = { proposalId: p.id, status: 'running', startedAt: this.state.gameTime, readyAt: this.state.gameTime + delay, report };
@@ -560,11 +592,24 @@ export class GameController {
     sounds.playClick();
     this.director.revertTactical(this.state);
     this.lastTactical = null;
+    this.trackPlanChange('revert', {});
   }
 
   setManualPlan(patch: Partial<TacticalPlan>) {
     sounds.playClick();
     this.director.setManualPlan(this.state, patch);
+    const field: PlanField | null = patch.stance
+      ? 'stance'
+      : patch.engagementRange
+        ? 'range'
+        : patch.targetPriority
+          ? 'target'
+          : patch.retreatHpThreshold !== undefined
+            ? 'retreat'
+            : patch.guardHarvesters !== undefined
+              ? 'guard'
+              : null;
+    if (field) this.trackPlanChange(field, patch);
   }
 
   economyAction(action: ProductionAction) {
@@ -593,6 +638,13 @@ export class GameController {
     this.notify(f.paused ? t('ctrl.factoryStopped') : t('ctrl.factoryResumed'), 'info');
   }
 
+  /** The connection check of the settings dialog; analytics gets the outcome kind only. */
+  async testConnection(conn: LLMConnection) {
+    const r = await this.director.testConnection(conn);
+    analytics.track('llm_test', { provider: conn.provider, provider_kind: providerKind(conn), result: r.result });
+    return r;
+  }
+
   topUpTestBalance() {
     this.director.billing.topUpTestBalance();
     this.notify(t('ctrl.toppedUp'), 'info');
@@ -609,21 +661,111 @@ export class GameController {
     this.bump();
   }
 
+  // ───────────────────────────── Analytics (anonymous: counts and enums only) ─────────────────────────────
+
+  /** Starts following the new match, if the player agreed to statistics. */
+  private beginMatch() {
+    this.trackedMatch = analytics.active ? this.state : null;
+    if (!this.trackedMatch) return;
+    const s = this.state;
+    this.builtSeen = new Set(s.buildings.filter(b => b.team === 'player' && b.built >= 1).map(b => b.id));
+    analytics.track('match_start', {
+      mode: this.mode,
+      level: s.level?.n ?? 1,
+      endless: s.level?.id === 'endless',
+      lang: getLanguage(),
+      provider: this.settings.provider,
+      provider_kind: providerKind(this.settings),
+      llm_ready: this.director.cloudEnabled(),
+      enemy_llm: this.settings.enemyUsesLLM,
+    });
+  }
+
+  /** Reports the end of the followed match once: its result, a restart, the menu or a closed tab. */
+  private endMatch(outcome: OutcomeKind) {
+    const s = this.trackedMatch;
+    if (!s) return;
+    this.trackedMatch = null;
+    const count = (n: number) => Math.max(0, Math.round(n));
+    const totals = s.teams.player.economy.totals;
+    const level = s.level?.n ?? 1;
+    analytics.track('match_end', {
+      mode: this.mode,
+      level,
+      endless: s.level?.id === 'endless',
+      outcome,
+      duration: durationBucket(s.gameTime),
+      units_built: count(totals.unitsBuilt),
+      units_lost: count(totals.unitsLost),
+      kills: count(totals.kills),
+      harvesters_lost: count(totals.harvestersLost),
+    });
+    // LLM use of the match in one event, not per call; nothing when the game runs without a model
+    const kind = providerKind(this.settings);
+    const llm = this.director.llmStats;
+    if (kind === 'none' || llm.calls + llm.failures === 0) return;
+    const orders = s.agentOrderTally;
+    analytics.track('llm_match', {
+      mode: this.mode,
+      level,
+      provider: this.settings.provider,
+      provider_kind: kind,
+      calls: llm.calls,
+      errors: llm.failures,
+      fallback_pct: llm.fallbackPct,
+      latency: latencyBucket(llm.calls ? llm.totalLatencyMs / llm.calls : null),
+      err_network: llm.errors.network,
+      err_timeout: llm.errors.timeout,
+      err_parse: llm.errors.parse,
+      err_auth: llm.errors.auth,
+      err_rate_limit: llm.errors.rate_limit,
+      err_server: llm.errors.server,
+      err_http: llm.errors.http,
+      err_device: llm.errors.device,
+      err_not_configured: llm.errors.not_configured,
+      err_no_coins: llm.errors.no_coins,
+      orders: orders.player.orders + orders.enemy.orders,
+      orders_queued: orders.player.queued + orders.enemy.queued,
+      orders_refused: orders.player.refused + orders.enemy.refused,
+    });
+  }
+
+  /** The player's buildings finished since the last look (human mode: in AI vs AI an AI builds). */
+  private trackBuilt() {
+    if (this.trackedMatch !== this.state || this.mode !== 'human') return;
+    for (const b of this.state.buildings) {
+      if (b.team !== 'player' || b.built < 1 || b.type === 'command_center' || this.builtSeen.has(b.id)) continue;
+      this.builtSeen.add(b.id);
+      analytics.track('building_built', { building: b.type });
+    }
+  }
+
+  /** A manual plan change; a dragged slider sends one event, not one per step. */
+  private trackPlanChange(field: PlanField, patch: Partial<TacticalPlan>) {
+    const now = performance.now();
+    if (field === this.lastPlanTrack.field && now - this.lastPlanTrack.at < 2000) return;
+    this.lastPlanTrack = { field, at: now };
+    analytics.track('plan_change', { field, stance: patch.stance, range: patch.engagementRange, target: patch.targetPriority });
+  }
+
   // ───────────────────────────── Voice (ASR / TTS billed separately) ─────────────────────────────
 
   toggleListening() {
     if (this.voice.listening) {
       voiceService.stopListening();
       this.voice.listening = false;
+      analytics.track('voice_input', { result: 'stopped' });
       this.bump();
       return;
     }
     if (!voiceService.isSupported()) {
       this.notify(t('ctrl.noAsr'), 'warn');
+      analytics.track('voice_input', { result: 'unsupported' });
       return;
     }
     if (!this.director.billing.canAffordAudio('asr', 5)) {
       this.notify(t('ctrl.noAsrCoins'), 'warn');
+      analytics.track('voice_input', { result: 'no_coins' });
       return;
     }
     this.voice = { ...this.voice, listening: true, transcript: '', error: '' };
@@ -635,13 +777,15 @@ export class GameController {
           this.director.billing.recordAudio(`asr_${this.nextId++}`, 'asr', r.seconds);
           this.voice.listening = false;
           voiceService.stopListening();
-          void this.sendOrder(r.text);
+          analytics.track('voice_input', { result: 'final' });
+          void this.sendOrder(r.text, this.activeAgent, 'voice');
         }
         this.bump();
       },
       err => {
         this.voice.error = err === 'not-allowed' ? t('ctrl.micDenied') : t('ctrl.asrError', { err });
         this.voice.listening = false;
+        analytics.track('voice_input', { result: err === 'not-allowed' ? 'denied' : 'error' });
         this.bump();
       },
       () => {
