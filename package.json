@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "build:ios": "tsc && vite build --mode ios --outDir ios/Web --emptyOutDir",
     "preview": "vite preview",
+    "firebase": "npx --yes firebase-tools@15.33.0",
+    "deploy": "npm run build && node scripts/check-deploy.mjs && npm run firebase -- deploy --only hosting",
+    "deploy:preview": "npm run build && node scripts/check-deploy.mjs && npm run firebase -- hosting:channel:deploy preview --expires 7d",
     "test": "vitest run",
     "test:live": "LLM_LIVE=1 vitest run tests/llm-live.test.ts"
   },

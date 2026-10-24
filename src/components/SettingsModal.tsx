@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Cpu, ListRestart, PlugZap, X } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
-import { LLM_PROVIDERS, LLMProviderId, PROVIDER_ORDER, providerHint, providerLabel } from '../config/llmProviders';
+import { LLM_PROVIDERS, LLMProviderId, providerHint, providerLabel, visibleProviders } from '../config/llmProviders';
 import { listModels } from '../ai/llm/LLMClient';
 import { TranslationStatus, hasNativeBridge, nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
 import { GameController } from '../game/GameController';
@@ -22,7 +22,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
   // In the iOS app there is the on-device model and no dev-server proxy; in a browser it is the other way round
   const inApp = hasNativeBridge();
   const device = nativeStatus();
-  const providers = PROVIDER_ORDER.filter(id => (id === 'device' ? inApp : id === 'proxy' ? !inApp : true));
+  const providers = visibleProviders({ inApp, proxyFound: !!proxy, current: s.provider });
 
   const pick = (p: LLMProviderId) => {
     setS(prev => ({ ...prev, provider: p, ...ctrl.presetFor(p), apiKey: p === prev.provider ? prev.apiKey : '' }));
@@ -94,9 +94,11 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
                     <div className="font-semibold text-[11px]">{providerLabel(id)}</div>
                     <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">
                       {id === 'proxy'
-                        ? ready
-                          ? t('set.proxyReady', { host: proxy?.host ?? '', model: proxy?.model || t('set.defaultModel') })
-                          : t('set.proxyMissing')
+                        ? !proxy
+                          ? t('set.proxyDevOnly')
+                          : ready
+                            ? t('set.proxyReady', { host: proxy.host, model: proxy.model || t('set.defaultModel') })
+                            : t('set.proxyMissing')
                         : id === 'device'
                           ? device?.available
                             ? t('set.deviceReady')

@@ -10,3 +10,4 @@ xcuserdata/
 .env.*.local
 *.log
 .DS_Store
+.firebase/

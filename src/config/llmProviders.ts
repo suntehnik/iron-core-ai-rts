@@ -148,6 +148,20 @@ export const PROVIDER_ORDER: LLMProviderId[] = [
   'offline',
 ];
 
+/**
+ * Providers the settings dialog offers. The on-device model exists only in the iOS app. The server proxy
+ * exists only where the Vite dev/preview server answered /api/llm/status: static hosting (Firebase, the
+ * release zip) has no proxy, so it is hidden there unless it is the current choice, which stays visible
+ * so the dialog can say why it does not work.
+ */
+export function visibleProviders(opts: { inApp: boolean; proxyFound: boolean; current: LLMProviderId }): LLMProviderId[] {
+  return PROVIDER_ORDER.filter(id => {
+    if (id === 'device') return opts.inApp;
+    if (id === 'proxy') return !opts.inApp && (opts.proxyFound || opts.current === 'proxy');
+    return true;
+  });
+}
+
 const LOCALIZED_LABELS: Partial<Record<LLMProviderId, MessageKey>> = {
   proxy: 'provider.proxy.label',
   custom: 'provider.custom.label',
