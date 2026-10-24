@@ -14,6 +14,8 @@ import { asString, describeAction, normalizeActions, normalizePlan } from './par
 import { COMMANDER_INSTRUCTIONS_MAX, PROMPTS_RU, PromptSet, parseCostLimitPct } from './prompts';
 import { PROMPTS_EN, englishPrompts } from './promptsEn';
 import { getLanguage, t } from '../i18n';
+import { LLMResult } from '../analytics/events';
+import { LLMMatchStats, classifyLLMError } from '../analytics/matchStats';
 
 /** 'ally' = the teal AI commander that replaces the human in AI-vs-AI mode. */
 export type AgentKey = 'engineer' | 'tactician' | 'enemy' | 'ally';
@@ -34,6 +36,8 @@ export interface DirectorEvents {
   tactical(d: TacticalDecision): void;
   intercept(text: string, source: 'llm' | 'fallback', team: Team): void;
   changed(): void;
+  /** The player confirmed or cancelled the engineer's proposal (by button or by an order in the chat). */
+  decided?(decision: 'confirm' | 'cancel', p: ProductionProposal): void;
 }
 
 // Expected token budgets used for the pre-flight affordability check
@@ -72,6 +76,8 @@ export class AIDirector {
   public standingOrders: string[] = [];
   /** Custom instructions per AI commander (the teal one in AI-vs-AI), added to its system prompts */
   public commanderInstructions: Record<Team, string> = { player: '', enemy: '' };
+  /** Outcomes of this match's LLM calls (counts and kinds only) for the match-end analytics */
+  public readonly llmStats = new LLMMatchStats();
 
   private settings: LLMSettings;
   /** AI commanders' full strategic decisions, keyed by commander */
@@ -137,6 +143,7 @@ export class AIDirector {
     this.seenSignificant = { player: 0, enemy: 0 };
     this.handledEventId = { player: 0, enemy: 0 };
     this.billing.resetMatch();
+    this.llmStats.reset();
     this.events.changed();
   }
 
@@ -262,10 +269,14 @@ export class AIDirector {
       const protocol = LLM_PROVIDERS[this.settings.provider].protocol;
       const error =
         protocol === 'none' ? undefined : protocol === 'native' ? t('llm.device', { msg: nativeUnavailableText(nativeStatus()) }) : t('llm.notConfigured');
+      if (protocol !== 'none') this.llmStats.fail(protocol === 'native' ? 'device' : 'not_configured');
       return { res: null, coins: 0, error };
     }
     const afford = this.billing.canAfford(participant, estimateLLMCost(budget.in, budget.out));
-    if (!afford.ok) return { res: null, coins: 0, error: afford.reason };
+    if (!afford.ok) {
+      this.llmStats.fail('no_coins');
+      return { res: null, coins: 0, error: afford.reason };
+    }
 
     const requestId = newId(`${participant}_${service}`);
     const started = performance.now();
@@ -278,10 +289,12 @@ export class AIDirector {
         timeoutMs,
       });
       const coins = this.billing.recordLLM(requestId, participant, service, res.usage.tokensIn, res.usage.tokensOut, res.latencyMs);
+      this.llmStats.ok(res.latencyMs);
       return { res, coins };
     } catch (e) {
       const err = e instanceof LLMError ? e : new LLMError('network', String(e));
       this.billing.recordError(participant, service, Math.round(performance.now() - started));
+      this.llmStats.fail(classifyLLMError(err));
       console.warn(`[AI] ${participant}/${service} call failed:`, err.message);
       return { res: null, coins: 0, error: err.userMessage };
     }
@@ -455,6 +468,7 @@ export class AIDirector {
     // what the base cannot pay for yet waits in the order queue instead of being refused
     for (const a of p.actions) results.push(state.applyAgentAction('player', a));
     this.pendingProposal = null;
+    this.events.decided?.('confirm', p);
     this.events.proposal(null);
     const reply = this.say({ id: newId('confirm'), role: 'engineer', text: `${results.join('. ')}.`, timestamp: Date.now(), source: 'local' });
     this.events.changed();
@@ -462,8 +476,10 @@ export class AIDirector {
   }
 
   cancelProposal(): ChatMessage | null {
-    if (!this.pendingProposal) return null;
+    const p = this.pendingProposal;
+    if (!p) return null;
     this.pendingProposal = null;
+    this.events.decided?.('cancel', p);
     this.events.proposal(null);
     const reply = this.say({ id: newId('cancel'), role: 'engineer', text: t('dir.cancelled'), timestamp: Date.now(), source: 'local' });
     this.events.changed();
@@ -678,9 +694,9 @@ export class AIDirector {
     this.events.changed();
   }
 
-  /** Small connectivity test for the settings dialog. */
-  async testConnection(conn: LLMConnection): Promise<{ ok: boolean; text: string }> {
-    if (!cloudReady(conn)) return { ok: false, text: t('dir.fillProvider') };
+  /** Small connectivity test for the settings dialog; `result` is the outcome kind for analytics. */
+  async testConnection(conn: LLMConnection): Promise<{ ok: boolean; text: string; result: LLMResult }> {
+    if (!cloudReady(conn)) return { ok: false, text: t('dir.fillProvider'), result: 'not_configured' };
     try {
       const english = promptsFor(conn.provider) !== PROMPTS_RU;
       const res = await chatJSON(conn, {
@@ -694,6 +710,7 @@ export class AIDirector {
       });
       return {
         ok: true,
+        result: 'ok',
         text: t('dir.connected', {
           model: res.model,
           ms: res.latencyMs,
@@ -704,7 +721,7 @@ export class AIDirector {
       };
     } catch (e) {
       const err = e instanceof LLMError ? e : new LLMError('network', String(e));
-      return { ok: false, text: t('dir.error', { msg: err.userMessage, details: err.message.slice(0, 140) }) };
+      return { ok: false, text: t('dir.error', { msg: err.userMessage, details: err.message.slice(0, 140) }), result: classifyLLMError(err) };
     }
   }
 }

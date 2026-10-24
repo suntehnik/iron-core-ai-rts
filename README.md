@@ -252,6 +252,87 @@ npm run build && npm run firebase -- emulators:start --only hosting --project de
 
   Такой прокси сможет вызвать кто угодно, и платить за запросы будете вы. Без App Check и лимитов запросов его
   лучше не открывать.
+## Анонимная статистика (Firebase Analytics)
+
+Игра может отправлять анонимную статистику в Google Analytics 4 через Firebase Analytics (проект `iron-ai-rts`).
+Пока игрок не согласился, SDK не загружается и запросов нет.
+
+**Согласие.** На стартовом экране игра один раз спрашивает «Поможете улучшить игру?». До ответа и после «Не надо»
+статистики нет. Ответ хранится в `localStorage` (`ironcore_analytics_v1`), передумать можно в ⚙ → «Анонимная
+статистика». Если браузер шлёт Do Not Track или Global Privacy Control, игра не спрашивает, но переключатель в
+настройках работает.
+
+После «Разрешить» игра загружает отдельный чанк `firebase-*.js` (около 15 КБ gzip) и gtag.js. В Consent Mode
+`analytics_storage` разрешён, а рекламные `ad_storage`, `ad_user_data` и `ad_personalization` всегда запрещены.
+Google Signals и персонализация рекламы выключены (`allow_google_signals: false`,
+`allow_ad_personalization_signals: false`). Отказ в настройках останавливает сбор и удаляет cookie `_ga*` и базу
+установки Firebase в браузере.
+
+**Почему с cookie и по согласию.** Варианта без cookie у Firebase Analytics нет. GA4 игнорирует
+`client_storage: 'none'`: проверено в браузере, gtag всё равно ставит `_ga`. Без cookie можно работать только через
+`analytics_storage: 'denied'`, но тогда события уходят пингами без cookie, и GA4 почти не показывает их в отчётах.
+Кроме того, Firebase в любом режиме хранит в IndexedDB идентификатор установки. Поэтому статистика включается только с
+согласия, а cookie `_ga` и идентификатор ставятся уже после него. Зато видны вернувшиеся игроки, удержание и
+прохождение кампании за несколько сессий.
+
+Режим задаётся одной константой `CONSENT_POLICY` в `src/analytics/index.ts`. `'opt-in'` (по умолчанию) — выключено,
+пока игрок не согласится. `'opt-out'` — включено сразу, вместе с cookie, игрока не спрашивают, переключатель в
+настройках выключает. Данных при opt-out больше, но cookie ставится без согласия, а для игроков из ЕС это рискованно.
+При Do Not Track или Global Privacy Control статистика и в этом режиме выключена, пока игрок сам её не включит.
+
+**Что собирается.** Только числа, да/нет и значения из фиксированных списков. Схема событий лежит в
+`src/analytics/events.ts`. `track()` по типам не принимает произвольную строку, а событие с неизвестным параметром
+или значением вне списка отбрасывается целиком.
+
+| Событие | Параметры | Зачем |
+|---|---|---|
+| `match_start` | `mode` (human/spectator), `level`, `endless`, `lang`, `provider`, `provider_kind`, `llm_ready`, `enemy_llm` | Сколько матчей начинают, на каких уровнях и языках, с какой моделью; доля игр без настроенного LLM |
+| `match_end` | `mode`, `level`, `endless`, `outcome` (won/lost/restart/quit/closed), `duration` (корзина), `units_built`, `units_lost`, `kills`, `harvesters_lost` | Воронка уровня: победы, поражения, перезапуски и брошенные матчи; длина матча; баланс |
+| `llm_match` | `mode`, `level`, `provider`, `provider_kind`, `calls`, `errors`, `fallback_pct`, `latency` (корзина), `err_network`, `err_timeout`, `err_parse`, `err_auth`, `err_rate_limit`, `err_server`, `err_http`, `err_device`, `err_not_configured`, `err_no_coins`, `orders`, `orders_queued`, `orders_refused` | Надёжность LLM за матч одним событием: ошибки по видам, доля откатов на эвристики, задержка, судьба экономических приказов агентов |
+| `campaign_progress` | `level`, `unlocked` | Прохождение кампании |
+| `level_pick` | `level`, `unlocked` | Переигрывают ли открытые уровни |
+| `agent_order` | `agent` (engineer/tactician), `input` (text/voice/quick) | Как часто и как отдают приказы агентам |
+| `proposal_decision` | `decision` (confirm/cancel), `source` (llm/fallback), `has_design`, `actions` | Принимают ли предложения инженера, от модели и от эвристик |
+| `design_change` | `chassis`, `source` | Какие шасси идут в серию |
+| `design_trial` | `cached` | Пользуются ли испытательным стендом |
+| `plan_change` | `field` (stance/range/target/retreat/guard/revert), `stance`, `range`, `target` | Как правят план армии вручную; ползунок даёт одно событие, а не по шагу |
+| `building_built` | `building` | Какие здания игрок достраивает |
+| `voice_input` | `result` (final/stopped/denied/error/unsupported/no_coins) | Работает ли голосовой ввод |
+| `language_change` | `lang`, `in_match` | Какие языки нужны |
+| `llm_test` | `provider`, `provider_kind`, `result` (ok или вид ошибки) | Где игроки спотыкаются при подключении LLM |
+
+В режиме «ИИ против ИИ» `won` и `lost` относятся к бирюзовой стороне. `closed` значит, что вкладку закрыли посреди
+матча; такое событие отправляется по возможности. Свойство пользователя `highest_level` хранит самый дальний открытый
+уровень. GA4 сам добавляет просмотр страницы и сессию, случайный идентификатор клиента из cookie `_ga`, идентификатор
+установки Firebase, язык и разрешение экрана браузера и примерную страну по IP. Сам IP-адрес GA4 не хранит.
+
+**Что не собирается.** Идентификатор пользователя и email, тексты чата и приказов, указания командирам, ответы и
+реплики моделей, названия моделей, адреса серверов (base URL), ключи. Провайдер уходит только как id из списка
+(`openrouter`, `custom` и т. п.) и вид: `none`, `device`, `local`, `proxy`, `cloud`. Ошибки LLM уходят только видом
+(`timeout`, `auth`, `rate_limit`…), без текста.
+
+**Где выключена.** В `npm run dev`, в vitest, в iOS-приложении (сборка `--mode ios` вообще не содержит SDK) и на
+localhost.
+
+**Проверка в DebugView.**
+
+```bash
+npm run build
+npx vite preview
+```
+
+Откройте `http://localhost:4173/?analytics_debug=1` и нажмите «Разрешить» внизу стартового экрана. Флаг включает сбор
+на localhost и в dev, помечает события `debug_mode` и пишет каждое в консоль браузера: `[analytics] match_start {…}`.
+В консоли Firebase → Analytics → DebugView события появляются через несколько секунд. Сами запросы видны во вкладке
+Network: `region1.google-analytics.com/g/collect`, параметры событий начинаются с `ep.` и `epn.`.
+В отчётах GA4 параметры событий видны только после регистрации: Admin → Custom definitions, строковые параметры как
+custom dimensions, числовые как custom metrics. До этого они есть только в DebugView и в экспорте в BigQuery.
+
+**Ключ Firebase.** `apiKey` в `src/analytics/firebase.ts` — публичный идентификатор веб-приложения, а не секрет, как
+ключи LLM. Ограничьте его в Google Cloud console: APIs & Services → Credentials → «Browser key (auto created by
+Firebase)» → Application restrictions → HTTP referrers. Укажите домены, где лежит игра (`iron-ai-rts.web.app/*`,
+`iron-ai-rts.firebaseapp.com/*`, свой домен), и при необходимости `localhost:4173/*` для проверки. В API restrictions
+аналитике нужны Firebase Installations API и Firebase Management API.
 
 ## Код
 
@@ -273,6 +354,7 @@ src/game/Campaign.ts         прогресс кампании в браузер
 src/rendering/*              Three.js: изометрическая камера, toon-модели роботов и зданий, лес и скалы, эффекты
 src/game/GameController.ts   связка цикла игры, агентов, рендера, голоса и UI
 src/components/*             HUD, панель конструктора, план армии, монеты, настройки
+src/analytics/*              анонимная статистика: схема событий, согласие, ленивая загрузка Firebase Analytics
 vite.config.ts               dev/preview-прокси /api/llm, сборка для iOS (--mode ios)
 firebase.json, scripts/      Firebase Hosting: кеширование, деплой, проверка сборки на секреты
 ios/IronCore/                SwiftUI-приложение: WKWebView, схема ironcore://, Foundation Models, Translation
