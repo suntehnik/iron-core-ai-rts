@@ -20,7 +20,8 @@ npm run dev
 
 В релизе на GitHub лежит архив `iron-core-ai-rts-v0.2.0-dist.zip` со статической сборкой. Её можно отдать любым
 статическим сервером, например `npx serve dist`. Серверного прокси `/api/llm` в статической сборке нет, поэтому LLM
-подключается напрямую из браузера: ⚙ → провайдер, ключ и модель. Сервер модели должен разрешать CORS.
+подключается напрямую из браузера: ⚙ → провайдер, ключ и модель. Сервер модели должен разрешать CORS. Как
+опубликовать сборку на Firebase Hosting, описано в разделе [«Публикация на Firebase Hosting»](#публикация-на-firebase-hosting).
 
 ### Подключение LLM
 
@@ -165,6 +166,93 @@ open ios/IronCore.xcodeproj       # Xcode 26+, схема IronCore; для iPhon
 xcrun simctl launch --console-pty booted com.ironcore.aicommander -autotest
 ```
 
+## Публикация на Firebase Hosting
+
+`npm run build` собирает статику: `dist/index.html` и файлы с хешем в имени в `dist/assets/`. В `firebase.json`
+указано `public: "dist"`. Файлы из `assets/` кешируются на год (`immutable`), а `index.html` отдаётся с `no-cache`,
+поэтому новая версия видна сразу после деплоя. SPA-rewrite не нужен, у игры один адрес `/`. iOS-сборка это не
+затрагивает: `npm run build:ios` пишет в `ios/Web`, а Firebase берёт только `dist/`.
+
+Firebase CLI ставить не нужно. Скрипты вызывают `firebase-tools@15.33.0` через `npx`, любую команду CLI можно
+запустить как `npm run firebase -- <команда>`.
+
+1. **Один раз: проект и вход.** Создайте проект в [консоли Firebase](https://console.firebase.google.com/) и
+   включите в нём Hosting (Build → Hosting → «Get started»). Хватает бесплатного тарифа Spark. Затем войдите в CLI,
+   откроется браузер:
+
+   ```bash
+   npm run firebase -- login
+   ```
+
+2. **Id проекта.** Впишите его в `.firebaserc` вместо `YOUR_FIREBASE_PROJECT_ID`. Посмотреть id своих проектов:
+
+   ```bash
+   npm run firebase -- projects:list
+   ```
+
+3. **Деплой на основной сайт** `https://<id>.web.app`:
+
+   ```bash
+   npm run deploy
+   ```
+
+4. **Превью-канал.** Временный отдельный адрес, основной сайт не меняется. CLI напечатает ссылку вида
+   `https://<id>--preview-<хеш>.web.app`:
+
+   ```bash
+   npm run deploy:preview
+   ```
+
+   Это канал `preview` на 7 дней. Свой канал и срок (не больше 30d):
+
+   ```bash
+   scripts/deploy.sh preview my-feature 3d
+   ```
+
+   Удалить канал раньше срока:
+
+   ```bash
+   npm run firebase -- hosting:channel:delete preview
+   ```
+
+Шаги 2–4 требуют входа из шага 1. Перед загрузкой скрипты собирают игру и запускают `scripts/check-deploy.mjs`.
+Проверка останавливает деплой, если в `.firebaserc` остался шаблон или если в `dist/` попал файл `.env*` либо
+значение секретной переменной: имя содержит `KEY`, `TOKEN`, `SECRET` или `PASSWORD`, значение взято из `.env.local`
+или окружения. Само значение не печатается, только имя переменной и файл.
+
+Проверить `firebase.json` без входа: эмулятор Hosting отдаёт `dist/` с теми же заголовками на
+http://127.0.0.1:5050 (проект `demo-…` не требует аккаунта):
+
+```bash
+npm run build && npm run firebase -- emulators:start --only hosting --project demo-iron-core
+```
+
+### LLM на хостинге
+
+- **Серверного прокси нет.** `/api/llm` — это middleware dev/preview-сервера Vite. Rewrites Firebase Hosting ведут
+  только в Cloud Functions или Cloud Run, на произвольный URL их не направить. При запуске игра запрашивает
+  `/api/llm/status`. На хостинге он отвечает 404, и кнопки «Серверный прокси» в ⚙ нет. Если прокси уже выбран в
+  сохранённых настройках, кнопка остаётся с пометкой «нет на этом сайте: только npm run dev / preview».
+- **Облачные провайдеры** работают напрямую из браузера: ⚙ → провайдер → ключ. Каждый игрок вводит свой ключ, он
+  хранится в `localStorage` его браузера для этого сайта и в сборку не попадает. OpenRouter, DashScope, Groq,
+  OpenAI, Gemini и Anthropic пропускают CORS-запросы с чужого домена (проверено 23.10.2026).
+- **Локальная модель** (oMLX на `http://127.0.0.1:8000/v1`, CORS `*`): провайдер «Локальный / свой
+  OpenAI-совместимый», ключ oMLX — в поле «API-ключ». `127.0.0.1` — это компьютер игрока, поэтому так работает
+  только на машине, где запущен сервер модели. Сайт открыт по HTTPS, а модель по HTTP. Chrome, Edge и Firefox
+  считают `127.0.0.1` доверенным адресом и такой запрос пропускают. Chrome может спросить разрешение на доступ к
+  устройствам локальной сети, его нужно дать. Safari может заблокировать запрос как смешанный контент, тогда
+  откройте сайт в Chrome или играйте через `npm run dev`.
+- **Ключ на сервере для всех игроков** потребует своего бэкенда, в репозитории его нет. Вариант: Cloud Function
+  (тариф Blaze) или сервис Cloud Run с логикой `llmProxy` из `vite.config.ts`. Это только `/status`, `/models` и
+  `/chat/completions`, ключ хранится в Secret Manager. Затем нужен rewrite в `firebase.json`:
+
+  ```json
+  "rewrites": [{ "source": "/api/llm/**", "function": { "functionId": "llm", "region": "europe-west1" } }]
+  ```
+
+  Такой прокси сможет вызвать кто угодно, и платить за запросы будете вы. Без App Check и лимитов запросов его
+  лучше не открывать.
+
 ## Код
 
 ```
@@ -186,6 +274,7 @@ src/rendering/*              Three.js: изометрическая камера
 src/game/GameController.ts   связка цикла игры, агентов, рендера, голоса и UI
 src/components/*             HUD, панель конструктора, план армии, монеты, настройки
 vite.config.ts               dev/preview-прокси /api/llm, сборка для iOS (--mode ios)
+firebase.json, scripts/      Firebase Hosting: кеширование, деплой, проверка сборки на секреты
 ios/IronCore/                SwiftUI-приложение: WKWebView, схема ironcore://, Foundation Models, Translation
 ```
 
