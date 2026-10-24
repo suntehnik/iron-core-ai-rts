@@ -42,7 +42,6 @@ describe('analytics switched off', () => {
   it('is off in vitest: nothing can load or send', () => {
     expect(analytics.available).toBe(false);
     expect(analytics.active).toBe(false);
-    expect(analytics.shouldAsk).toBe(false);
   });
 
   for (const off of ['test', 'dev', 'ios', 'local'] as const) {
@@ -53,7 +52,6 @@ describe('analytics switched off', () => {
       await a.ready();
       expect(loader).not.toHaveBeenCalled();
       expect(sent).toEqual([]);
-      expect(a.shouldAsk).toBe(false);
     });
   }
 
@@ -64,19 +62,15 @@ describe('analytics switched off', () => {
   });
 });
 
-describe('consent', () => {
-  it('asks first and loads nothing until the player agrees', async () => {
+describe('the opt-in policy and the settings switch', () => {
+  it('loads nothing until the player turns statistics on', async () => {
     const { a, sent, loader } = setup();
     expect(a.consent).toBe('unset');
-    expect(a.shouldAsk).toBe(true);
+    expect(a.enabled).toBe(false);
     a.track('agent_order', order);
     await a.ready();
     expect(loader).not.toHaveBeenCalled();
     expect(sent).toEqual([]);
-  });
-
-  it('does not ask when the browser sends Do Not Track or Global Privacy Control', () => {
-    expect(setup({ env: { privacySignal: true } }).a.shouldAsk).toBe(false);
   });
 
   it('after "yes" loads the SDK once, keeps the answer and sends the events', async () => {
@@ -94,7 +88,6 @@ describe('consent', () => {
       { name: 'agent_order', params: order },
       { name: 'voice_input', params: { result: 'final' } },
     ]);
-    expect(a.shouldAsk).toBe(false);
   });
 
   it('a saved "yes" loads the SDK on start', async () => {
@@ -152,15 +145,14 @@ describe('consent', () => {
 });
 
 describe('the opt-out policy', () => {
-  it('the game ships opt-in', () => {
-    expect(CONSENT_POLICY).toBe('opt-in');
+  it('the game ships opt-out', () => {
+    expect(CONSENT_POLICY).toBe('opt-out');
   });
 
   it('collects from the start without asking', async () => {
     const { a, sent, loader } = setup({ policy: 'opt-out' });
     expect(a.consent).toBe('unset');
     expect(a.enabled).toBe(true);
-    expect(a.shouldAsk).toBe(false);
     a.track('agent_order', order);
     await a.ready();
     expect(loader).toHaveBeenCalledWith(false);
@@ -389,7 +381,7 @@ describe('the game sends counts and enums only', () => {
     expect(JSON.stringify(track.mock.calls)).not.toMatch(/SECRET|my-private-model|example\.com/);
   });
 
-  it('without consent the game follows no match', () => {
+  it('with analytics off the game follows no match', () => {
     const track = vi.spyOn(analytics, 'track');
     const ctrl = new GameController();
     ctrl.applySettings(offline, false);

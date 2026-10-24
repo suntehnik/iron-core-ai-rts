@@ -1,6 +1,5 @@
-import React, { useState, useSyncExternalStore } from 'react';
-import { BarChart3, Cpu, Eye, Flag, Lock, MessageSquarePlus, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
-import { analytics } from '../analytics';
+import React, { useState } from 'react';
+import { Cpu, Eye, Flag, Lock, MessageSquarePlus, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
 import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
 import { nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
 import { LLM_PROVIDERS } from '../config/llmProviders';
@@ -140,33 +139,9 @@ export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: (
             <MessageSquarePlus className="w-3.5 h-3.5" /> {t('brief.giveOrders')}
           </button>
         )}
-        <StatsPrompt />
         {!compact && (
           <div className="text-[10px] text-slate-400 text-center mt-2">{t('brief.camera')}</div>
         )}
-      </div>
-    </div>
-  );
-};
-
-/** Asks once for anonymous statistics: nothing is loaded or sent before the player agrees. */
-const StatsPrompt: React.FC = () => {
-  useSyncExternalStore(analytics.subscribe, analytics.getVersion, analytics.getVersion);
-  if (!analytics.shouldAsk) return null;
-  return (
-    <div className="mt-3 flex items-start gap-2 p-2.5 rounded-lg bg-slate-800/60 border border-white/10 text-[11px]">
-      <BarChart3 className="w-4 h-4 shrink-0 text-teal-300 mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <div className="font-semibold text-slate-100">{t('stats.ask')}</div>
-        <div className="text-[10px] text-slate-400 leading-snug mt-0.5">{t('stats.askText')}</div>
-      </div>
-      <div className="flex flex-col gap-1 shrink-0">
-        <button type="button" onClick={() => analytics.setConsent(true)} className="px-2.5 py-1 rounded-md bg-teal-600 hover:bg-teal-500 text-white font-semibold">
-          {t('stats.yes')}
-        </button>
-        <button type="button" onClick={() => analytics.setConsent(false)} className="px-2.5 py-1 rounded-md bg-slate-700 hover:bg-slate-600 font-semibold">
-          {t('stats.no')}
-        </button>
       </div>
     </div>
   );

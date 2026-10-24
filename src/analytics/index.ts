@@ -7,10 +7,10 @@ export * from './events';
 export { LLMMatchStats, classifyLLMError, durationBucket, latencyBucket, providerKind } from './matchStats';
 
 /**
- * The one switch between the two consent models (see ConsentPolicy): 'opt-in' — off until the player says yes;
- * 'opt-out' — on from the start (the _ga cookie included) until the player turns it off in the settings.
+ * The one switch between the two consent models (see ConsentPolicy): 'opt-out' — on from the start (the _ga
+ * cookie included) until the player turns it off in the settings; 'opt-in' — off until the player turns it on there.
  */
-export const CONSENT_POLICY: ConsentPolicy = 'opt-in';
+export const CONSENT_POLICY: ConsentPolicy = 'opt-out';
 
 const CONSENT_KEY = 'ironcore_analytics_v1';
 const DEBUG_PARAM = 'analytics_debug';

@@ -1,12 +1,12 @@
 import { AnalyticsValue, EventName, EventParams, UserPropertyName, UserPropertyValue, validateEvent, validateUserProperty } from './events';
 
-/** The player's answer to "send anonymous statistics?"; 'unset' — not asked yet. */
+/** The player's choice in the settings switch; 'unset' — never touched (the policy decides). */
 export type Consent = 'granted' | 'denied' | 'unset';
 /**
- * How statistics start when the player has not answered. 'opt-in': off, the start screen asks once, and the
- * _ga cookie and the Firebase installation id appear only after "yes". 'opt-out': on from the start with the same
- * identifiers, not asked, the settings switch turns it off. There is no cookieless variant: GA4 ignores
- * `client_storage: 'none'`, and Firebase keeps its installation id in IndexedDB anyway.
+ * How statistics start before the player has touched the settings switch. 'opt-out': on from the start, with the
+ * _ga cookie and the Firebase installation id. 'opt-in': off, and those identifiers appear only after the player
+ * turns statistics on. There is no cookieless variant: GA4 ignores `client_storage: 'none'`, and Firebase keeps
+ * its installation id in IndexedDB anyway.
  */
 export type ConsentPolicy = 'opt-in' | 'opt-out';
 /** Why collection is impossible here: vitest, the dev server, the iOS app, localhost without the debug flag, a browser the SDK does not support. */
@@ -16,7 +16,7 @@ export interface AnalyticsEnv {
   off: OffReason | null;
   /** `?analytics_debug=1`: collection on localhost and the dev server, events marked for GA DebugView and logged to the console */
   debug: boolean;
-  /** Do Not Track or Global Privacy Control: never on without an explicit "yes" and never asked (the settings switch still works) */
+  /** Do Not Track or Global Privacy Control: off until the player turns statistics on in the settings */
   privacySignal: boolean;
 }
 
@@ -51,8 +51,8 @@ type Pending = { kind: 'event' | 'user'; name: string; params: Record<string, An
 const QUEUE_MAX = 50;
 
 /**
- * Anonymous product analytics. Under the opt-in policy nothing is loaded or sent until the player agrees;
- * each event is checked against the schema in ./events, and one that breaks it is dropped whole.
+ * Anonymous product analytics. Nothing is loaded or sent while statistics are off (the settings switch, the policy,
+ * Do Not Track); each event is checked against the schema in ./events, and one that breaks it is dropped whole.
  */
 export class Analytics {
   private env: AnalyticsEnv;
@@ -91,11 +91,6 @@ export class Analytics {
 
   get debug(): boolean {
     return this.env.debug;
-  }
-
-  /** Opt-in: the start screen asks once, where collection is possible and the browser does not ask not to track. */
-  get shouldAsk(): boolean {
-    return this.deps.policy === 'opt-in' && this.available && this.consentValue === 'unset' && !this.env.privacySignal;
   }
 
   setConsent(granted: boolean) {
