@@ -61,11 +61,18 @@ export function classifyLLMError(e: unknown): LLMFailure {
   }
 }
 
-/** Loopback, private networks and .local names: a model server on this machine or network. */
-const LOCAL_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[^.]+\.local)$/i;
+/** Loopback (*.localhost included), private networks and .local names: a model server on this machine or network. */
+const LOCAL_HOST = /^(localhost|.+\.localhost|127\.\d+\.\d+\.\d+|\[?::1\]?|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|[^.]+\.local)$/i;
 
 export function isLocalHost(hostname: string): boolean {
   return LOCAL_HOST.test(hostname);
+}
+
+/** A Firebase Hosting preview channel, `<site>--<channel>-<hash>.web.app` (npm run deploy:preview). */
+const PREVIEW_CHANNEL_HOST = /^[a-z0-9-]+--[a-z0-9-]+\.web\.app$/i;
+
+export function isPreviewChannelHost(hostname: string): boolean {
+  return PREVIEW_CHANNEL_HOST.test(hostname);
 }
 
 /** The provider as a kind; the base URL decides only between 'local' and 'cloud' and is never sent. */

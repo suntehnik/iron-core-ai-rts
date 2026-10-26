@@ -176,28 +176,34 @@ xcrun simctl launch --console-pty booted com.ironcore.aicommander -autotest
 Firebase CLI ставить не нужно. Скрипты вызывают `firebase-tools@15.33.0` через `npx`, любую команду CLI можно
 запустить как `npm run firebase -- <команда>`.
 
-1. **Один раз: проект и вход.** Создайте проект в [консоли Firebase](https://console.firebase.google.com/) и
-   включите в нём Hosting (Build → Hosting → «Get started»). Хватает бесплатного тарифа Spark. Затем войдите в CLI,
-   откроется браузер:
+Игра публикуется в тот же проект `iron-ai-rts`, что и статистика (раздел «Анонимная статистика»): он уже указан в
+`.firebaserc`, сайт будет на `https://iron-ai-rts.web.app`.
+
+1. **Один раз: Hosting и вход.** В [консоли Firebase](https://console.firebase.google.com/project/iron-ai-rts/hosting)
+   откройте проект `iron-ai-rts` → Build → Hosting → «Get started». До первого деплоя адрес отвечает «Site Not
+   Found». Хватает бесплатного тарифа Spark. Затем войдите в CLI аккаунтом с доступом к проекту, откроется браузер:
 
    ```bash
    npm run firebase -- login
    ```
 
-2. **Id проекта.** Впишите его в `.firebaserc` вместо `YOUR_FIREBASE_PROJECT_ID`. Посмотреть id своих проектов:
+2. **Проект.** Проверьте, что `iron-ai-rts` есть в списке ваших проектов:
 
    ```bash
    npm run firebase -- projects:list
    ```
 
-3. **Деплой на основной сайт** `https://<id>.web.app`:
+   Чтобы публиковать в другой проект, впишите его id в `.firebaserc`.
+
+3. **Деплой на основной сайт** `https://iron-ai-rts.web.app`:
 
    ```bash
    npm run deploy
    ```
 
 4. **Превью-канал.** Временный отдельный адрес, основной сайт не меняется. CLI напечатает ссылку вида
-   `https://<id>--preview-<хеш>.web.app`:
+   `https://iron-ai-rts--preview-<хеш>.web.app`. Статистика на превью-каналах выключена, чтобы тестовые матчи не
+   смешивались с игроками основного сайта. Для проверки в DebugView добавьте к ссылке `?analytics_debug=1`:
 
    ```bash
    npm run deploy:preview
@@ -216,9 +222,10 @@ Firebase CLI ставить не нужно. Скрипты вызывают `fi
    ```
 
 Шаги 2–4 требуют входа из шага 1. Перед загрузкой скрипты собирают игру и запускают `scripts/check-deploy.mjs`.
-Проверка останавливает деплой, если в `.firebaserc` остался шаблон или если в `dist/` попал файл `.env*` либо
-значение секретной переменной: имя содержит `KEY`, `TOKEN`, `SECRET` или `PASSWORD`, значение взято из `.env.local`
-или окружения. Само значение не печатается, только имя переменной и файл.
+Проверка останавливает деплой, если в `.firebaserc` стоит шаблон `YOUR_FIREBASE_PROJECT_ID` или если в `dist/`
+попал файл `.env*` либо значение секретной переменной: имя содержит `KEY`, `TOKEN`, `SECRET` или `PASSWORD`,
+значение взято из `.env.local` или окружения. Само значение не печатается, только имя переменной и файл. Публичный
+`apiKey` Firebase из `src/analytics/firebase.ts` лежит в коде, а не в `.env`, и проверку не останавливает.
 
 Проверить `firebase.json` без входа: эмулятор Hosting отдаёт `dist/` с теми же заголовками на
 http://127.0.0.1:5050 (проект `demo-…` не требует аккаунта):
@@ -310,8 +317,9 @@ IndexedDB — идентификатор установки Firebase.
 (`openrouter`, `custom` и т. п.) и вид: `none`, `device`, `local`, `proxy`, `cloud`. Ошибки LLM уходят только видом
 (`timeout`, `auth`, `rate_limit`…), без текста.
 
-**Где выключена.** В `npm run dev`, в vitest, в iOS-приложении (сборка `--mode ios` вообще не содержит SDK) и на
-localhost.
+**Где выключена.** В `npm run dev`, в vitest, в iOS-приложении (сборка `--mode ios` вообще не содержит SDK), на
+localhost (включая `*.localhost`) и на превью-каналах Firebase Hosting (`iron-ai-rts--<канал>-<хеш>.web.app`). На
+основном сайте `iron-ai-rts.web.app` игра спрашивает согласие.
 
 **Проверка в DebugView.**
 
@@ -331,7 +339,9 @@ custom dimensions, числовые как custom metrics. До этого он�
 **Ключ Firebase.** `apiKey` в `src/analytics/firebase.ts` — публичный идентификатор веб-приложения, а не секрет, как
 ключи LLM. Ограничьте его в Google Cloud console: APIs & Services → Credentials → «Browser key (auto created by
 Firebase)» → Application restrictions → HTTP referrers. Укажите домены, где лежит игра (`iron-ai-rts.web.app/*`,
-`iron-ai-rts.firebaseapp.com/*`, свой домен), и при необходимости `localhost:4173/*` для проверки. В API restrictions
+`iron-ai-rts.firebaseapp.com/*`, свой домен), превью-каналы (`iron-ai-rts--*.web.app/*`, для проверки с
+`?analytics_debug=1`) и при необходимости `localhost:4173/*` и `127.0.0.1:5050/*` (эмулятор Hosting). Сейчас ключ не
+ограничен: Firebase принимает его с любого сайта (проверено 25.10.2026). В API restrictions
 аналитике нужны Firebase Installations API и Firebase Management API.
 
 ## Код

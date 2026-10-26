@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Статистика и публикация в проект `iron-ai-rts`
+- `.firebaserc` указывает на `iron-ai-rts`, тот же проект, что и статистика. `npm run deploy` выкладывает игру на
+  `https://iron-ai-rts.web.app`.
+- На превью-каналах Firebase Hosting (`iron-ai-rts--<канал>-<хеш>.web.app`) статистика выключена, чтобы тестовые
+  матчи не смешивались с игроками основного сайта. С `?analytics_debug=1` она включается и идёт в DebugView.
+- Адреса `*.localhost` считаются локальными, как `localhost`: статистика там выключена, а сервер модели на таком
+  адресе считается локальным.
+- README: в ограничение ключа Firebase по HTTP referrer добавлены превью-каналы и эмулятор Hosting.
+
 ### Публикация на Firebase Hosting
 - `npm run deploy` собирает игру и выкладывает `dist/` на основной сайт Firebase Hosting. `npm run deploy:preview`
   выкладывает её в превью-канал на 7 дней, `scripts/deploy.sh preview <канал> <срок>` — в свой канал. Firebase CLI

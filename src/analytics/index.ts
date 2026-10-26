@@ -1,6 +1,6 @@
 import { hasNativeBridge } from '../ai/llm/nativeBridge';
 import { Analytics, AnalyticsEnv, BackendLoader, Consent, ConsentPolicy, ConsentStore } from './analytics';
-import { isLocalHost } from './matchStats';
+import { isLocalHost, isPreviewChannelHost } from './matchStats';
 
 export * from './analytics';
 export * from './events';
@@ -17,8 +17,9 @@ const DEBUG_PARAM = 'analytics_debug';
 
 /**
  * Where collection is possible. Off in vitest, on the dev server, in the iOS app (it serves the game
- * from the bundle, ios/IronCore/GameWebView.swift) and on localhost; `?analytics_debug=1` turns it on
- * for a local check (dev server, `vite preview`) and marks the events for GA DebugView.
+ * from the bundle, ios/IronCore/GameWebView.swift), on localhost and on Firebase Hosting preview channels;
+ * `?analytics_debug=1` turns it on for a check there (dev server, `vite preview`, a preview channel) and
+ * marks the events for GA DebugView.
  */
 export function detectEnv(): AnalyticsEnv {
   const off = (reason: AnalyticsEnv['off']): AnalyticsEnv => ({ off: reason, debug: false, privacySignal: false });
@@ -34,6 +35,8 @@ export function detectEnv(): AnalyticsEnv {
   const privacySignal = nav.doNotTrack === '1' || nav.globalPrivacyControl === true;
   if (!debug && import.meta.env.DEV) return off('dev');
   if (!debug && isLocalHost(location.hostname)) return off('local');
+  // Preview channels are test builds: their players would mix into the live site's statistics
+  if (!debug && isPreviewChannelHost(location.hostname)) return off('preview');
   return { off: null, debug, privacySignal };
 }
 

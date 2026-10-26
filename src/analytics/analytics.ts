@@ -10,11 +10,11 @@ export type Consent = 'granted' | 'denied' | 'unset';
  */
 export type ConsentPolicy = 'opt-in' | 'opt-out';
 /** Why collection is impossible here: vitest, the dev server, the iOS app, localhost without the debug flag, a browser the SDK does not support. */
-export type OffReason = 'test' | 'dev' | 'ios' | 'local' | 'unsupported';
+export type OffReason = 'test' | 'dev' | 'ios' | 'local' | 'preview' | 'unsupported';
 
 export interface AnalyticsEnv {
   off: OffReason | null;
-  /** `?analytics_debug=1`: collection on localhost and the dev server, events marked for GA DebugView and logged to the console */
+  /** `?analytics_debug=1`: collection on localhost, the dev server and preview channels, events marked for GA DebugView and logged to the console */
   debug: boolean;
   /** Do Not Track or Global Privacy Control: off until the player turns statistics on in the settings */
   privacySignal: boolean;

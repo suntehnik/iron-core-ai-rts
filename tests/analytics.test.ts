@@ -3,7 +3,7 @@ import { LLMError } from '../src/ai/llm/LLMClient';
 import { Analytics, AnalyticsBackend, AnalyticsEnv, Consent, ConsentPolicy } from '../src/analytics/analytics';
 import { EVENTS, USER_PROPERTIES, validateEvent, validateUserProperty } from '../src/analytics/events';
 import { CONSENT_POLICY, analytics } from '../src/analytics';
-import { classifyLLMError, durationBucket, latencyBucket, providerKind } from '../src/analytics/matchStats';
+import { classifyLLMError, durationBucket, isLocalHost, isPreviewChannelHost, latencyBucket, providerKind } from '../src/analytics/matchStats';
 import { GAME_BALANCE } from '../src/config/balance';
 import { GameState } from '../src/engine/GameState';
 import { GameController } from '../src/game/GameController';
@@ -44,7 +44,7 @@ describe('analytics switched off', () => {
     expect(analytics.active).toBe(false);
   });
 
-  for (const off of ['test', 'dev', 'ios', 'local'] as const) {
+  for (const off of ['test', 'dev', 'ios', 'local', 'preview'] as const) {
     it(`${off}: no SDK load and no event even with consent`, async () => {
       const { a, sent, loader } = setup({ env: { off }, saved: 'granted' });
       expect(a.track('agent_order', order)).toBe(true);
@@ -54,6 +54,17 @@ describe('analytics switched off', () => {
       expect(sent).toEqual([]);
     });
   }
+
+  it('local hosts and Firebase preview channels are told apart from the live site', () => {
+    for (const host of ['localhost', 'iron-ai-rts.localhost', '127.0.0.1', '192.168.1.20', 'mac.local']) expect(isLocalHost(host)).toBe(true);
+    for (const host of ['iron-ai-rts.web.app', 'iron-ai-rts.firebaseapp.com', 'iron-ai-rts--preview-x7k2m9.web.app']) {
+      expect(isLocalHost(host)).toBe(false);
+    }
+    expect(isPreviewChannelHost('iron-ai-rts--preview-x7k2m9.web.app')).toBe(true);
+    expect(isPreviewChannelHost('iron-ai-rts--my-feature-ab12cd34.web.app')).toBe(true);
+    expect(isPreviewChannelHost('iron-ai-rts.web.app')).toBe(false);
+    expect(isPreviewChannelHost('iron-ai-rts.firebaseapp.com')).toBe(false);
+  });
 
   it('a build without the SDK (the iOS app) is never available', () => {
     const a = new Analytics({ env: ON, policy: 'opt-out', store: { get: () => 'granted', set: () => {} }, loader: null });
