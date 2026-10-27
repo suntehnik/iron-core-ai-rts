@@ -56,7 +56,6 @@ class MainActivity : ComponentActivity(), GameWebView.Listener {
         }
         hideSystemBars()
         onBackPressedDispatcher.addCallback(this, back)
-        updateBack()
         createWebView()
     }
 
@@ -81,12 +80,9 @@ class MainActivity : ComponentActivity(), GameWebView.Listener {
 
     // ───────────────────────────── Back ─────────────────────────────
 
-    private fun updateBack() {
-        // Android 12+ sends a launcher activity to the background on Back by itself (with the predictive
-        // animation). Older versions would finish it and lose the match, so there the app takes every Back.
-        back.isEnabled = pageHasBackTarget || Build.VERSION.SDK_INT < Build.VERSION_CODES.S
-    }
-
+    // The app takes every Back. Left to the system, Back sends the game to the background only when it was
+    // started from the launcher (and on Android 12+); started any other way, or on older versions, the
+    // activity is finished and the match with it.
     private fun onBack() {
         if (!pageHasBackTarget) {
             moveTaskToBack(true)
@@ -97,7 +93,6 @@ class MainActivity : ComponentActivity(), GameWebView.Listener {
 
     override fun onBackTargetChanged(hasTarget: Boolean) {
         pageHasBackTarget = hasTarget
-        updateBack()
     }
 
     // ───────────────────────────── Lifecycle ─────────────────────────────
@@ -117,6 +112,8 @@ class MainActivity : ComponentActivity(), GameWebView.Listener {
     }
 
     override fun onRendererGone() {
+        // a renderer that ends with the activity itself needs no new page
+        if (isFinishing || isDestroyed) return
         // The page and its match are lost; start the game again instead of crashing the app
         root.removeView(web)
         web.destroy()
