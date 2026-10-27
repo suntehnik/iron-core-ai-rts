@@ -18,7 +18,8 @@ const COLORS: Partial<Record<GameEventType, string>> = {
 
 export const EventFeed: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const compact = useCompactHud();
-  // a phone has room between the drawer buttons and the minimap for one event, two lines at most
+  // a phone has room between the drawer buttons and the minimap for one event on one line
+  // (Safari's address bar leaves about 340px of height in landscape)
   const phone = usePhoneLayout();
   const events = ctrl.state.events
     .filter(e => e.team === 'player' && e.type !== 'loss' && e.type !== 'batch_started')
@@ -33,7 +34,7 @@ export const EventFeed: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
         >
           <span className={cx('mt-1 w-1.5 h-1.5 rounded-full shrink-0', COLORS[e.type] ?? 'bg-slate-400', e.significant && 'animate-pulse')} />
           <span className="text-slate-500 tabular-nums shrink-0">{formatTime(e.time)}</span>
-          <span className={cx('leading-snug', phone && 'line-clamp-2')}>{e.text}</span>
+          <span className={cx('leading-snug', phone && 'truncate min-w-0')}>{e.text}</span>
         </div>
       ))}
     </div>

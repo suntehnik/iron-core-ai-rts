@@ -110,7 +110,7 @@ export const Minimap: React.FC<{ ctrl: GameController; version: number }> = ({ c
 
   return (
     <div className="hud-panel pointer-events-auto p-1.5">
-      <canvas ref={ref} width={MW} height={MH} onClick={onClick} className="block rounded-md cursor-crosshair phone:w-[160px] phone:h-auto" title={t('minimap.title')} />
+      <canvas ref={ref} width={MW} height={MH} onClick={onClick} className="block rounded-md cursor-crosshair phone:w-[160px] phone:h-auto phone:[@media(max-height:340px)]:w-[128px]" title={t('minimap.title')} />
     </div>
   );
 };
