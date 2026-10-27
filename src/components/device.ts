@@ -7,14 +7,16 @@ import { hasNativeBridge } from '../ai/llm/nativeBridge';
  * the phone, locked to landscape by the app.
  */
 export const IOS_BUILD = import.meta.env.MODE === 'ios';
+/** The Android app's build (`vite build --mode android`): the phone layout of the browser, inside a WebView. */
+const ANDROID_BUILD = import.meta.env.MODE === 'android';
 
 /**
  * Inside a native wrapper the app owns the screen: no fullscreen button and no rotate prompt.
- * iOS: the build mode, the `ironcore:` scheme or the on-device model bridge. Android: the system
- * WebView puts "; wv)" in its user agent; a wrapper may also add "IronCoreApp" to it.
+ * iOS: the build mode, the `ironcore:` scheme or the on-device model bridge. Android: the build mode,
+ * or the user agent — the system WebView puts "; wv)" in it, the Iron Core app adds "IronCoreApp/<version>".
  */
 export function inNativeApp(): boolean {
-  if (IOS_BUILD || hasNativeBridge()) return true;
+  if (IOS_BUILD || ANDROID_BUILD || hasNativeBridge()) return true;
   if (typeof location !== 'undefined' && location.protocol === 'ironcore:') return true;
   return typeof navigator !== 'undefined' && /; wv\)|IronCoreApp/.test(navigator.userAgent);
 }
@@ -36,7 +38,7 @@ function mediaStore(query: string, enabled: boolean) {
 }
 
 const phone = mediaStore(PHONE_QUERY, !IOS_BUILD);
-const portrait = mediaStore(PORTRAIT_QUERY, !IOS_BUILD);
+const portrait = mediaStore(PORTRAIT_QUERY, !inNativeApp());
 
 /** Rendering without a screen (tests render the HUD to a string): the desktop layout. */
 const noScreen = () => false;

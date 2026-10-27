@@ -4,7 +4,8 @@ import { inNativeApp, suggestHomeScreen } from '../src/components/device';
 const UA = {
   androidChrome: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36',
   androidWebView: 'Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.0.0 Mobile Safari/537.36',
-  wrapperMark: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36 IronCoreApp/1.0',
+  wrapperMark: 'Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.0.0 Mobile Safari/537.36 IronCoreApp/1.0',
+  wrapperMarkOnly: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36 IronCoreApp/1.0',
   iPhoneSafari: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
   desktopChrome: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
 };
@@ -27,6 +28,8 @@ describe('phone browser vs native wrapper', () => {
     browser(UA.androidWebView);
     expect(inNativeApp()).toBe(true);
     browser(UA.wrapperMark);
+    expect(inNativeApp()).toBe(true);
+    browser(UA.wrapperMarkOnly);
     expect(inNativeApp()).toBe(true);
     browser(UA.iPhoneSafari);
     vi.stubGlobal('webkit', { messageHandlers: { ironcoreLLM: { postMessage: async () => null } } });
