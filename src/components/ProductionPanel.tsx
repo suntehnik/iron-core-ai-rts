@@ -15,8 +15,15 @@ const PAD_ICONS: Record<PadBuildingType, React.ReactNode> = {
   artillery: <Target className="w-3.5 h-3.5" />,
 };
 
-/** Mining, factory queues and base construction (brief §3, §7). */
-export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
+/** One line for the collapsed panel and the phone's drawer button: what the factories do, harvesters. */
+export function productionSummary(ctrl: GameController): string {
+  const s = ctrl.state;
+  const factories = s.buildings.filter(b => b.team === 'player' && b.type === 'factory');
+  return `${factories.map(f => s.factoryStatus(f)).join(' · ') || t('prod.summaryNoFactories')} · ${t('prod.summaryHarvesters', { n: s.harvesterCount('player'), max: GAME_BALANCE.MAX_HARVESTERS })}`;
+}
+
+/** Mining, factory queues and base construction (brief §3, §7). `onClose`: shown as a drawer on the phone. */
+export const ProductionPanel: React.FC<{ ctrl: GameController; onClose?: () => void }> = ({ ctrl, onClose }) => {
   const s = ctrl.state;
   const econ = s.teams.player.economy;
   const factories = s.buildings.filter(b => b.team === 'player' && b.type === 'factory');
@@ -37,17 +44,18 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
 
   return (
     <Panel
-      className="w-[264px]"
-      open={open}
-      onToggle={toggle}
-      summary={`${factories.map(f => s.factoryStatus(f)).join(' · ') || t('prod.summaryNoFactories')} · ${t('prod.summaryHarvesters', { n: s.harvesterCount('player'), max: GAME_BALANCE.MAX_HARVESTERS })}`}
+      className={onClose ? 'w-full' : 'w-[264px]'}
+      open={open || !!onClose}
+      onToggle={onClose ? undefined : toggle}
+      onClose={onClose}
+      summary={productionSummary(ctrl)}
       title={<><Factory className="w-3.5 h-3.5 text-teal-300" /> {t('prod.title')}</>}
       right={
         factories.length > 1 ? (
           <button
             type="button"
             onClick={() => ctrl.economyAction({ type: 'set_production', paused: !allPaused })}
-            className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
+            className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1 phone:min-h-[40px] phone:px-1 phone:text-xs"
             title={allPaused ? t('prod.startAll') : t('prod.stopAll')}
           >
             {allPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />} {allPaused ? t('prod.all') : t('prod.stopAllShort')}
@@ -55,7 +63,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
         ) : undefined
       }
     >
-      <div className="p-2.5 flex flex-col gap-2 text-[11px]">
+      <div className="p-2.5 flex flex-col gap-2 text-[11px] phone:text-xs">
         {factories.length === 0 && (
           <div className="text-rose-300">
             {t('prod.factoryDestroyed')}
@@ -84,7 +92,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
                       title={f.paused ? t('prod.resume') : t('prod.stopHint')}
                       aria-label={f.paused ? t('prod.startFactory', { n: i + 1 }) : t('prod.stopFactory', { n: i + 1 })}
                       className={cx(
-                        'w-6 h-6 rounded-md border flex items-center justify-center transition',
+                        'w-6 h-6 rounded-md border flex items-center justify-center transition phone:w-10 phone:h-10',
                         f.paused ? 'bg-amber-500/25 border-amber-300/60 text-amber-100 hover:bg-amber-500/40' : 'bg-slate-700/70 border-white/10 text-slate-200 hover:bg-slate-600',
                       )}
                     >
@@ -160,7 +168,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
           <div className="flex items-center gap-1">
             <button
               type="button"
-              className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+              className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700 phone:w-10 phone:h-10"
               onClick={() => ctrl.economyAction({ type: 'set_batch_size', size: econ.batchSize - 1 })}
               aria-label={t('prod.less')}
             >
@@ -169,7 +177,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
             <span className="w-5 text-center font-bold tabular-nums">{econ.batchSize}</span>
             <button
               type="button"
-              className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+              className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700 phone:w-10 phone:h-10"
               onClick={() => ctrl.economyAction({ type: 'set_batch_size', size: econ.batchSize + 1 })}
               aria-label={t('prod.more')}
             >
@@ -186,7 +194,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700 phone:w-10 phone:h-10"
                 onClick={() => ctrl.economyAction({ type: 'set_crystal_reserve', amount: econ.crystalReserve - 20 })}
                 aria-label={t('prod.less')}
               >
@@ -195,7 +203,7 @@ export const ProductionPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) =>
               <span className="w-7 text-center font-bold tabular-nums">{econ.crystalReserve}</span>
               <button
                 type="button"
-                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700"
+                className="w-6 h-6 rounded bg-slate-800 border border-white/10 flex items-center justify-center hover:bg-slate-700 phone:w-10 phone:h-10"
                 onClick={() => ctrl.economyAction({ type: 'set_crystal_reserve', amount: econ.crystalReserve + 20 })}
                 aria-label={t('prod.more')}
               >
@@ -286,7 +294,7 @@ const CancelButton: React.FC<{ title: string; onClick: () => void }> = ({ title,
     onClick={onClick}
     title={title}
     aria-label={title}
-    className="w-6 h-6 shrink-0 rounded-md border flex items-center justify-center transition bg-slate-700/70 border-white/10 text-slate-200 hover:bg-rose-700/60 hover:border-rose-300/50"
+    className="w-6 h-6 shrink-0 rounded-md border flex items-center justify-center transition bg-slate-700/70 border-white/10 text-slate-200 hover:bg-rose-700/60 hover:border-rose-300/50 phone:w-10 phone:h-10"
   >
     <X className="w-3 h-3" />
   </button>
@@ -305,7 +313,7 @@ const BuildButton: React.FC<{ label: string; cost: string; disabled?: boolean; t
     onClick={onClick}
     disabled={disabled}
     title={title}
-    className="flex items-center justify-between px-2 py-1.5 rounded-md bg-slate-800/70 border border-white/10 hover:bg-teal-700/40 hover:border-teal-400/40 disabled:opacity-40 disabled:hover:bg-slate-800/70 transition text-left"
+    className="flex items-center justify-between px-2 py-1.5 rounded-md bg-slate-800/70 border border-white/10 hover:bg-teal-700/40 hover:border-teal-400/40 disabled:opacity-40 disabled:hover:bg-slate-800/70 transition text-left phone:min-h-[44px]"
   >
     <span className="flex items-center gap-1.5 text-slate-100">
       {icon} {label}

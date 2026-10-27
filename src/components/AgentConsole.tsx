@@ -64,7 +64,10 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
           key={a}
           type="button"
           onClick={() => ctrl.setActiveAgent(a)}
-          className={cx('px-2 py-0.5 rounded-md font-semibold transition', agent === a ? 'bg-teal-600 text-white' : 'text-slate-300 hover:text-white')}
+          className={cx(
+            'px-2 py-0.5 rounded-md font-semibold transition phone:min-h-[40px] phone:px-3 phone:text-xs',
+            agent === a ? 'bg-teal-600 text-white' : 'text-slate-300 hover:text-white',
+          )}
         >
           {t(AGENT_NAME[a])}
         </button>
@@ -75,7 +78,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   if (!open) {
     const lastReply = [...chat].reverse().find(m => m.role !== 'commander');
     return (
-      <div className="hud-panel pointer-events-auto w-[360px] flex flex-col gap-1.5 p-2">
+      <div className="hud-panel pointer-events-auto w-[360px] flex flex-col gap-1.5 p-2 phone:w-[380px]">
         <div className="flex items-center gap-2">
           {agent === 'engineer' ? <EngineerPortrait size={30} talking={voice.speaking || busy} /> : <TacticianPortrait size={30} talking={voice.speaking || busy} />}
           {agentTabs}
@@ -86,13 +89,13 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
             aria-expanded={false}
             title={t('console.expandTitle')}
             aria-label={t('console.expand')}
-            className="ml-auto w-7 h-7 rounded-lg bg-slate-800/80 border border-white/10 flex items-center justify-center text-slate-200 hover:bg-slate-700"
+            className="ml-auto w-7 h-7 rounded-lg bg-slate-800/80 border border-white/10 flex items-center justify-center text-slate-200 hover:bg-slate-700 phone:w-11 phone:h-11"
           >
             <ChevronUp className="w-4 h-4" />
           </button>
         </div>
         {proposal && <ProposalBox ctrl={ctrl} proposal={proposal} curStats={curStats} nextStats={nextStats} compact />}
-        {lastReply && !proposal && <div className="px-1 text-[11px] text-slate-200 leading-snug line-clamp-2">{lastReply.text}</div>}
+        {lastReply && !proposal && <div className="px-1 text-[11px] text-slate-200 leading-snug line-clamp-2 phone:text-xs">{lastReply.text}</div>}
         {form}
       </div>
     );
@@ -102,7 +105,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const slots = Array.from({ length: shownStats.maxSlots }, (_, i) => shown.modules[i]);
 
   return (
-    <div className="hud-panel pointer-events-auto w-[408px] flex flex-col overflow-x-hidden overflow-y-auto max-h-[calc(100vh-84px)]">
+    <div className="hud-panel pointer-events-auto w-[408px] flex flex-col overflow-x-hidden overflow-y-auto overscroll-contain max-h-[calc(100vh-84px)] phone:max-h-full">
       {/* ── Design preview & comparison */}
       <div className="p-2.5 flex gap-2.5 border-b border-white/5">
         <div className="flex flex-col items-center gap-1">
@@ -183,7 +186,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
               aria-expanded
               aria-label={t('console.collapse')}
               title={t('console.collapseTitle')}
-              className="self-start w-7 h-7 rounded-lg bg-slate-800/80 border border-white/10 flex items-center justify-center text-slate-200 hover:bg-slate-700"
+              className="self-start w-7 h-7 rounded-lg bg-slate-800/80 border border-white/10 flex items-center justify-center text-slate-200 hover:bg-slate-700 phone:w-11 phone:h-11"
             >
               <ChevronDown className="w-4 h-4" />
             </button>
@@ -195,7 +198,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
             <div
               key={m.id}
               className={cx(
-                'px-2 py-1 rounded-lg text-[11px] leading-snug max-w-[94%]',
+                'px-2 py-1 rounded-lg text-[11px] leading-snug max-w-[94%] phone:text-xs',
                 m.role === 'commander' ? 'self-end bg-teal-700/70 text-white' : 'self-start bg-slate-800/90 text-slate-100 border border-white/5',
               )}
             >
@@ -219,7 +222,7 @@ export const AgentConsole: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
               type="button"
               disabled={busy}
               onClick={() => void ctrl.sendOrder(t(q), agent, 'quick')}
-              className="text-[10px] whitespace-nowrap px-2 py-1 rounded-full bg-slate-800/80 border border-white/10 text-slate-300 hover:bg-slate-700 disabled:opacity-40"
+              className="text-[10px] whitespace-nowrap px-2 py-1 rounded-full bg-slate-800/80 border border-white/10 text-slate-300 hover:bg-slate-700 disabled:opacity-40 phone:min-h-[40px] phone:px-3 phone:text-xs"
             >
               {t(q)}
             </button>
@@ -268,7 +271,7 @@ const ProposalBox: React.FC<{
         <button
           type="button"
           onClick={() => ctrl.confirmProposal()}
-          className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
+          className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold phone:min-h-[44px]"
         >
           <Check className="w-3.5 h-3.5" /> {proposal.design ? t('console.approve') : t('console.execute')}
         </button>
@@ -279,7 +282,7 @@ const ProposalBox: React.FC<{
             disabled={ctrl.trial?.proposalId === proposal.id && ctrl.trial.status === 'running'}
             aria-label={t('console.trial')}
             title={t('console.trialHint')}
-            className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-700/80 hover:bg-cyan-600 disabled:opacity-50 text-white text-xs font-semibold"
+            className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-700/80 hover:bg-cyan-600 disabled:opacity-50 text-white text-xs font-semibold phone:min-h-[44px]"
           >
             <FlaskConical className="w-3.5 h-3.5" /> {t('console.trial')}
           </button>
@@ -287,7 +290,7 @@ const ProposalBox: React.FC<{
         <button
           type="button"
           onClick={() => ctrl.cancelProposal()}
-          className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-semibold"
+          className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-semibold phone:min-h-[44px]"
         >
           <X className="w-3.5 h-3.5" /> {t('common.cancel')}
         </button>
@@ -321,14 +324,14 @@ const OrderForm: React.FC<{
           title={voice.listening ? t('console.stopRec') : t('console.voiceOrder')}
           aria-label={voice.listening ? t('console.stopRec') : t('console.voiceOrder')}
           className={cx(
-            'w-9 h-9 rounded-full flex items-center justify-center border transition shrink-0',
+            'w-9 h-9 rounded-full flex items-center justify-center border transition shrink-0 phone:w-11 phone:h-11',
             voice.listening ? 'bg-rose-600 border-rose-300 text-white' : 'bg-teal-600/80 border-teal-300/50 text-white hover:bg-teal-500',
           )}
         >
           {voice.listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
         </button>
         {voice.listening ? (
-          <div className="flex-1 h-9 rounded-xl border border-teal-300/50 bg-slate-900/80 px-2 flex items-center gap-2 overflow-hidden">
+          <div className="flex-1 h-9 rounded-xl border border-teal-300/50 bg-slate-900/80 px-2 flex items-center gap-2 overflow-hidden phone:h-11">
             <div className="flex items-end gap-[2px] h-4 shrink-0">
               {[0, 1, 2, 3, 4].map(i => (
                 <span key={i} className="w-[3px] bg-teal-300 rounded-full voice-bar" style={{ animationDelay: `${i * 0.12}s` }} />
@@ -341,13 +344,13 @@ const OrderForm: React.FC<{
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder={agent === 'engineer' ? t('console.placeholderEngineer') : t('console.placeholderTactician')}
-            className="flex-1 h-9 rounded-xl bg-slate-900/80 border border-white/10 px-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-teal-400"
+            className="flex-1 min-w-0 h-9 rounded-xl bg-slate-900/80 border border-white/10 px-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-teal-400 phone:h-11 phone:text-sm"
           />
         )}
         <button
           type="submit"
           disabled={busy || !input.trim()}
-          className="w-9 h-9 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center justify-center text-white shrink-0"
+          className="w-9 h-9 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center justify-center text-white shrink-0 phone:w-11 phone:h-11"
           aria-label={t('console.send')}
         >
           <Send className="w-4 h-4" />

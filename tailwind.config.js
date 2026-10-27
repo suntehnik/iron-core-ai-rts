@@ -1,3 +1,5 @@
+import plugin from 'tailwindcss/plugin';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -24,5 +26,8 @@ export default {
       }
     },
   },
-  plugins: [],
+  plugins: [
+    // `phone:` — the phone landscape layout; the game root carries the `phone` class (src/components/device.ts)
+    plugin(({ addVariant }) => addVariant('phone', '.phone &')),
+  ],
 }

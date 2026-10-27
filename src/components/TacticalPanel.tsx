@@ -9,8 +9,8 @@ import { t } from '../i18n';
 
 const SOURCE_KEY = { default: 'tac.source.default', player: 'tac.source.player', agent: 'tac.source.agent', fallback: 'tac.source.fallback' } as const;
 
-/** Combat-control plan executed by the game AI (brief §5). */
-export const TacticalPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
+/** Combat-control plan executed by the game AI (brief §5). `onClose`: shown as a drawer on the phone. */
+export const TacticalPanel: React.FC<{ ctrl: GameController; onClose?: () => void }> = ({ ctrl, onClose }) => {
   const plan = ctrl.state.teams.player.plan;
   const d = ctrl.director;
   const set = ctrl.setManualPlan.bind(ctrl);
@@ -23,16 +23,17 @@ export const TacticalPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
 
   return (
     <Panel
-      className="w-[300px]"
-      open={open}
-      onToggle={toggle}
+      className={onClose ? 'w-full' : 'w-[300px]'}
+      open={open || !!onClose}
+      onToggle={onClose ? undefined : toggle}
+      onClose={onClose}
       summary={plan.summaryRu}
       title={<><Compass className="w-3.5 h-3.5 text-teal-300" /> {t('tac.title')}</>}
       right={
         <span className={cx('text-[9px] font-semibold', plan.source === 'agent' ? 'text-cyan-300' : 'text-slate-400')}>{t(SOURCE_KEY[plan.source])}</span>
       }
     >
-      <div className="p-2.5 flex flex-col gap-1.5 text-[11px]">
+      <div className="p-2.5 flex flex-col gap-1.5 text-[11px] phone:text-xs phone:gap-2">
         <div className="text-slate-100 leading-snug line-clamp-2" title={plan.summaryRu}>{plan.summaryRu}</div>
         <Row label={t('tac.stance')}>
           {STANCES.map(k => (
@@ -64,13 +65,13 @@ export const TacticalPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
             step={5}
             value={plan.retreatHpThreshold}
             onChange={e => set({ retreatHpThreshold: Number(e.target.value) })}
-            className="flex-1 accent-teal-400"
+            className="flex-1 accent-teal-400 phone:h-10"
             aria-label={t('tac.repairAria')}
           />
           <span className="w-8 text-right tabular-nums">{plan.retreatHpThreshold ? `${plan.retreatHpThreshold}%` : t('tac.none')}</span>
         </div>
-        <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
-          <input type="checkbox" checked={plan.guardHarvesters} onChange={e => set({ guardHarvesters: e.target.checked })} className="accent-teal-400" />
+        <label className="flex items-center gap-2 text-slate-300 cursor-pointer phone:min-h-[44px]">
+          <input type="checkbox" checked={plan.guardHarvesters} onChange={e => set({ guardHarvesters: e.target.checked })} className="accent-teal-400 phone:w-5 phone:h-5" />
           {t('tac.guard')}
         </label>
         <div className="flex items-center justify-between text-[10px] text-slate-400 border-t border-white/5 pt-1.5">
@@ -90,7 +91,7 @@ export const TacticalPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
           <button
             type="button"
             onClick={() => ctrl.revertTactical()}
-            className="flex items-center justify-center gap-1 py-1 rounded-md bg-slate-800 border border-white/10 hover:bg-slate-700 text-slate-200"
+            className="flex items-center justify-center gap-1 py-1 rounded-md bg-slate-800 border border-white/10 hover:bg-slate-700 text-slate-200 phone:min-h-[44px]"
           >
             <Undo2 className="w-3 h-3" /> {t('tac.revert')}
           </button>
@@ -102,7 +103,7 @@ export const TacticalPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
 
 const Row: React.FC<React.PropsWithChildren<{ label: string }>> = ({ label, children }) => (
   <div>
-    <div className="text-[9px] uppercase tracking-wider text-slate-500 mb-0.5">{label}</div>
-    <div className="flex gap-1">{children}</div>
+    <div className="text-[9px] uppercase tracking-wider text-slate-500 mb-0.5 phone:text-[10px]">{label}</div>
+    <div className="flex gap-1 phone:flex-wrap">{children}</div>
   </div>
 );

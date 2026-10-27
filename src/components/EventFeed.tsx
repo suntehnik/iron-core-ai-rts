@@ -1,6 +1,7 @@
 import React from 'react';
 import { GameController } from '../game/GameController';
 import { GameEventType } from '../types/game';
+import { usePhoneLayout } from './device';
 import { cx, formatTime, useCompactHud } from './ui';
 
 const COLORS: Partial<Record<GameEventType, string>> = {
@@ -17,12 +18,14 @@ const COLORS: Partial<Record<GameEventType, string>> = {
 
 export const EventFeed: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const compact = useCompactHud();
+  // a phone has room between the drawer buttons and the minimap for one event, two lines at most
+  const phone = usePhoneLayout();
   const events = ctrl.state.events
     .filter(e => e.team === 'player' && e.type !== 'loss' && e.type !== 'batch_started')
-    .slice(0, compact ? 2 : 5);
+    .slice(0, phone ? 1 : compact ? 2 : 5);
   if (!events.length) return null;
   return (
-    <div className="flex flex-col gap-1 w-[264px] pointer-events-none">
+    <div className="flex flex-col gap-1 w-[264px] pointer-events-none phone:w-[220px]">
       {events.map((e, i) => (
         <div
           key={e.id}
@@ -30,7 +33,7 @@ export const EventFeed: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
         >
           <span className={cx('mt-1 w-1.5 h-1.5 rounded-full shrink-0', COLORS[e.type] ?? 'bg-slate-400', e.significant && 'animate-pulse')} />
           <span className="text-slate-500 tabular-nums shrink-0">{formatTime(e.time)}</span>
-          <span className="leading-snug">{e.text}</span>
+          <span className={cx('leading-snug', phone && 'line-clamp-2')}>{e.text}</span>
         </div>
       ))}
     </div>
