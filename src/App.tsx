@@ -102,27 +102,32 @@ const DesktopHud: React.FC<HudProps> = ({ ctrl, version, onOpenSettings }) => {
   );
 };
 
-type Drawer = 'production' | 'tactics';
+type Drawer = 'production' | 'tactics' | 'console';
 
 /**
  * Phone in landscape: a slim top bar, the minimap and the agent console in the bottom corners, and the
- * production and army-plan panels behind two buttons on the left, opening one at a time as a drawer.
+ * production and army-plan panels behind two buttons on the left. One panel opens at a time, as a wide
+ * sheet over the rest: production, the army plan or the expanded console.
  */
 const PhoneHud: React.FC<HudProps> = ({ ctrl, version, onOpenSettings }) => {
   const [drawer, setDrawer] = useState<Drawer | null>(null);
   const spectator = ctrl.mode === 'spectator';
+  // a spectator has no panels to open
+  const open = spectator ? null : drawer;
   const close = () => setDrawer(null);
   return (
     <>
       <TopBar ctrl={ctrl} onOpenSettings={onOpenSettings} />
       <Notices ctrl={ctrl} />
 
-      {drawer && !spectator ? (
+      {(open === 'production' || open === 'tactics') && (
         // a wide two-column sheet: a phone in landscape has width to spare, not height
         <div className="absolute left-2 right-2 top-[66px] bottom-2 z-20 flex flex-col items-start pointer-events-none">
-          {drawer === 'production' ? <ProductionPanel ctrl={ctrl} onClose={close} /> : <TacticalPanel ctrl={ctrl} onClose={close} />}
+          {open === 'production' ? <ProductionPanel ctrl={ctrl} onClose={close} /> : <TacticalPanel ctrl={ctrl} onClose={close} />}
         </div>
-      ) : (
+      )}
+
+      {!open && (
         <div className="absolute left-2 top-[66px] z-10 flex flex-col gap-1.5 pointer-events-none">
           {!spectator && (
             <>
@@ -144,20 +149,29 @@ const PhoneHud: React.FC<HudProps> = ({ ctrl, version, onOpenSettings }) => {
         </div>
       )}
 
-      {/* hidden, not unmounted, under an open drawer: the console keeps its typed order */}
       {!spectator && (
-        <div className={cx('absolute right-2 top-[66px] z-10 pointer-events-none', drawer && 'invisible')}>
+        <div className={cx('absolute right-2 top-[66px] z-10 pointer-events-none', open && 'invisible')}>
           <InterceptPanel ctrl={ctrl} />
         </div>
       )}
 
-      <div className={cx('absolute left-2 bottom-2 z-10 pointer-events-none', drawer && 'invisible')}>
+      <div className={cx('absolute left-2 bottom-2 z-10 pointer-events-none', open && 'invisible')}>
         <Minimap ctrl={ctrl} version={version} />
       </div>
 
-      {/* The console grows up to the top bar when expanded, and scrolls inside */}
-      <div className={cx('absolute right-2 top-[66px] bottom-2 z-10 flex flex-col justify-end items-end pointer-events-none', drawer && 'invisible')}>
-        {spectator ? <SpectatorPanel ctrl={ctrl} /> : <AgentConsole ctrl={ctrl} />}
+      {/* The command bar sits in the corner and spreads across the screen when expanded. Under another
+          open panel it is hidden, not unmounted: the console keeps its typed order */}
+      <div
+        className={cx(
+          'absolute right-2 top-[66px] bottom-2 z-10 flex flex-col justify-end items-end pointer-events-none',
+          open === 'console' ? 'left-2' : open && 'invisible',
+        )}
+      >
+        {spectator ? (
+          <SpectatorPanel ctrl={ctrl} />
+        ) : (
+          <AgentConsole ctrl={ctrl} sheet={{ open: open === 'console', onToggle: () => setDrawer(open === 'console' ? null : 'console') }} />
+        )}
       </div>
     </>
   );
