@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No action bar, sand instead of a white flash before the page paints -->
+    <style name="Theme.IronCore" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/sand</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
+</resources>

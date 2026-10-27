@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:ios": "tsc && vite build --mode ios --outDir ios/Web --emptyOutDir",
+    "build:android": "tsc && vite build --mode android --outDir android/app/src/main/assets/web --emptyOutDir",
     "preview": "vite preview",
     "firebase": "npx --yes firebase-tools@15.33.0",
     "deploy": "npm run build && node scripts/check-deploy.mjs && npm run firebase -- deploy --only hosting",

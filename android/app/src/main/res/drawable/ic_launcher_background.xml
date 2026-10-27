@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sand gradient of the iOS icon, lined up with the art in the foreground so the masks show no seam -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="90"
+                android:endY="90"
+                android:startX="18"
+                android:startY="18"
+                android:tileMode="clamp"
+                android:type="linear">
+                <item android:color="#FFF7E3B0" android:offset="0" />
+                <item android:color="#FFE2BF7C" android:offset="0.55" />
+                <item android:color="#FFC99A55" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

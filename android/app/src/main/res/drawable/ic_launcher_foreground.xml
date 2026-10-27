@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The iOS app icon (ios/tools/render-app-icon.swift) fills the visible 72 of the 108 units of an adaptive
+  icon layer; the robot fits the round mask too.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_art"
+    android:inset="16.667%" />

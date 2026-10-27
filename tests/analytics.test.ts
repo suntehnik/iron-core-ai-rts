@@ -44,7 +44,7 @@ describe('analytics switched off', () => {
     expect(analytics.active).toBe(false);
   });
 
-  for (const off of ['test', 'dev', 'ios', 'local', 'preview'] as const) {
+  for (const off of ['test', 'dev', 'ios', 'android', 'local', 'preview'] as const) {
     it(`${off}: no SDK load and no event even with consent`, async () => {
       const { a, sent, loader } = setup({ env: { off }, saved: 'granted' });
       expect(a.track('agent_order', order)).toBe(true);
@@ -66,7 +66,7 @@ describe('analytics switched off', () => {
     expect(isPreviewChannelHost('iron-ai-rts.firebaseapp.com')).toBe(false);
   });
 
-  it('a build without the SDK (the iOS app) is never available', () => {
+  it('a build without the SDK (the iOS or Android app) is never available', () => {
     const a = new Analytics({ env: ON, policy: 'opt-out', store: { get: () => 'granted', set: () => {} }, loader: null });
     expect(a.available).toBe(false);
     expect(a.track('agent_order', order)).toBe(true);

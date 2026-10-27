@@ -119,10 +119,27 @@ function iosShell(mode: string): Plugin {
   };
 }
 
+/**
+ * `vite build --mode android` packs the game for the Android app (android/app/src/main/assets/web, served by
+ * WebViewAssetLoader): the browser's own phone layout, and no web fonts, so the app starts offline and does not
+ * wait on Google Fonts.
+ */
+function androidShell(mode: string): Plugin {
+  return {
+    name: 'ironcore-android-shell',
+    transformIndexHtml(html) {
+      if (mode !== 'android') return html;
+      return html
+        .replace(/\s*<link rel="preconnect"[^>]*>/g, '')
+        .replace(/\s*<link href="https:\/\/fonts\.googleapis\.com[^>]*>/g, '');
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), llmProxy(env), iosShell(mode)],
+    plugins: [react(), llmProxy(env), iosShell(mode), androidShell(mode)],
     server: {
       port: 3000,
       host: true,

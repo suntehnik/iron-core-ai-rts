@@ -13,11 +13,14 @@ export { LLMMatchStats, classifyLLMError, durationBucket, latencyBucket, provide
 export const CONSENT_POLICY: ConsentPolicy = 'opt-out';
 
 const CONSENT_KEY = 'ironcore_analytics_v1';
+/** WebViewAssetLoader's origin in the Android app */
+const ANDROID_APP_HOST = 'appassets.androidplatform.net';
 const DEBUG_PARAM = 'analytics_debug';
 
 /**
- * Where collection is possible. Off in vitest, on the dev server, in the iOS app (it serves the game
- * from the bundle, ios/IronCore/GameWebView.swift), on localhost and on Firebase Hosting preview channels;
+ * Where collection is possible. Off in vitest, on the dev server, in the iOS and Android apps (they serve the
+ * game from the bundle, ios/IronCore/GameWebView.swift, android/…/GameWebView.kt), on localhost and on Firebase
+ * Hosting preview channels;
  * `?analytics_debug=1` turns it on for a check there (dev server, `vite preview`, a preview channel) and
  * marks the events for GA DebugView.
  */
@@ -25,6 +28,7 @@ export function detectEnv(): AnalyticsEnv {
   const off = (reason: AnalyticsEnv['off']): AnalyticsEnv => ({ off: reason, debug: false, privacySignal: false });
   if (import.meta.env.MODE === 'test' || typeof window === 'undefined') return off('test');
   if (import.meta.env.MODE === 'ios' || location.protocol === 'ironcore:' || hasNativeBridge()) return off('ios');
+  if (import.meta.env.MODE === 'android' || location.hostname === ANDROID_APP_HOST) return off('android');
   let debug = false;
   try {
     debug = new URLSearchParams(location.search).get(DEBUG_PARAM) === '1';
@@ -74,7 +78,8 @@ function clearIdentifiers() {
   }
 }
 
-// The iOS build has no SDK at all: the dynamic import is cut out at build time
-const loader: BackendLoader | null = import.meta.env.MODE === 'ios' ? null : debug => import('./firebase').then(m => m.loadFirebase(debug));
+// The app builds have no SDK at all: the dynamic import is cut out at build time
+const appBuild = import.meta.env.MODE === 'ios' || import.meta.env.MODE === 'android';
+const loader: BackendLoader | null = appBuild ? null : debug => import('./firebase').then(m => m.loadFirebase(debug));
 
 export const analytics = new Analytics({ env: detectEnv(), policy: CONSENT_POLICY, store: consentStore, loader, clearIdentifiers });

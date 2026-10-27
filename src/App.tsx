@@ -11,6 +11,7 @@ import { SpectatorPanel } from './components/SpectatorPanel';
 import { TacticalPanel } from './components/TacticalPanel';
 import { TopBar } from './components/TopBar';
 import { VictoryModal } from './components/VictoryModal';
+import { useBackClose } from './backButton';
 import { t } from './i18n';
 
 const controller = new GameController();
@@ -22,6 +23,7 @@ export const App: React.FC = () => {
   const version = useSyncExternalStore(ctrl.subscribe, ctrl.getVersion);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useBackClose(settingsOpen, () => setSettingsOpen(false));
 
   useEffect(() => {
     if (!canvasRef.current) return;
