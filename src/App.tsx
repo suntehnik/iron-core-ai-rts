@@ -118,7 +118,8 @@ const PhoneHud: React.FC<HudProps> = ({ ctrl, version, onOpenSettings }) => {
       <Notices ctrl={ctrl} />
 
       {drawer && !spectator ? (
-        <div className="absolute left-2 top-[66px] bottom-2 z-20 w-[300px] flex flex-col pointer-events-none">
+        // a wide two-column sheet: a phone in landscape has width to spare, not height
+        <div className="absolute left-2 right-2 top-[66px] bottom-2 z-20 flex flex-col items-start pointer-events-none">
           {drawer === 'production' ? <ProductionPanel ctrl={ctrl} onClose={close} /> : <TacticalPanel ctrl={ctrl} onClose={close} />}
         </div>
       ) : (
@@ -143,18 +144,19 @@ const PhoneHud: React.FC<HudProps> = ({ ctrl, version, onOpenSettings }) => {
         </div>
       )}
 
+      {/* hidden, not unmounted, under an open drawer: the console keeps its typed order */}
       {!spectator && (
-        <div className="absolute right-2 top-[66px] z-10 pointer-events-none">
+        <div className={cx('absolute right-2 top-[66px] z-10 pointer-events-none', drawer && 'invisible')}>
           <InterceptPanel ctrl={ctrl} />
         </div>
       )}
 
-      <div className="absolute left-2 bottom-2 z-10 pointer-events-none">
+      <div className={cx('absolute left-2 bottom-2 z-10 pointer-events-none', drawer && 'invisible')}>
         <Minimap ctrl={ctrl} version={version} />
       </div>
 
       {/* The console grows up to the top bar when expanded, and scrolls inside */}
-      <div className="absolute right-2 top-[66px] bottom-2 z-10 flex flex-col justify-end items-end pointer-events-none">
+      <div className={cx('absolute right-2 top-[66px] bottom-2 z-10 flex flex-col justify-end items-end pointer-events-none', drawer && 'invisible')}>
         {spectator ? <SpectatorPanel ctrl={ctrl} /> : <AgentConsole ctrl={ctrl} />}
       </div>
     </>
