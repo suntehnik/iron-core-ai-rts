@@ -457,7 +457,9 @@ describe('custom instructions for the teal commander (AI vs AI)', () => {
       ctrl.setAllyInstructions(orders);
       ctrl.start('spectator');
       expect(ctrl.director.commanderInstructions.player).toBe(orders);
-      ctrl.backToMenu(); // a new match in the normal mode: the teal side is the human again
+      ctrl.backToMenu(); // opening the menu preserves the spectator's orders
+      expect(ctrl.director.commanderInstructions.player).toBe(orders);
+      ctrl.leaveMatch(); // explicit exit returns to a fresh human match
       expect(ctrl.director.commanderInstructions.player).toBe('');
 
       const reopened = new GameController(); // the page is opened again

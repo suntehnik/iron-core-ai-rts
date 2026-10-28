@@ -335,7 +335,11 @@ describe('the game sends counts and enums only', () => {
     ctrl.setManualPlan({ retreatHpThreshold: 25 }); // a dragged slider: one event
     ctrl.fastForward(30);
     ctrl.restart();
+    const beforeMenu = [...track.mock.calls];
     ctrl.backToMenu();
+    ctrl.closeMenu();
+    expect(track.mock.calls).toEqual(beforeMenu);
+    ctrl.leaveMatch();
     ctrl.start('human');
     ctrl.state.gameOver = 'player_won';
     ctrl.fastForward(0.1);

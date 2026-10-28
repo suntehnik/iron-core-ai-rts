@@ -1,3 +1,4 @@
+import { enLayout, itLayout, ruLayout } from './dict/layout';
 import { Entry, Lang, format, getLanguage } from './core';
 import { enAgents, itAgents, ruAgents } from './dict/agents';
 import { enCampaign, itCampaign, ruCampaign } from './dict/campaign';
@@ -12,9 +13,9 @@ export * from './core';
  * Area dictionaries are merged here. `t` checks keys at compile time; English and Italian are typed
  * against Russian, so every string exists in every language.
  */
-const RU = { ...ruHud, ...ruGame, ...ruAgents, ...ruCatalog, ...ruCampaign, ...ruConstruction };
-const EN: Record<MessageKey, Entry> = { ...enHud, ...enGame, ...enAgents, ...enCatalog, ...enCampaign, ...enConstruction };
-const IT: Record<MessageKey, Entry> = { ...itHud, ...itGame, ...itAgents, ...itCatalog, ...itCampaign, ...itConstruction };
+const RU = { ...ruLayout, ...ruHud, ...ruGame, ...ruAgents, ...ruCatalog, ...ruCampaign, ...ruConstruction };
+const EN: Record<MessageKey, Entry> = { ...enLayout, ...enHud, ...enGame, ...enAgents, ...enCatalog, ...enCampaign, ...enConstruction };
+const IT: Record<MessageKey, Entry> = { ...itLayout, ...itHud, ...itGame, ...itAgents, ...itCatalog, ...itCampaign, ...itConstruction };
 
 export type MessageKey = keyof typeof RU;
 
