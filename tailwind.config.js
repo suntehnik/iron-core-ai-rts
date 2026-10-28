@@ -1,5 +1,12 @@
+import plugin from 'tailwindcss/plugin';
+
 /** @type {import('tailwindcss').Config} */
 export default {
+  // hover styles only where a pointer really hovers: on iPhone Safari a hover change under a running HUD
+  // turned the first tap on a button into a «hover» and swallowed the click
+  future: {
+    hoverOnlyWhenSupported: true,
+  },
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -24,5 +31,8 @@ export default {
       }
     },
   },
-  plugins: [],
+  plugins: [
+    // `phone:` — the phone landscape layout; the game root carries the `phone` class (src/components/device.ts)
+    plugin(({ addVariant }) => addVariant('phone', '.phone &')),
+  ],
 }

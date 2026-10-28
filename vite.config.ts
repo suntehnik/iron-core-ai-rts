@@ -113,6 +113,10 @@ function iosShell(mode: string): Plugin {
       if (mode !== 'ios') return html;
       return html
         .replace(/<meta name="viewport"[^>]*>/, `<meta name="viewport" content="width=${IOS_LAYOUT_WIDTH}, user-scalable=no, viewport-fit=cover" />`)
+        // the app is the home-screen icon already: no web app manifest, no Apple web-app tags
+        .replace(/\s*<!-- Installable web app[^>]*-->/, '')
+        .replace(/\s*<link rel="(manifest|apple-touch-icon)"[^>]*>/g, '')
+        .replace(/\s*<meta name="(theme-color|mobile-web-app-capable|apple-mobile-web-app-[\w-]+)"[^>]*>/g, '')
         .replace(/\s*<link rel="preconnect"[^>]*>/g, '')
         .replace(/\s*<link href="https:\/\/fonts\.googleapis\.com[^>]*>/g, '');
     },
@@ -123,6 +127,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), llmProxy(env), iosShell(mode)],
+    // public/ holds the web app manifest and its icons, which the iOS app does not use
+    publicDir: mode === 'ios' ? false : 'public',
     server: {
       port: 3000,
       host: true,

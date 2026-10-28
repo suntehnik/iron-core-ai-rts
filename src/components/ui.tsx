@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, Languages } from 'lucide-react';
+import { ChevronDown, Languages, X } from 'lucide-react';
 import { LANGS, LANG_LABEL, Lang, t } from '../i18n';
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
@@ -59,11 +59,19 @@ export const Panel: React.FC<
     open?: boolean;
     onToggle?: () => void;
     summary?: React.ReactNode;
+    /** drawer on the phone: a close button, the body scrolls under a sticky title */
+    onClose?: () => void;
   }>
-> = ({ className, title, right, open = true, onToggle, summary, children }) => (
-  <div className={cx('hud-panel pointer-events-auto', className)}>
+> = ({ className, title, right, open = true, onToggle, summary, onClose, children }) => (
+  <div className={cx('hud-panel pointer-events-auto', onClose && 'max-h-full overflow-y-auto overscroll-contain', className)}>
     {title && (
-      <div className={cx('flex items-center justify-between px-3 pt-2 pb-1.5', open && 'border-b border-white/5')}>
+      <div
+        className={cx(
+          'flex items-center justify-between px-3 pt-2 pb-1.5',
+          open && 'border-b border-white/5',
+          onClose && 'sticky top-0 z-10 rounded-t-[14px] bg-[#1d2834]',
+        )}
+      >
         {onToggle ? (
           <button
             type="button"
@@ -77,7 +85,22 @@ export const Panel: React.FC<
         ) : (
           <div className="font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 flex items-center gap-1.5">{title}</div>
         )}
-        {right}
+        {onClose ? (
+          <span className="flex items-center gap-2">
+            {right}
+            <button
+              type="button"
+              onClick={onClose}
+              title={t('common.close')}
+              aria-label={t('common.close')}
+              className="w-11 h-11 -my-2 -mr-2 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/5"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </span>
+        ) : (
+          right
+        )}
       </div>
     )}
     {open ? children : summary && <div className="px-3 pb-2 -mt-0.5 text-[11px] text-slate-300 leading-snug line-clamp-2">{summary}</div>}
@@ -94,7 +117,7 @@ export const IconButton: React.FC<
     aria-label={title}
     disabled={disabled}
     className={cx(
-      'h-8 min-w-8 px-2 rounded-lg border flex items-center justify-center gap-1 text-xs transition disabled:opacity-40',
+      'h-8 min-w-8 px-2 rounded-lg border flex items-center justify-center gap-1 text-xs transition disabled:opacity-40 phone:h-11 phone:min-w-11 phone:rounded-xl',
       active ? 'bg-teal-500/25 border-teal-300/60 text-teal-100' : 'bg-slate-800/70 border-white/10 text-slate-200 hover:bg-slate-700/80',
       className,
     )}
@@ -143,7 +166,7 @@ export const Chip: React.FC<React.PropsWithChildren<{ active?: boolean; onClick?
     title={title}
     onClick={onClick}
     className={cx(
-      'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold border transition whitespace-nowrap',
+      'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold border transition whitespace-nowrap phone:min-h-[40px] phone:px-2.5 phone:text-xs',
       active ? 'bg-teal-500/30 border-teal-300/70 text-white' : 'bg-slate-800/60 border-white/10 text-slate-300 hover:bg-slate-700/70',
     )}
   >
@@ -164,7 +187,7 @@ export const LanguageSwitch: React.FC<{ value: Lang; onChange: (lang: Lang) => v
         title={LANG_LABEL[lang]}
         onClick={() => onChange(lang)}
         className={cx(
-          'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold border transition whitespace-nowrap',
+          'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold border transition whitespace-nowrap phone:min-h-[40px] phone:min-w-[40px] phone:text-xs',
           value === lang ? 'bg-teal-500/30 border-teal-300/70 text-white' : 'bg-slate-800/60 border-white/10 text-slate-300 hover:bg-slate-700/70',
         )}
       >
