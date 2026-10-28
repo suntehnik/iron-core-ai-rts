@@ -15,6 +15,7 @@ import { TacticalPanel } from './components/TacticalPanel';
 import { TopBar } from './components/TopBar';
 import { VictoryModal } from './components/VictoryModal';
 import { cx } from './components/ui';
+import { useBackClose } from './backButton';
 import { t } from './i18n';
 
 const controller = new GameController();
@@ -29,6 +30,7 @@ export const App: React.FC = () => {
   const version = useSyncExternalStore(ctrl.subscribe, ctrl.getVersion);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useBackClose(settingsOpen, () => setSettingsOpen(false));
   const phone = usePhoneLayout();
 
   useEffect(() => {
@@ -115,6 +117,7 @@ const PhoneHud: React.FC<HudProps> = ({ ctrl, version, onOpenSettings }) => {
   // a spectator has no panels to open
   const open = spectator ? null : drawer;
   const close = () => setDrawer(null);
+  useBackClose(open !== null, close);
   return (
     <>
       <TopBar ctrl={ctrl} onOpenSettings={onOpenSettings} />

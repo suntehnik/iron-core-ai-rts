@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cloud LLM providers are HTTPS. A player's own model server on the home network (oMLX, LM Studio, vLLM,
+  Ollama) usually answers plain http at an IP address, e.g. http://192.168.1.20:8000/v1, and a domain list
+  cannot name a whole subnet, so cleartext stays allowed for every host. The game itself is served from the
+  APK; it sends requests over http only to the address the player typed in the settings. The WebView side
+  of this (mixed content from the https page) is in MainActivity. README: «Android-приложение».
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

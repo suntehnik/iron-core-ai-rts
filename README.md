@@ -186,6 +186,85 @@ open ios/IronCore.xcodeproj       # Xcode 26+, схема IronCore; для iPhon
 xcrun simctl launch --console-pty booted com.ironcore.aicommander -autotest
 ```
 
+## Android-приложение
+
+В `android/` лежит приложение для Android-телефонов: та же игра в системном WebView, в ландшафте и на весь экран.
+Модели на устройстве, как в iOS, здесь нет. Агенты думают облачным LLM или вашим сервером модели, как в браузере:
+⚙ → провайдер, ключ и модель. Ключ хранится в `localStorage` WebView на телефоне и не попадает в сборку.
+
+```bash
+npm run build:android            # собрать игру в android/app/src/main/assets/web
+cd android
+./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+- **Требования.** JDK 17 или новее для Gradle 9.8 и Android Gradle Plugin 9.4. Сборка проверена на Homebrew
+  OpenJDK 21 (`export JAVA_HOME=$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home`). Подойдёт и JBR
+  из Android Studio: `/Applications/Android Studio.app/Contents/jbr/Contents/Home`. Нужен Android SDK с платформой
+  `android-36`. Путь к SDK берётся из `ANDROID_HOME` или из `android/local.properties`
+  (`sdk.dir=/Users/<вы>/Library/Android/sdk`); этот файл не попадает в git. Телефон: Android 8.0+ с WebGL.
+- **Как устроено.** `MainActivity.kt` и `GameWebView.kt` в `android/app/src/main/java/com/ironcore/aicommander/`,
+  из зависимостей только androidx. `WebViewAssetLoader` отдаёт сборку с `https://appassets.androidplatform.net/`.
+  Это настоящий https-origin, как схема `ironcore://` в iOS, поэтому ES-модули, `fetch`, CORS и `localStorage`
+  работают как на веб-сервере. Сборка `--mode android` использует браузерную раскладку для телефона, без
+  манифеста веб-приложения и веб-шрифтов Google: игра стартует без сети и не ждёт чужой сервер. Gradle не вызывает npm: без
+  `npm run build:android` сборка APK останавливается с подсказкой.
+- **Экран.** Только ландшафт (`sensorLandscape`). Системные панели скрыты, свайп от края показывает их ненадолго.
+  Игра отступает от выреза камеры с обеих сторон. Экран не гаснет, пока игра на переднем плане: матч идёт минутами
+  без касаний. На планшетах Android 16 может не соблюдать фиксированную ориентацию.
+- **Кнопка «Назад».** Сначала закрывает то, что открыто последним: настройки, выдвижную панель («Производство»,
+  «План армии», развёрнутую консоль), меню «⋮» или панель монет. Компоненты регистрируют такие окна через
+  `useBackClose` из `src/backButton.ts`. Если закрывать нечего, игра уходит в фон. Матч переживает поворот экрана и уход в фон.
+  В фоне страница стоит: нет кадров и таймеров, агенты не тратят токены. Если система выгрузит процесс, матч
+  начнётся заново.
+- **Облачные провайдеры** работают напрямую. Preflight CORS с origin `https://appassets.androidplatform.net`
+  проходит у всех шести пресетов: OpenRouter, DashScope, Groq, OpenAI, Gemini, Anthropic. Серверного прокси
+  `/api/llm` и модели устройства (`device`, только iOS) в приложении нет, в настройках их не видно.
+- **Свой сервер модели в локальной сети.** Выберите «Локальный / свой OpenAI-совместимый» и укажите адрес Mac или
+  ПК в сети, например `http://192.168.1.20:8000/v1`. `127.0.0.1` на телефоне — сам телефон; в эмуляторе компьютер
+  доступен как `10.0.2.2`. Сервер должен слушать сеть (`0.0.0.0`), а не только localhost, и отвечать заголовками
+  CORS. Обычный http разрешён намеренно. Страница открыта по https, поэтому WebView пропускает смешанный контент
+  (`MIXED_CONTENT_ALWAYS_ALLOW`). `res/xml/network_security_config.xml` разрешает cleartext для любого адреса,
+  потому что список доменов не умеет описать подсеть. Игра ходит по http только на адрес, который ввёл игрок.
+  Облачные провайдеры остаются на https.
+- **Статистика.** Firebase Analytics в приложении выключен, как в iOS: SDK не попадает в сборку.
+- **Голос.** Android WebView отклоняет распознавание речи (`not-allowed`, кнопка микрофона отвечает «Нет доступа к
+  микрофону»), а озвучки (`speechSynthesis`) в нём нет. Приказы пишутся текстом, ответы агентов не озвучиваются.
+- **Отладка.** Отладочную сборку видно в `chrome://inspect` на компьютере, когда телефон подключён по USB.
+- **Резервные копии.** Ключи лежат в данных WebView, поэтому приложение не попадает в облачные копии Android
+  (`allowBackup="false"`). Прогресс кампании при переустановке тоже сбрасывается.
+
+### Подпись релиза
+
+Ключ подписи и пароли не хранятся в репозитории: `android/keystore.properties`, `*.jks` и `*.keystore` перечислены
+в `android/.gitignore`. Ключ создаётся один раз. Держите его резервную копию вне репозитория: без него нельзя выпустить
+обновление приложения, которое уже установлено у игроков.
+
+```bash
+keytool -genkeypair -v -keystore ~/keys/ironcore-release.jks -alias ironcore -keyalg RSA -keysize 4096 -validity 10000
+```
+
+`android/keystore.properties` (относительный `storeFile` считается от папки `android/`):
+
+```properties
+storeFile=/Users/<вы>/keys/ironcore-release.jks
+storePassword=<пароль хранилища>
+keyAlias=ironcore
+keyPassword=<пароль ключа>
+```
+
+```bash
+npm run build:android
+cd android
+./gradlew assembleRelease        # app/build/outputs/apk/release/app-release.apk
+./gradlew bundleRelease          # app/build/outputs/bundle/release/app-release.aab для Google Play
+```
+
+Release-сборка сжимается R8. Без `keystore.properties` `assembleRelease` оставляет неподписанный
+`app-release-unsigned.apk`. В Google Play с Play App Signing этот ключ становится ключом загрузки, а приложение
+подписывает Google. `versionName` и `versionCode` берутся из `version` в `package.json`: `0.2.0` → `200`.
+
 ## Публикация на Firebase Hosting
 
 `npm run build` собирает статику: `dist/index.html` и файлы с хешем в имени в `dist/assets/`. В `firebase.json`
@@ -386,9 +465,11 @@ src/game/GameController.ts   связка цикла игры, агентов, �
 src/components/*             HUD, панель конструктора, план армии, монеты, настройки
 src/components/device.ts      телефон: компактная раскладка, полный экран, ориентация, нативные обёртки
 src/analytics/*              анонимная статистика: схема событий, согласие, ленивая загрузка Firebase Analytics
-vite.config.ts               dev/preview-прокси /api/llm, сборка для iOS (--mode ios)
+vite.config.ts               dev/preview-прокси /api/llm, сборки для iOS (--mode ios) и Android (--mode android)
 firebase.json, scripts/      Firebase Hosting: кеширование, деплой, проверка сборки на секреты
 ios/IronCore/                SwiftUI-приложение: WKWebView, схема ironcore://, Foundation Models, Translation
+android/app/src/main/java/   Android-приложение: WebView, WebViewAssetLoader (https://appassets.androidplatform.net), «Назад»
+src/backButton.ts            кнопка «Назад» Android: стек открытых окон и шторок, связь с приложением
 ```
 
 ## Тесты

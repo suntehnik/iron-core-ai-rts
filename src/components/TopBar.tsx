@@ -7,6 +7,7 @@ import { toggleFullscreen, useFullscreen, usePhoneLayout } from './device';
 import { IconButton, cx, fmtCoins, formatTime } from './ui';
 import { t } from '../i18n';
 import { levelName } from '../game/levelText';
+import { useBackClose } from '../backButton';
 
 const Resource: React.FC<{ icon: React.ReactNode; value: React.ReactNode; title: string; warn?: boolean; sub?: React.ReactNode }> = ({
   icon,
@@ -28,6 +29,8 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
   const [coinsOpen, setCoinsOpen] = useState(false);
   // Phone: pause and fullscreen stay on the bar, the rest moves into a menu
   const [menuOpen, setMenuOpen] = useState(false);
+  useBackClose(coinsOpen, () => setCoinsOpen(false));
+  useBackClose(menuOpen, () => setMenuOpen(false));
   const phone = usePhoneLayout();
   const fs = useFullscreen();
   const fullscreenButton = fs.supported && (

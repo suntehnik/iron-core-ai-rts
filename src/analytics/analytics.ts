@@ -9,8 +9,8 @@ export type Consent = 'granted' | 'denied' | 'unset';
  * its installation id in IndexedDB anyway.
  */
 export type ConsentPolicy = 'opt-in' | 'opt-out';
-/** Why collection is impossible here: vitest, the dev server, the iOS app, localhost without the debug flag, a browser the SDK does not support. */
-export type OffReason = 'test' | 'dev' | 'ios' | 'local' | 'preview' | 'unsupported';
+/** Why collection is impossible here: vitest, the dev server, the iOS or Android app, localhost without the debug flag, a browser the SDK does not support. */
+export type OffReason = 'test' | 'dev' | 'ios' | 'android' | 'local' | 'preview' | 'unsupported';
 
 export interface AnalyticsEnv {
   off: OffReason | null;
@@ -39,7 +39,7 @@ export interface AnalyticsDeps {
   env: AnalyticsEnv;
   policy: ConsentPolicy;
   store: ConsentStore;
-  /** null — the build has no SDK at all (the iOS app) */
+  /** null — the build has no SDK at all (the iOS and Android apps) */
   loader: BackendLoader | null;
   /** Removes the identifiers the SDK left (the _ga cookies, the Firebase installation id) when the player opts out */
   clearIdentifiers?: () => void;

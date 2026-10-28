@@ -1,0 +1,15 @@
+# SDK path of this machine: sdk.dir=/Users/<you>/Library/Android/sdk
+local.properties
+.gradle/
+.kotlin/
+build/
+app/build/
+.idea/
+*.iml
+captures/
+# the web build (npm run build:android)
+app/src/main/assets/web/
+# release signing stays on the machine that signs
+keystore.properties
+*.jks
+*.keystore

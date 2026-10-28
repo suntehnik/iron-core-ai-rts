@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The battlefield sand, the page background in src/index.css -->
+    <color name="sand">#E9D6AA</color>
+</resources>

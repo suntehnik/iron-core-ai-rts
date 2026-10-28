@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Cloud LLM providers, or the player's own model server -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- The battlefield is WebGL -->
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+
+    <!--
+      allowBackup: the player's API keys live in the WebView's localStorage and stay off cloud backups
+      (a device-to-device transfer to the player's new phone still takes them along).
+      networkSecurityConfig: plain http to a model server on the local network, see the file.
+    -->
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.IronCore"
+        tools:ignore="DataExtractionRules">
+
+        <!--
+          configChanges: rotation (sensorLandscape turns the phone 180°), a resized window, a new locale or
+          font size do not recreate the activity, so the WebView and the match in it live on.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|fontScale|locale|layoutDirection|uiMode|keyboard|keyboardHidden|navigation|touchscreen|colorMode|mcc|mnc"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
