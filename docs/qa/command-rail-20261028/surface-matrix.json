@@ -1,0 +1,206 @@
+[
+  {
+    "surface": "Завод",
+    "clearPercent": 41,
+    "h": 375,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 667,
+    "scroll": [
+      {
+        "scrollWidth": 282,
+        "width": 282
+      }
+    ]
+  },
+  {
+    "surface": "Тактика",
+    "clearPercent": 41,
+    "h": 375,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 667,
+    "scroll": [
+      {
+        "scrollWidth": 282,
+        "width": 282
+      }
+    ]
+  },
+  {
+    "surface": "Карта",
+    "clearPercent": 41,
+    "h": 375,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 667,
+    "scroll": [
+      {
+        "scrollWidth": 288,
+        "width": 288
+      }
+    ]
+  },
+  {
+    "surface": "Завод",
+    "clearPercent": 45,
+    "h": 360,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 740,
+    "scroll": [
+      {
+        "scrollWidth": 282,
+        "width": 282
+      }
+    ]
+  },
+  {
+    "surface": "Тактика",
+    "clearPercent": 45,
+    "h": 360,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 740,
+    "scroll": [
+      {
+        "scrollWidth": 282,
+        "width": 282
+      }
+    ]
+  },
+  {
+    "surface": "Карта",
+    "clearPercent": 45,
+    "h": 360,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 740,
+    "scroll": [
+      {
+        "scrollWidth": 282,
+        "width": 282
+      }
+    ]
+  },
+  {
+    "surface": "Завод",
+    "clearPercent": 46,
+    "h": 390,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 844,
+    "scroll": [
+      {
+        "scrollWidth": 312,
+        "width": 312
+      }
+    ]
+  },
+  {
+    "surface": "Тактика",
+    "clearPercent": 46,
+    "h": 390,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 844,
+    "scroll": [
+      {
+        "scrollWidth": 312,
+        "width": 312
+      }
+    ]
+  },
+  {
+    "surface": "Карта",
+    "clearPercent": 46,
+    "h": 390,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 844,
+    "scroll": [
+      {
+        "scrollWidth": 318,
+        "width": 318
+      }
+    ]
+  },
+  {
+    "surface": "Завод",
+    "clearPercent": 62,
+    "h": 720,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1280,
+    "scroll": [
+      {
+        "scrollWidth": 358,
+        "width": 358
+      }
+    ]
+  },
+  {
+    "surface": "Тактика",
+    "clearPercent": 62,
+    "h": 720,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1280,
+    "scroll": [
+      {
+        "scrollWidth": 358,
+        "width": 358
+      }
+    ]
+  },
+  {
+    "surface": "Карта",
+    "clearPercent": 62,
+    "h": 720,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1280,
+    "scroll": [
+      {
+        "scrollWidth": 358,
+        "width": 358
+      }
+    ]
+  }
+]

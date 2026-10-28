@@ -11,3 +11,6 @@ xcuserdata/
 *.log
 .DS_Store
 .firebase/
+
+# Local browser QA captures and build logs
+/output/
