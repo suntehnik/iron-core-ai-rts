@@ -5,8 +5,9 @@ import { commanderName } from '../config/commanders';
 import { TEAM_COLORS } from '../config/balance';
 import { GameController } from '../game/GameController';
 import { Team } from '../types/game';
+import { usePhoneLayout } from './device';
 import { CommanderPortrait } from './Portraits';
-import { fmtCoins, formatTime } from './ui';
+import { cx, fmtCoins, formatTime } from './ui';
 import { t } from '../i18n';
 import { levelConfig } from '../config/levels';
 import { levelName } from '../game/levelText';
@@ -16,6 +17,8 @@ export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const spectator = ctrl.mode === 'spectator';
   const won = s.gameOver === 'player_won';
   const winner: Team = won ? 'player' : 'enemy';
+  // Phone in landscape: the trophy beside the title and the stats in two rows, so the buttons stay on screen
+  const phone = usePhoneLayout();
 
   useEffect(() => {
     if (won || spectator) {
@@ -31,21 +34,25 @@ export const VictoryModal: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const aiCalls = b.services.production.calls + b.services.tactical.calls;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="hud-panel w-full max-w-[520px] p-6 text-center text-slate-100">
-        <div className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center ${won ? 'bg-amber-400/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'}`}>
-          {won ? <Trophy className="w-9 h-9" /> : <Skull className="w-9 h-9" />}
+    <div className="safe-pad fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className={cx('hud-panel w-full max-h-full overflow-y-auto text-center text-slate-100', phone ? 'max-w-[700px] p-4' : 'max-w-[520px] p-6')}>
+        <div className={cx(phone && 'flex items-center gap-4 text-left')}>
+          <div className={`${phone ? 'shrink-0' : 'mx-auto'} w-16 h-16 rounded-2xl flex items-center justify-center ${won ? 'bg-amber-400/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'}`}>
+            {won ? <Trophy className="w-9 h-9" /> : <Skull className="w-9 h-9" />}
+          </div>
+          <div>
+            <h1 className={cx('font-heading font-bold', phone ? 'text-2xl' : 'text-3xl mt-3')}>{won ? t('victory.won') : t('victory.lost')}</h1>
+            <p className="text-sm text-slate-300 mt-1">
+              {won ? t('victory.wonText') : t('victory.lostText')}
+            </p>
+            {s.level && (
+              <p className={`text-sm font-semibold mt-1 ${won ? 'text-amber-200' : 'text-slate-200'}`}>
+                {t(won ? 'victory.levelCleared' : 'victory.levelFailed', { n: s.level.n, name: levelName(s.level) })}
+              </p>
+            )}
+          </div>
         </div>
-        <h1 className="font-heading text-3xl font-bold mt-3">{won ? t('victory.won') : t('victory.lost')}</h1>
-        <p className="text-sm text-slate-300 mt-1">
-          {won ? t('victory.wonText') : t('victory.lostText')}
-        </p>
-        {s.level && (
-          <p className={`text-sm font-semibold mt-1 ${won ? 'text-amber-200' : 'text-slate-200'}`}>
-            {t(won ? 'victory.levelCleared' : 'victory.levelFailed', { n: s.level.n, name: levelName(s.level) })}
-          </p>
-        )}
-        <div className="grid grid-cols-3 gap-2 mt-4 text-xs">
+        <div className={cx('grid text-xs', phone ? 'grid-cols-5 gap-1.5 mt-3' : 'grid-cols-3 gap-2 mt-4')}>
           <Stat label={t('stat.matchTime')} value={formatTime(s.gameTime)} />
           <Stat label={t('stat.metal')} value={Math.round(totals.metalMined + totals.scrapReclaimed)} />
           <Stat label={t('stat.built')} value={totals.unitsBuilt} />
@@ -80,19 +87,24 @@ const SpectatorResult: React.FC<{ ctrl: GameController; winner: Team }> = ({ ctr
   const b = ctrl.director.billing.snapshot();
   const usage = { player: b.ally, enemy: b.enemy };
   const color = TEAM_COLORS[winner];
+  const phone = usePhoneLayout();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="hud-panel w-full max-w-[600px] p-6 text-center text-slate-100">
-        <div className="mx-auto w-fit">
-          <CommanderPortrait team={winner} size={64} />
+    <div className="safe-pad fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className={cx('hud-panel w-full max-w-[600px] max-h-full overflow-y-auto text-center text-slate-100', phone ? 'p-4' : 'p-6')}>
+        <div className={cx(phone && 'flex items-center gap-3 text-left')}>
+          <div className={phone ? 'shrink-0' : 'mx-auto w-fit'}>
+            <CommanderPortrait team={winner} size={phone ? 48 : 64} />
+          </div>
+          <div>
+            <h1 className={cx('font-heading font-bold', phone ? 'text-2xl' : 'text-3xl mt-2')} style={{ color: color.light }}>
+              {t('victory.spectatorWinner', { name: commanderName(winner) })}
+            </h1>
+            <p className="text-sm text-slate-300 mt-1">
+              {t('victory.spectatorText', { time: formatTime(s.gameTime), loser: winner === 'player' ? t('army.orangeGen') : t('army.tealGen') })}
+            </p>
+          </div>
         </div>
-        <h1 className="font-heading text-3xl font-bold mt-2" style={{ color: color.light }}>
-          {t('victory.spectatorWinner', { name: commanderName(winner) })}
-        </h1>
-        <p className="text-sm text-slate-300 mt-1">
-          {t('victory.spectatorText', { time: formatTime(s.gameTime), loser: winner === 'player' ? t('army.orangeGen') : t('army.tealGen') })}
-        </p>
-        <table className="w-full mt-4 text-xs tabular-nums">
+        <table className={cx('w-full text-xs tabular-nums', phone ? 'mt-2' : 'mt-4')}>
           <thead className="text-[10px] uppercase tracking-wider text-slate-400">
             <tr>
               <th className="text-left font-semibold pb-1" />
@@ -129,7 +141,7 @@ const Row: React.FC<{ label: string; v: (team: Team) => React.ReactNode }> = ({ 
 );
 
 const Buttons: React.FC<{ ctrl: GameController; again: string; icon?: React.ReactNode; onAgain?: () => void }> = ({ ctrl, again, icon, onAgain }) => (
-  <div className="mt-5 flex gap-2">
+  <div className="mt-5 flex gap-2 phone:mt-3">
     <button
       type="button"
       onClick={() => (onAgain ? onAgain() : ctrl.restart())}

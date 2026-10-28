@@ -106,32 +106,41 @@ export function llmProxy(env: Record<string, string>): Plugin {
  */
 export const IOS_LAYOUT_WIDTH = 1024;
 
+/**
+ * The page inside the native apps: the app is the home-screen icon already (no web app manifest, no Apple web-app
+ * tags), and no web fonts, so it starts offline and does not wait on Google Fonts.
+ */
+function appPage(html: string): string {
+  return html
+    .replace(/\s*<!-- Installable web app[^>]*-->/, '')
+    .replace(/\s*<link rel="(manifest|apple-touch-icon)"[^>]*>/g, '')
+    .replace(/\s*<meta name="(theme-color|mobile-web-app-capable|apple-mobile-web-app-[\w-]+)"[^>]*>/g, '')
+    .replace(/\s*<link rel="preconnect"[^>]*>/g, '')
+    .replace(/\s*<link href="https:\/\/fonts\.googleapis\.com[^>]*>/g, '');
+}
+
 function iosShell(mode: string): Plugin {
   return {
     name: 'ironcore-ios-shell',
     transformIndexHtml(html) {
       if (mode !== 'ios') return html;
-      return html
-        .replace(/<meta name="viewport"[^>]*>/, `<meta name="viewport" content="width=${IOS_LAYOUT_WIDTH}, user-scalable=no, viewport-fit=cover" />`)
-        .replace(/\s*<link rel="preconnect"[^>]*>/g, '')
-        .replace(/\s*<link href="https:\/\/fonts\.googleapis\.com[^>]*>/g, '');
+      return appPage(html).replace(
+        /<meta name="viewport"[^>]*>/,
+        `<meta name="viewport" content="width=${IOS_LAYOUT_WIDTH}, user-scalable=no, viewport-fit=cover" />`,
+      );
     },
   };
 }
 
 /**
  * `vite build --mode android` packs the game for the Android app (android/app/src/main/assets/web, served by
- * WebViewAssetLoader): the browser's own phone layout, and no web fonts, so the app starts offline and does not
- * wait on Google Fonts.
+ * WebViewAssetLoader): the browser's own phone layout, without the web app manifest and web fonts.
  */
 function androidShell(mode: string): Plugin {
   return {
     name: 'ironcore-android-shell',
     transformIndexHtml(html) {
-      if (mode !== 'android') return html;
-      return html
-        .replace(/\s*<link rel="preconnect"[^>]*>/g, '')
-        .replace(/\s*<link href="https:\/\/fonts\.googleapis\.com[^>]*>/g, '');
+      return mode === 'android' ? appPage(html) : html;
     },
   };
 }
@@ -140,6 +149,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), llmProxy(env), iosShell(mode), androidShell(mode)],
+    // public/ holds the web app manifest and its icons, which the native apps do not use
+    publicDir: mode === 'ios' || mode === 'android' ? false : 'public',
     server: {
       port: 3000,
       host: true,

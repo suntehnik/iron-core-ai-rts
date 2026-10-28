@@ -28,6 +28,8 @@ const W = GAME_BALANCE.MAP_WIDTH;
 const H = GAME_BALANCE.MAP_HEIGHT;
 const YAW = THREE.MathUtils.degToRad(35);
 const PITCH = THREE.MathUtils.degToRad(42);
+/** Half-height of the view in world units: closest and farthest zoom (wheel and pinch). */
+const clampZoom = (z: number) => Math.max(10, Math.min(46, z));
 
 /** Cartoon isometric renderer (brief §7): sand field with groves and rocks, faction colours, readable silhouettes. */
 export class SceneManager {
@@ -54,6 +56,9 @@ export class SceneManager {
   private zoom = 30; // half-height of the view in world units
   private dragging = false;
   private dragStart: THREE.Vector3 | null = null;
+  /** Fingers (or the mouse) on the canvas: one drags the map, two pinch to zoom. */
+  private pointers = new Map<number, { x: number; y: number }>();
+  private pinch: { spread: number; zoom: number } | null = null;
   private keys = new Set<string>();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private raycaster = new THREE.Raycaster();
@@ -70,6 +75,8 @@ export class SceneManager {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.domElement.style.display = 'block';
+    // the game handles touch itself: no page scroll, pinch-zoom or pointercancel over the map
+    this.renderer.domElement.style.touchAction = 'none';
     container.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color('#e9d6aa');
@@ -190,12 +197,35 @@ export class SceneManager {
 
   private onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0 && e.button !== 2) return;
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this.renderer.domElement.setPointerCapture(e.pointerId);
+    if (this.pointers.size >= 2) {
+      // a second finger turns the drag into a pinch
+      this.dragging = false;
+      this.dragStart = null;
+      this.pinch = { spread: this.pointerSpread(), zoom: this.zoom };
+      return;
+    }
     this.dragging = true;
     this.dragStart = this.groundPointAt(e.clientX, e.clientY);
-    this.renderer.domElement.setPointerCapture(e.pointerId);
   };
 
+  /** Distance between the first two fingers on the canvas, in CSS pixels. */
+  private pointerSpread(): number {
+    const [a, b] = [...this.pointers.values()];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  }
+
   private onPointerMove = (e: PointerEvent) => {
+    if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pinch) {
+      const spread = this.pointerSpread();
+      if (spread > 0 && this.pinch.spread > 0) {
+        this.zoom = clampZoom((this.pinch.zoom * this.pinch.spread) / spread);
+        this.updateCamera();
+      }
+      return;
+    }
     if (!this.dragging || !this.dragStart) return;
     const now = this.groundPointAt(e.clientX, e.clientY);
     if (!now) return;
@@ -205,18 +235,29 @@ export class SceneManager {
   };
 
   private onPointerUp = (e: PointerEvent) => {
-    this.dragging = false;
-    this.dragStart = null;
+    this.pointers.delete(e.pointerId);
     try {
       this.renderer.domElement.releasePointerCapture(e.pointerId);
     } catch {
       /* ignore */
     }
+    if (this.pinch && this.pointers.size === 1) {
+      // one finger left after a pinch: it drags the map on from where it is
+      const [rest] = [...this.pointers.values()];
+      this.pinch = null;
+      this.dragging = true;
+      this.dragStart = this.groundPointAt(rest.x, rest.y);
+      return;
+    }
+    if (this.pointers.size > 0) return;
+    this.pinch = null;
+    this.dragging = false;
+    this.dragStart = null;
   };
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    this.zoom = Math.max(10, Math.min(46, this.zoom * (1 + Math.sign(e.deltaY) * 0.1)));
+    this.zoom = clampZoom(this.zoom * (1 + Math.sign(e.deltaY) * 0.1));
     this.updateCamera();
   };
 
@@ -239,6 +280,7 @@ export class SceneManager {
     el.addEventListener('pointerdown', this.onPointerDown);
     el.addEventListener('pointermove', this.onPointerMove);
     el.addEventListener('pointerup', this.onPointerUp);
+    el.addEventListener('pointercancel', this.onPointerUp);
     el.addEventListener('wheel', this.onWheel, { passive: false });
     el.addEventListener('contextmenu', this.onContext);
     window.addEventListener('keydown', this.onKeyDown);
@@ -608,6 +650,7 @@ export class SceneManager {
     el.removeEventListener('pointerdown', this.onPointerDown);
     el.removeEventListener('pointermove', this.onPointerMove);
     el.removeEventListener('pointerup', this.onPointerUp);
+    el.removeEventListener('pointercancel', this.onPointerUp);
     el.removeEventListener('wheel', this.onWheel);
     el.removeEventListener('contextmenu', this.onContext);
     window.removeEventListener('keydown', this.onKeyDown);

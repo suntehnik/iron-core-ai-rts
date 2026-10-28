@@ -59,13 +59,18 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="hud-panel w-full max-w-[620px] max-h-[92vh] overflow-y-auto text-slate-100">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+    <div className="safe-pad fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="hud-panel w-full max-w-[620px] max-h-[92vh] overflow-y-auto overscroll-contain text-slate-100 phone:max-h-full phone:max-w-[680px]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 phone:py-1.5">
           <div className="flex items-center gap-2 font-heading font-bold">
             <Cpu className="w-5 h-5 text-teal-300" /> {t('set.title')}
           </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white" aria-label={t('common.close')}>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-white phone:w-11 phone:h-11 phone:-mr-2.5 phone:flex phone:items-center phone:justify-center"
+            aria-label={t('common.close')}
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -87,7 +92,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
                     type="button"
                     onClick={() => pick(id)}
                     className={cx(
-                      'text-left p-2 rounded-lg border transition',
+                      'text-left p-2 rounded-lg border transition phone:min-h-[44px]',
                       s.provider === id ? 'bg-teal-600/30 border-teal-300/70' : 'bg-slate-800/60 border-white/10 hover:bg-slate-700/60',
                     )}
                   >
@@ -188,7 +193,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
                   type="button"
                   onClick={runTest}
                   disabled={testing}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 font-semibold"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 font-semibold phone:min-h-[44px]"
                 >
                   <PlugZap className="w-3.5 h-3.5" /> {testing ? t('set.testing') : t('set.test')}
                 </button>
@@ -226,11 +231,11 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
           </div>
         </div>
 
-        <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold">
+        <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2 phone:py-2 phone:sticky phone:bottom-0 phone:bg-[#18212c]">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold phone:min-h-[44px] phone:text-sm">
             {t('common.cancel')}
           </button>
-          <button type="button" onClick={save} className="px-5 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold">
+          <button type="button" onClick={save} className="px-5 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold phone:min-h-[44px] phone:text-sm">
             {t('common.save')}
           </button>
         </div>
@@ -257,8 +262,8 @@ const Field: React.FC<React.PropsWithChildren<{ label: string; hint?: React.Reac
 );
 
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }> = ({ checked, onChange, label, hint }) => (
-  <label className="flex items-start gap-2 cursor-pointer">
-    <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="mt-0.5 accent-teal-400" />
+  <label className="flex items-start gap-2 cursor-pointer phone:min-h-[40px] phone:items-center phone:gap-3">
+    <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="mt-0.5 accent-teal-400 phone:mt-0 phone:w-5 phone:h-5 phone:shrink-0" />
     <span>
       <span className="text-slate-100">{label}</span>
       {hint && <span className="block text-[10px] text-slate-400">{hint}</span>}

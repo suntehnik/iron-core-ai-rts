@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Cpu, Eye, Flag, Lock, MessageSquarePlus, Mic, Play, Settings, Swords, Wrench } from 'lucide-react';
+import { Cpu, Eye, Flag, Lock, Maximize, MessageSquarePlus, Mic, Minimize, Play, Settings, Swords, Wrench } from 'lucide-react';
 import { COMMANDER_INSTRUCTIONS_MAX } from '../ai/prompts';
 import { nativeStatus, nativeUnavailableText } from '../ai/llm/nativeBridge';
 import { LLM_PROVIDERS } from '../config/llmProviders';
+import { GameMode } from '../ai/AIDirector';
 import { GameController } from '../game/GameController';
+import { fullscreenOnFirstPlay, suggestHomeScreen, toggleFullscreen, useFullscreen, usePhoneLayout } from './device';
 import { CommanderPortrait, EngineerPortrait } from './Portraits';
-import { LanguageSwitch, cx, formatTime, useCompactHud } from './ui';
+import { IconButton, LanguageSwitch, cx, formatTime, useCompactHud } from './ui';
 import { t } from '../i18n';
 import { commanderName } from '../config/commanders';
 import { CAMPAIGN, ENDLESS_FROM, levelConfig } from '../config/levels';
@@ -18,20 +20,169 @@ export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: (
   const [instructionsOpen, setInstructionsOpen] = useState(!!ctrl.allyInstructions);
   // Short screens (a phone in landscape): no tutorial cards, both modes side by side, so nothing hides below the edge
   const compact = useCompactHud();
+  // Phone in the browser: two columns — the game and the AI on the left, the level and the modes on the right
+  const phone = usePhoneLayout();
+  const fs = useFullscreen();
+  const start = (mode: GameMode) => {
+    fullscreenOnFirstPlay();
+    ctrl.start(mode);
+  };
+
+  const controls = (
+    <div className="flex items-center gap-1.5">
+      <LanguageSwitch value={ctrl.language} onChange={lang => ctrl.setLanguage(lang)} short />
+      {fs.supported && (
+        <IconButton onClick={() => void toggleFullscreen()} title={fs.active ? t('top.exitFullscreen') : t('top.fullscreen')} active={fs.active}>
+          {fs.active ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+        </IconButton>
+      )}
+    </div>
+  );
+  const kicker = <div className="text-[11px] uppercase tracking-[0.2em] text-teal-300 font-bold">Iron Core · AI Commander</div>;
+  const title = (
+    <>
+      <h1 className={cx('font-heading font-bold mt-1', compact ? 'text-xl' : 'text-2xl')}>{t('brief.title')}</h1>
+      <p className={cx('text-slate-300 mt-1', compact ? 'text-xs' : 'text-sm')}>
+        {t('brief.intro')}
+      </p>
+    </>
+  );
+
+  const status = (
+    <div className={cx(compact ? 'mt-3' : 'mt-4', 'flex items-center gap-2 p-2.5 rounded-lg border text-xs', cloud ? 'bg-emerald-500/10 border-emerald-400/30' : 'bg-amber-500/10 border-amber-400/30')}>
+      <Cpu className={cx('w-4 h-4 shrink-0', cloud ? 'text-emerald-300' : 'text-amber-300')} />
+      <div className="flex-1">
+        {cloud ? (
+          <>
+            {t('brief.connected', { label: ctrl.director.providerLabel(), how: modelWord })}
+          </>
+        ) : (
+          onDevice ? (
+            <>
+              {t('brief.deviceUnavailable', { why: nativeUnavailableText(nativeStatus()) })}
+            </>
+          ) : (
+            <>{t('brief.noCloud')}</>
+          )
+        )}
+      </div>
+      <button type="button" onClick={onOpenSettings} className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 font-semibold shrink-0 phone:min-h-[40px] phone:px-3">
+        <Settings className="w-3.5 h-3.5" /> {t('brief.configure')}
+      </button>
+    </div>
+  );
+
+  const modes = (
+    <div className={cx(phone ? 'mt-2 grid grid-cols-2 gap-2' : compact ? 'mt-2 grid grid-cols-2 gap-2' : 'mt-3 flex flex-col gap-2')}>
+      <button
+        type="button"
+        onClick={() => start('human')}
+        className="w-full py-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-heading font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-teal-900/40"
+      >
+        <Play className="w-5 h-5" /> {t('brief.start')}
+      </button>
+      <button
+        type="button"
+        onClick={() => start('spectator')}
+        className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-white/10 text-slate-100 flex items-center gap-3 text-left transition phone:justify-center"
+      >
+        {!phone && (
+          <span className="flex -space-x-2 shrink-0">
+            <CommanderPortrait team="player" size={compact ? 28 : 34} />
+            <CommanderPortrait team="enemy" size={compact ? 28 : 34} />
+          </span>
+        )}
+        <span className="flex-1 min-w-0 phone:flex-none">
+          <span className="font-heading font-bold text-sm flex items-center gap-1.5">
+            <Eye className="w-4 h-4 text-cyan-300 shrink-0" /> {compact ? t('brief.aiVsAi') : t('brief.aiVsAiLong')}
+          </span>
+          {phone ? null : compact ? (
+            <span className="block text-[11px] text-slate-400 leading-snug">{t('brief.aiVsAiShort')}</span>
+          ) : (
+            <span className="block text-[11px] text-slate-400 leading-snug">
+              {t('brief.aiVsAiText', { teal: commanderName('player'), rusty: commanderName('enemy'), how: cloud ? modelWord : t('brief.modelRules') })}
+            </span>
+          )}
+        </span>
+      </button>
+    </div>
+  );
+
+  const instructions = instructionsOpen ? (
+    <div className="mt-1.5 rounded-lg bg-slate-800/60 border border-teal-400/20 p-2">
+      <label htmlFor="ally-instructions" className="flex items-center gap-1.5 text-[11px] font-semibold text-teal-200">
+        <CommanderPortrait team="player" size={18} /> {t('brief.ordersTitle')}
+        <span className="font-normal text-slate-400">{t('brief.optional')}</span>
+      </label>
+      <textarea
+        id="ally-instructions"
+        rows={compact ? 2 : 3}
+        maxLength={COMMANDER_INSTRUCTIONS_MAX}
+        value={ctrl.allyInstructions}
+        onChange={e => ctrl.setAllyInstructions(e.target.value)}
+        placeholder={t('brief.ordersPlaceholder')}
+        className="mt-1.5 w-full resize-none rounded-md bg-slate-900/80 border border-white/10 px-2 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-teal-400/60 phone:text-sm"
+      />
+      <div className="flex justify-between gap-2 text-[10px] text-slate-400">
+        <span>
+          {cloud
+            ? t('brief.ordersCloud')
+            : t('brief.ordersNoLlm')}
+        </span>
+        <span className="tabular-nums shrink-0">
+          {ctrl.allyInstructions.length}/{COMMANDER_INSTRUCTIONS_MAX}
+        </span>
+      </div>
+    </div>
+  ) : (
+    <button
+      type="button"
+      onClick={() => setInstructionsOpen(true)}
+      className="mt-1.5 flex items-center gap-1 text-[11px] text-teal-300 hover:text-teal-200 phone:min-h-[40px] phone:text-xs"
+    >
+      <MessageSquarePlus className="w-3.5 h-3.5" /> {t('brief.giveOrders')}
+    </button>
+  );
+
+  if (phone) {
+    return (
+      <div className="safe-pad fixed inset-0 z-40 flex items-center justify-center bg-[#1b1712]/55 backdrop-blur-[2px]">
+        <div className="hud-panel w-full max-w-[780px] max-h-full overflow-y-auto overscroll-contain text-slate-100 p-3">
+          <div className="flex items-center justify-between gap-2">
+            {kicker}
+            {controls}
+          </div>
+          <div className="grid grid-cols-2 gap-3 items-start">
+            <div>
+              <div className="flex items-start gap-3">
+                <EngineerPortrait size={44} />
+                <div className="flex-1 min-w-0">{title}</div>
+              </div>
+              {status}
+              {suggestHomeScreen() && <div className="mt-2 text-[11px] text-slate-400 leading-snug">{t('fs.homeScreen')}</div>}
+            </div>
+            <div>
+              <LevelPicker ctrl={ctrl} compact={compact} />
+              {modes}
+              {instructions}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-[#1b1712]/55 backdrop-blur-[2px]">
+    <div className="safe-pad fixed inset-0 z-40 flex items-center justify-center bg-[#1b1712]/55 backdrop-blur-[2px]">
       <div className={cx('hud-panel w-full max-w-[640px] max-h-full overflow-y-auto text-slate-100', compact ? 'p-4' : 'p-6')}>
         <div className="flex items-start gap-4">
           <EngineerPortrait size={compact ? 52 : 72} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] uppercase tracking-[0.2em] text-teal-300 font-bold">Iron Core · AI Commander</div>
-              <LanguageSwitch value={ctrl.language} onChange={lang => ctrl.setLanguage(lang)} short />
+              {kicker}
+              {controls}
             </div>
-            <h1 className={cx('font-heading font-bold mt-1', compact ? 'text-xl' : 'text-2xl')}>{t('brief.title')}</h1>
-            <p className={cx('text-slate-300 mt-1', compact ? 'text-xs' : 'text-sm')}>
-              {t('brief.intro')}
-            </p>
+            {title}
           </div>
         </div>
 
@@ -49,96 +200,10 @@ export const BriefingOverlay: React.FC<{ ctrl: GameController; onOpenSettings: (
           </>
         )}
 
-        <div className={cx(compact ? 'mt-3' : 'mt-4', 'flex items-center gap-2 p-2.5 rounded-lg border text-xs', cloud ? 'bg-emerald-500/10 border-emerald-400/30' : 'bg-amber-500/10 border-amber-400/30')}>
-          <Cpu className={cx('w-4 h-4 shrink-0', cloud ? 'text-emerald-300' : 'text-amber-300')} />
-          <div className="flex-1">
-            {cloud ? (
-              <>
-                {t('brief.connected', { label: ctrl.director.providerLabel(), how: modelWord })}
-              </>
-            ) : (
-              onDevice ? (
-                <>
-                  {t('brief.deviceUnavailable', { why: nativeUnavailableText(nativeStatus()) })}
-                </>
-              ) : (
-                <>{t('brief.noCloud')}</>
-              )
-            )}
-          </div>
-          <button type="button" onClick={onOpenSettings} className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 font-semibold">
-            <Settings className="w-3.5 h-3.5" /> {t('brief.configure')}
-          </button>
-        </div>
-
+        {status}
         <LevelPicker ctrl={ctrl} compact={compact} />
-
-        <div className={cx(compact ? 'mt-2 grid grid-cols-2 gap-2' : 'mt-3 flex flex-col gap-2')}>
-          <button
-            type="button"
-            onClick={() => ctrl.start('human')}
-            className="w-full py-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-heading font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-teal-900/40"
-          >
-            <Play className="w-5 h-5" /> {t('brief.start')}
-          </button>
-          <button
-            type="button"
-            onClick={() => ctrl.start('spectator')}
-            className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-white/10 text-slate-100 flex items-center gap-3 text-left transition"
-          >
-            <span className="flex -space-x-2 shrink-0">
-              <CommanderPortrait team="player" size={compact ? 28 : 34} />
-              <CommanderPortrait team="enemy" size={compact ? 28 : 34} />
-            </span>
-            <span className="flex-1">
-              <span className="font-heading font-bold text-sm flex items-center gap-1.5">
-                <Eye className="w-4 h-4 text-cyan-300" /> {compact ? t('brief.aiVsAi') : t('brief.aiVsAiLong')}
-              </span>
-              {compact ? (
-                <span className="block text-[11px] text-slate-400 leading-snug">{t('brief.aiVsAiShort')}</span>
-              ) : (
-                <span className="block text-[11px] text-slate-400 leading-snug">
-                  {t('brief.aiVsAiText', { teal: commanderName('player'), rusty: commanderName('enemy'), how: cloud ? modelWord : t('brief.modelRules') })}
-                </span>
-              )}
-            </span>
-          </button>
-        </div>
-        {instructionsOpen ? (
-          <div className="mt-1.5 rounded-lg bg-slate-800/60 border border-teal-400/20 p-2">
-            <label htmlFor="ally-instructions" className="flex items-center gap-1.5 text-[11px] font-semibold text-teal-200">
-              <CommanderPortrait team="player" size={18} /> {t('brief.ordersTitle')}
-              <span className="font-normal text-slate-400">{t('brief.optional')}</span>
-            </label>
-            <textarea
-              id="ally-instructions"
-              rows={compact ? 2 : 3}
-              maxLength={COMMANDER_INSTRUCTIONS_MAX}
-              value={ctrl.allyInstructions}
-              onChange={e => ctrl.setAllyInstructions(e.target.value)}
-              placeholder={t('brief.ordersPlaceholder')}
-              className="mt-1.5 w-full resize-none rounded-md bg-slate-900/80 border border-white/10 px-2 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-teal-400/60"
-            />
-            <div className="flex justify-between gap-2 text-[10px] text-slate-400">
-              <span>
-                {cloud
-                  ? t('brief.ordersCloud')
-                  : t('brief.ordersNoLlm')}
-              </span>
-              <span className="tabular-nums shrink-0">
-                {ctrl.allyInstructions.length}/{COMMANDER_INSTRUCTIONS_MAX}
-              </span>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setInstructionsOpen(true)}
-            className="mt-1.5 flex items-center gap-1 text-[11px] text-teal-300 hover:text-teal-200"
-          >
-            <MessageSquarePlus className="w-3.5 h-3.5" /> {t('brief.giveOrders')}
-          </button>
-        )}
+        {modes}
+        {instructions}
         {!compact && (
           <div className="text-[10px] text-slate-400 text-center mt-2">{t('brief.camera')}</div>
         )}
@@ -163,7 +228,7 @@ const LevelPicker: React.FC<{ ctrl: GameController; compact: boolean }> = ({ ctr
         onClick={() => ctrl.selectLevel(n)}
         title={locked ? t('campaign.locked', { n: n - 1 }) : levelName(levelConfig(n))}
         className={cx(
-          'min-w-[34px] px-2 py-1 rounded-md text-xs font-heading font-bold tabular-nums flex items-center justify-center gap-1 border transition',
+          'min-w-[34px] px-2 py-1 rounded-md text-xs font-heading font-bold tabular-nums flex items-center justify-center gap-1 border transition phone:min-w-[40px] phone:min-h-[40px] phone:text-sm',
           active ? 'bg-teal-600 border-teal-300/60 text-white' : locked ? 'bg-slate-900/60 border-white/5 text-slate-500 cursor-not-allowed' : 'bg-slate-800 border-white/10 text-slate-200 hover:bg-slate-700',
         )}
       >

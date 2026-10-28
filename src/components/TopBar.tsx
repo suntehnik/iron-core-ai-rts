@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Box, Clock, Cog, Coins, Cpu, Eye, Flag, Gem, Home, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
+import { Box, Clock, Cog, Coins, Cpu, EllipsisVertical, Eye, Flag, Gem, Home, Maximize, Minimize, Pause, Play, RotateCcw, Settings, Users, Volume2, VolumeX, Zap } from 'lucide-react';
 import { GAME_BALANCE } from '../config/balance';
 import { GameController, TIME_SCALES } from '../game/GameController';
 import { CoinPanel } from './CoinPanel';
+import { toggleFullscreen, useFullscreen, usePhoneLayout } from './device';
 import { IconButton, cx, fmtCoins, formatTime } from './ui';
 import { t } from '../i18n';
 import { levelName } from '../game/levelText';
+import { useBackClose } from '../backButton';
 
 const Resource: React.FC<{ icon: React.ReactNode; value: React.ReactNode; title: string; warn?: boolean; sub?: React.ReactNode }> = ({
   icon,
@@ -14,17 +16,28 @@ const Resource: React.FC<{ icon: React.ReactNode; value: React.ReactNode; title:
   warn,
   sub,
 }) => (
-  <div className="flex items-center gap-1.5 px-2.5" title={title}>
+  <div className="flex items-center gap-1.5 px-2.5 phone:px-2" title={title}>
     <span className={cx('flex', warn ? 'text-rose-300' : 'text-slate-200')}>{icon}</span>
     <div className="leading-none">
       <div className={cx('font-heading font-bold text-[15px] tabular-nums', warn ? 'text-rose-300' : 'text-slate-50')}>{value}</div>
-      {sub && <div className="text-[9px] text-slate-400 mt-0.5 tracking-wide">{sub}</div>}
+      {sub && <div className="text-[9px] text-slate-400 mt-0.5 tracking-wide phone:hidden">{sub}</div>}
     </div>
   </div>
 );
 
 export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void }> = ({ ctrl, onOpenSettings }) => {
   const [coinsOpen, setCoinsOpen] = useState(false);
+  // Phone: pause and fullscreen stay on the bar, the rest moves into a menu
+  const [menuOpen, setMenuOpen] = useState(false);
+  useBackClose(coinsOpen, () => setCoinsOpen(false));
+  useBackClose(menuOpen, () => setMenuOpen(false));
+  const phone = usePhoneLayout();
+  const fs = useFullscreen();
+  const fullscreenButton = fs.supported && (
+    <IconButton onClick={() => void toggleFullscreen()} title={fs.active ? t('top.exitFullscreen') : t('top.fullscreen')} active={fs.active}>
+      {fs.active ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+    </IconButton>
+  );
   const s = ctrl.state;
   const e = s.teams.player.economy;
   const army = s.combatCount('player');
@@ -33,9 +46,9 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
   const busy = ctrl.director.busy;
 
   return (
-    <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3 pointer-events-none z-20">
+    <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3 pointer-events-none z-20 phone:top-2 phone:left-2 phone:right-2 phone:gap-2">
       {/* Resources (concept: metal • components • power • army) */}
-      <div className="hud-panel pointer-events-auto flex items-center divide-x divide-white/10 py-1.5">
+      <div className="hud-panel pointer-events-auto flex items-center divide-x divide-white/10 py-1.5 phone:min-h-[44px] phone:py-1">
         <Resource icon={<Box className="w-4 h-4" />} value={Math.floor(e.metal)} title={t('top.metal')} sub={t('top.perMin', { n: e.miningRatePerMin })} />
         <Resource
           icon={<Cog className="w-4 h-4" />}
@@ -65,7 +78,7 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
         </div>
         {s.level && (
           <div
-            className="flex items-center gap-1.5 px-2.5 text-amber-200"
+            className="flex items-center gap-1.5 px-2.5 text-amber-200 phone:hidden"
             title={ctrl.mode === 'spectator' ? t('campaign.map', { name: levelName(s.level) }) : `${t('campaign.level', { n: s.level.n })} · ${levelName(s.level)}`}
           >
             <Flag className="w-3.5 h-3.5" />
@@ -88,9 +101,12 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
         <div className="flex items-center gap-2 pointer-events-auto">
           <button
             type="button"
-            onClick={() => setCoinsOpen(o => !o)}
+            onClick={() => {
+              setCoinsOpen(o => !o);
+              setMenuOpen(false);
+            }}
             className={cx(
-              'hud-panel flex items-center gap-2 px-3 py-1.5 hover:brightness-125 transition',
+              'hud-panel flex items-center gap-2 px-3 py-1.5 hover:brightness-125 transition phone:min-h-[44px] phone:px-2.5',
               billing.status === 'low' && 'ring-1 ring-amber-400/70',
               billing.status === 'exhausted' && 'ring-1 ring-rose-400/80',
             )}
@@ -99,7 +115,7 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
             <Coins className="w-4 h-4 text-amber-300" />
             <div className="leading-none text-left">
               <div className="font-heading font-bold text-[15px] text-amber-200 tabular-nums">{fmtCoins(billing.wallet)}</div>
-              <div className="text-[9px] text-slate-400 mt-0.5">
+              <div className="text-[9px] text-slate-400 mt-0.5 phone:hidden">
                 {t('top.matchSpend', { spent: fmtCoins(billing.spentThisMatch), limit: billing.matchLimit })}
               </div>
             </div>
@@ -111,7 +127,7 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
             <Cpu className={cx('w-3.5 h-3.5 shrink-0', (busy.engineer || busy.tactician || busy.enemy) && 'animate-pulse text-cyan-300')} />
             <span className="text-[11px] font-semibold truncate">{ctrl.director.providerLabel()}</span>
           </div>
-          {ctrl.mode === 'spectator' && (
+          {ctrl.mode === 'spectator' && !phone && (
             <div className="hud-panel flex items-center gap-1 p-1" title={t('top.spectatorSpeed')}>
               <span className="flex items-center gap-1 px-1.5 text-[11px] font-semibold text-cyan-200 whitespace-nowrap">
                 <Eye className="w-3.5 h-3.5" />
@@ -124,6 +140,24 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
               ))}
             </div>
           )}
+          {phone ? (
+            <div className="hud-panel flex items-center gap-1 p-1">
+              <IconButton onClick={() => ctrl.togglePause()} title={s.isPaused ? t('top.resume') : t('top.pause')}>
+                {s.isPaused ? <Play className="w-4 h-4 text-emerald-300" /> : <Pause className="w-4 h-4" />}
+              </IconButton>
+              {fullscreenButton}
+              <IconButton
+                onClick={() => {
+                  setMenuOpen(o => !o);
+                  setCoinsOpen(false);
+                }}
+                title={t('top.more')}
+                active={menuOpen}
+              >
+                <EllipsisVertical className="w-4 h-4" />
+              </IconButton>
+            </div>
+          ) : (
           <div className="hud-panel flex items-center gap-1 p-1">
             <IconButton onClick={() => ctrl.backToMenu()} title={t('top.menu')}>
               <Home className="w-4 h-4" />
@@ -140,11 +174,61 @@ export const TopBar: React.FC<{ ctrl: GameController; onOpenSettings: () => void
             <IconButton onClick={onOpenSettings} title={t('top.settings')}>
               <Settings className="w-4 h-4" />
             </IconButton>
+            {fullscreenButton}
           </div>
+          )}
         </div>
         {coinsOpen && <CoinPanel ctrl={ctrl} onClose={() => setCoinsOpen(false)} />}
+        {phone && menuOpen && <PhoneMenu ctrl={ctrl} onOpenSettings={onOpenSettings} onClose={() => setMenuOpen(false)} />}
       </div>
     </div>
+  );
+};
+
+/** The phone's «more» menu: big rows instead of the desktop's icon strip. */
+const PhoneMenu: React.FC<{ ctrl: GameController; onOpenSettings: () => void; onClose: () => void }> = ({ ctrl, onOpenSettings, onClose }) => {
+  const item = (icon: React.ReactNode, label: string, action: () => void) => (
+    <button
+      type="button"
+      onClick={() => {
+        onClose();
+        action();
+      }}
+      className="w-full min-h-[44px] px-3 rounded-lg flex items-center gap-3 text-left text-sm text-slate-100 hover:bg-white/5"
+    >
+      <span className="text-slate-300">{icon}</span>
+      {label}
+    </button>
+  );
+  return (
+    <>
+      {/* a tap anywhere else closes the menu */}
+      <div className="fixed inset-0 pointer-events-auto" onClick={onClose} aria-hidden />
+      <div className="hud-panel pointer-events-auto relative w-[290px] max-h-[calc(100dvh-72px)] overflow-y-auto p-1.5 flex flex-col">
+        {ctrl.mode === 'spectator' && (
+          <div className="flex items-center justify-between gap-2 px-3 py-1" title={t('top.spectatorSpeed')}>
+            <span className="flex items-center gap-1.5 text-sm text-cyan-200">
+              <Eye className="w-4 h-4" /> {t('top.aiVsAi')}
+            </span>
+            <span className="flex gap-1">
+              {TIME_SCALES.map(k => (
+                <IconButton key={k} onClick={() => ctrl.setTimeScale(k)} active={ctrl.timeScale === k} title={t('top.speed', { k })}>
+                  <span className="font-heading font-bold text-xs">×{k}</span>
+                </IconButton>
+              ))}
+            </span>
+          </div>
+        )}
+        {item(
+          ctrl.settings.soundMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />,
+          ctrl.settings.soundMuted ? t('top.soundOn') : t('top.soundOff'),
+          () => ctrl.toggleMute(),
+        )}
+        {item(<Settings className="w-5 h-5" />, t('top.settings'), onOpenSettings)}
+        {item(<RotateCcw className="w-5 h-5" />, t('top.restart'), () => ctrl.restart())}
+        {item(<Home className="w-5 h-5" />, t('top.menu'), () => ctrl.backToMenu())}
+      </div>
+    </>
   );
 };
 

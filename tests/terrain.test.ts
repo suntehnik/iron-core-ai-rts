@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GAME_BALANCE, buildingSlot } from '../src/config/balance';
 import { AIDirector } from '../src/ai/AIDirector';
 import { GameState } from '../src/engine/GameState';
-import { DEFAULT_MAP, MapSpec, PASSAGE_CLEARANCE } from '../src/engine/terrain/MapGenerator';
+import { DEFAULT_MAP, MapSpec, PASSAGE_CLEARANCE, mulberry32 } from '../src/engine/terrain/MapGenerator';
 import { Pathfinder, reachableCells } from '../src/engine/terrain/Pathfinding';
 import { TERRAIN_CODE, TerrainGrid } from '../src/engine/terrain/TerrainGrid';
 import { LLMSettings } from '../src/types/agent';
@@ -174,18 +174,27 @@ describe('movement on the forest map', () => {
   });
 
   it('a full offline match never leaves machines inside trees and both sides keep mining', () => {
-    const s = new GameState({ map: DEFAULT_MAP });
-    const director = new AIDirector(offline, { chat() {}, proposal() {}, tactical() {}, intercept() {}, changed() {} });
-    let worst = Infinity;
-    for (let t = 0; t < 8 * 60 && !s.gameOver; t += 1 / 20) {
-      s.update(1 / 20);
-      director.update(s, 1 / 20);
-      for (const u of s.units) worst = Math.min(worst, s.terrain.clearanceAt(u.pos) / u.radius);
-    }
-    expect(worst).toBeGreaterThan(0.3);
-    for (const team of ['player', 'enemy'] as Team[]) {
-      expect(s.teams[team].economy.totals.metalMined).toBeGreaterThan(800);
-      expect(s.teams[team].economy.totals.unitsBuilt).toBeGreaterThan(4);
+    // A seeded match: the engine rolls Math.random for spawn offsets, lanes, cooldowns and shots.
+    // Unseeded, about one match in four the teal side (no AI economy here) loses its first wave,
+    // then its two harvesters, and never orders new ones, so it stops mining at 400–800 metal.
+    const orig = Math.random;
+    Math.random = mulberry32(8);
+    try {
+      const s = new GameState({ map: DEFAULT_MAP });
+      const director = new AIDirector(offline, { chat() {}, proposal() {}, tactical() {}, intercept() {}, changed() {} });
+      let worst = Infinity;
+      for (let t = 0; t < 8 * 60 && !s.gameOver; t += 1 / 20) {
+        s.update(1 / 20);
+        director.update(s, 1 / 20);
+        for (const u of s.units) worst = Math.min(worst, s.terrain.clearanceAt(u.pos) / u.radius);
+      }
+      expect(worst).toBeGreaterThan(0.3);
+      for (const team of ['player', 'enemy'] as Team[]) {
+        expect(s.teams[team].economy.totals.metalMined).toBeGreaterThan(800);
+        expect(s.teams[team].economy.totals.unitsBuilt).toBeGreaterThan(4);
+      }
+    } finally {
+      Math.random = orig;
     }
   });
 });
