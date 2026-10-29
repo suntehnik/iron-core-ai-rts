@@ -151,7 +151,7 @@ const Buttons: React.FC<{ ctrl: GameController; again: string; icon?: React.Reac
     </button>
     <button
       type="button"
-      onClick={() => ctrl.backToMenu()}
+      onClick={() => ctrl.leaveMatch()}
       className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-100 font-semibold flex items-center justify-center gap-2"
     >
       <Home className="w-5 h-5" /> {t('common.toMenu')}

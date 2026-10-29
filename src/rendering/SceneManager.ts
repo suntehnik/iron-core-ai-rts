@@ -53,6 +53,7 @@ export class SceneManager {
   private fogTeam: Team | null = 'player';
 
   private target = new THREE.Vector3(30, 0, 33);
+  private resizeObserver: ResizeObserver | null = null;
   private zoom = 30; // half-height of the view in world units
   private dragging = false;
   private dragStart: THREE.Vector3 | null = null;
@@ -88,6 +89,10 @@ export class SceneManager {
     this.effects = new Effects(this.scene);
     this.updateCamera();
     this.bindControls();
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(this.onResize);
+      this.resizeObserver.observe(container);
+    }
   }
 
   // ───────────────────────────── Setup ─────────────────────────────
@@ -255,10 +260,14 @@ export class SceneManager {
     this.dragStart = null;
   };
 
+  zoomBy(factor: number) {
+    this.zoom = clampZoom(this.zoom * factor);
+    this.updateCamera();
+  }
+
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    this.zoom = clampZoom(this.zoom * (1 + Math.sign(e.deltaY) * 0.1));
-    this.updateCamera();
+    this.zoomBy(1 + Math.sign(e.deltaY) * .1);
   };
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -646,6 +655,7 @@ export class SceneManager {
 
   dispose() {
     this.disposed = true;
+    this.resizeObserver?.disconnect();
     const el = this.renderer.domElement;
     el.removeEventListener('pointerdown', this.onPointerDown);
     el.removeEventListener('pointermove', this.onPointerMove);

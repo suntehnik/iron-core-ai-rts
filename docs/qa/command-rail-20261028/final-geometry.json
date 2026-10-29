@@ -1,0 +1,240 @@
+[
+  {
+    "state": "watch",
+    "gutter": 127,
+    "height": 375,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 667
+  },
+  {
+    "state": "agent",
+    "gutter": 16,
+    "height": 375,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      },
+      {
+        "correct": true,
+        "name": "Закрыть"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 667
+  },
+  {
+    "state": "watch",
+    "gutter": 200,
+    "height": 360,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 740
+  },
+  {
+    "state": "agent",
+    "gutter": 16,
+    "height": 360,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      },
+      {
+        "correct": true,
+        "name": "Закрыть"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 740
+  },
+  {
+    "state": "watch",
+    "gutter": 16,
+    "height": 390,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 844
+  },
+  {
+    "state": "agent",
+    "gutter": 16,
+    "height": 390,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      },
+      {
+        "correct": true,
+        "name": "Закрыть"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 844
+  },
+  {
+    "state": "watch",
+    "gutter": 16,
+    "height": 430,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 932
+  },
+  {
+    "state": "agent",
+    "gutter": 16,
+    "height": 430,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      },
+      {
+        "correct": true,
+        "name": "Закрыть"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 16,
+    "voiceButtons": 1,
+    "width": 932
+  },
+  {
+    "state": "watch",
+    "gutter": 20,
+    "height": 641,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 20,
+    "voiceButtons": 1,
+    "width": 1191
+  },
+  {
+    "state": "agent",
+    "gutter": 20,
+    "height": 641,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      },
+      {
+        "correct": true,
+        "name": "Закрыть"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 20,
+    "voiceButtons": 1,
+    "width": 1191
+  },
+  {
+    "state": "watch",
+    "gutter": 20,
+    "height": 720,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 20,
+    "voiceButtons": 1,
+    "width": 1280
+  },
+  {
+    "state": "agent",
+    "gutter": 20,
+    "height": 720,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      },
+      {
+        "correct": true,
+        "name": "Закрыть"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 20,
+    "voiceButtons": 1,
+    "width": 1280
+  },
+  {
+    "state": "watch",
+    "gutter": 20,
+    "height": 900,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 20,
+    "voiceButtons": 1,
+    "width": 1440
+  },
+  {
+    "state": "agent",
+    "gutter": 20,
+    "height": 900,
+    "hitTargets": [
+      {
+        "correct": true,
+        "name": "Голосовой приказ"
+      },
+      {
+        "correct": true,
+        "name": "Закрыть"
+      }
+    ],
+    "outside": [],
+    "requiredGutter": 20,
+    "voiceButtons": 1,
+    "width": 1440
+  }
+]

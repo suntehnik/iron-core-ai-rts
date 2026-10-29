@@ -1,24 +1,18 @@
 import React from 'react';
 import { GameController } from '../game/GameController';
-import { usePhoneLayout } from './device';
 import { GeneralPortrait } from './Portraits';
 import { cx } from './ui';
 import { t } from '../i18n';
 import { commanderName } from '../config/commanders';
 
-/** On the phone the radio shows only while a message is fresh: the screen is too small to keep it. */
-const PHONE_SHOW_SEC = 15;
-
 /** Intercepted radio from the LLM-driven enemy commander (humour allowed by the brief §7). */
 export const InterceptPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
-  const phone = usePhoneLayout();
   const last = ctrl.intercepts[0];
   const call = ctrl.director.lastCall.enemy;
   const enemy = ctrl.state.teams.enemy;
   if (!last && !call) return null;
-  if (phone && (!last || ctrl.state.gameTime - last.time > PHONE_SHOW_SEC)) return null;
   return (
-    <div className="hud-panel pointer-events-auto w-[300px] p-2 flex gap-2 items-start phone:w-[260px]">
+    <div className="hud-panel pointer-events-auto w-[300px] p-2 flex gap-2 items-start">
       <GeneralPortrait size={38} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between text-[10px]">
@@ -40,15 +34,15 @@ export const InterceptPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => 
 
 export const Notices: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const now = performance.now();
-  const list = ctrl.notices.filter(n => now - n.time < (n.tone === 'warn' ? 9000 : 3500));
+  const list = ctrl.notices.filter(n => now - n.time < (n.tone === 'warn' ? 9000 : 3500)).slice(0, 1);
   if (!list.length) return null;
   return (
-    <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 flex flex-col gap-1.5 items-center pointer-events-none phone:top-16">
+    <div className="hud-notices" role="status">
       {list.map(n => (
         <div
           key={n.id}
           className={cx(
-            'hud-panel px-3 py-1.5 text-xs max-w-[520px] text-center phone:max-w-[360px]',
+            'hud-panel px-3 py-1.5 text-xs max-w-[520px] text-center',
             n.tone === 'warn' ? 'text-amber-100 ring-1 ring-amber-400/60' : 'text-slate-100',
           )}
         >

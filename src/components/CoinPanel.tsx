@@ -26,15 +26,10 @@ export const CoinPanel: React.FC<{ ctrl: GameController; onClose: () => void }> 
   const b = ctrl.director.billing.snapshot();
   const setLimit = (v: number) => ctrl.applySettings({ ...ctrl.settings, matchCoinLimit: v });
   return (
-    <div className="hud-panel pointer-events-auto w-[430px] p-3 text-[11px] text-slate-200 phone:max-h-[calc(100dvh-72px)] phone:overflow-y-auto">
+    <div className="hud-panel coin-panel pointer-events-auto w-[430px] p-3 text-[11px] text-slate-200">
       <div className="flex items-center justify-between mb-2">
         <div className="font-heading font-bold uppercase tracking-wider text-xs">{t('coins.title')}</div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-slate-400 hover:text-white phone:w-11 phone:h-11 phone:-my-2.5 phone:-mr-2 phone:flex phone:items-center phone:justify-center"
-          aria-label={t('common.close')}
-        >
+        <button type="button" onClick={onClose} className="text-slate-400 hover:text-white" aria-label={t('common.close')}>
           <X className="w-4 h-4" />
         </button>
       </div>

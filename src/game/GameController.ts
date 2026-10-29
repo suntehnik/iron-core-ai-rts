@@ -112,6 +112,8 @@ export class GameController {
   public intercepts: Intercept[] = [];
   public notices: { id: number; text: string; time: number; tone: 'warn' | 'info' }[] = [];
   public started = false;
+  public menuOpen = false;
+  private pausedBeforeMenu = false;
   public voice = { listening: false, transcript: '', speaking: false, supported: voiceService.isSupported(), error: '' };
   public activeAgent: AgentId = 'engineer';
   public proxyStatus: ProxyStatus | null = null;
@@ -374,8 +376,24 @@ export class GameController {
     this.bump();
   }
 
-  /** Back to the start screen with a fresh match. */
+  /** The menu pauses the existing match; it never ends or replaces it. */
   backToMenu() {
+    if (!this.started || this.menuOpen) return;
+    this.pausedBeforeMenu = this.state.isPaused;
+    this.state.isPaused = true;
+    this.menuOpen = true;
+    this.bump();
+  }
+
+  closeMenu() {
+    if (!this.menuOpen) return;
+    this.menuOpen = false;
+    this.state.isPaused = this.pausedBeforeMenu;
+    this.bump();
+  }
+
+  /** Explicit confirmed exit (or leaving a completed match), distinct from opening the menu. */
+  leaveMatch() {
     this.endMatch('quit');
     this.newMatch('human');
     this.started = false;
@@ -396,6 +414,7 @@ export class GameController {
 
   /** Replaces the match with a fresh running one. */
   private newMatch(mode: GameMode) {
+    this.menuOpen = false;
     this.state = this.freshState(mode);
     this.attachSound();
     this.director.resetMatch();
@@ -428,6 +447,10 @@ export class GameController {
 
   focusCamera(x: number, y: number) {
     this.scene?.focus(x, y);
+  }
+
+  zoomCamera(factor: number) {
+    this.scene?.zoomBy(factor);
   }
 
   viewportCorners() {

@@ -16,12 +16,12 @@ import { t } from '../i18n';
 export const SpectatorPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => {
   const compact = useCompactHud();
   const active = useRecentInteraction();
-  const faded = compact && !active;
+  const faded = false;
   return (
     <div
       className={cx(
         'hud-panel flex flex-col transition-opacity duration-700',
-        compact ? 'w-[500px] p-2 gap-1.5' : 'w-[640px] max-w-[calc(100vw-560px)] min-w-[480px] p-2.5 gap-2',
+        'spectator-workspace p-2.5 gap-2',
         // faded: see-through and click-through, so the battlefield behind stays usable
         faded ? 'opacity-30 pointer-events-none' : 'opacity-100 pointer-events-auto',
       )}
@@ -36,7 +36,7 @@ export const SpectatorPanel: React.FC<{ ctrl: GameController }> = ({ ctrl }) => 
           </div>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2">
         <CommanderColumn ctrl={ctrl} team="player" compact={compact} />
         <CommanderColumn ctrl={ctrl} team="enemy" compact={compact} />
       </div>

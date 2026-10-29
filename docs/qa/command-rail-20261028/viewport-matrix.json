@@ -1,0 +1,156 @@
+[
+  {
+    "state": "watch",
+    "clearPercent": 70,
+    "h": 375,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 0,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 667
+  },
+  {
+    "state": "proposal",
+    "clearPercent": 41,
+    "h": 375,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 667
+  },
+  {
+    "state": "watch",
+    "clearPercent": 71,
+    "h": 360,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 0,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 740
+  },
+  {
+    "state": "proposal",
+    "clearPercent": 45,
+    "h": 360,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 740
+  },
+  {
+    "state": "watch",
+    "clearPercent": 70,
+    "h": 390,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 0,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 844
+  },
+  {
+    "state": "proposal",
+    "clearPercent": 46,
+    "h": 390,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 844
+  },
+  {
+    "state": "watch",
+    "clearPercent": 72,
+    "h": 430,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 0,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 932
+  },
+  {
+    "state": "proposal",
+    "clearPercent": 51,
+    "h": 430,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 932
+  },
+  {
+    "state": "watch",
+    "clearPercent": 81,
+    "h": 768,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 0,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1024
+  },
+  {
+    "state": "proposal",
+    "clearPercent": 58,
+    "h": 768,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1024
+  },
+  {
+    "state": "watch",
+    "clearPercent": 81,
+    "h": 720,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 0,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1280
+  },
+  {
+    "state": "proposal",
+    "clearPercent": 62,
+    "h": 720,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1280
+  },
+  {
+    "state": "watch",
+    "clearPercent": 85,
+    "h": 900,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 0,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1440
+  },
+  {
+    "state": "proposal",
+    "clearPercent": 66,
+    "h": 900,
+    "minimapOverlapsPanel": false,
+    "minimumPinnedTarget": 44,
+    "openWorkspaces": 1,
+    "outOfBounds": [],
+    "topOverflow": false,
+    "w": 1440
+  }
+]

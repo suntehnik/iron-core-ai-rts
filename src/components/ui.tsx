@@ -164,6 +164,7 @@ export const Chip: React.FC<React.PropsWithChildren<{ active?: boolean; onClick?
   <button
     type="button"
     title={title}
+    aria-pressed={active}
     onClick={onClick}
     className={cx(
       'px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold border transition whitespace-nowrap phone:min-h-[40px] phone:px-2.5 phone:text-xs',

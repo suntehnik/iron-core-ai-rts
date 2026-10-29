@@ -14,6 +14,7 @@ import { TacticalPanel } from '../src/components/TacticalPanel';
 import { TopBar } from '../src/components/TopBar';
 import { TrialPanel } from '../src/components/TrialPanel';
 import { VictoryModal } from '../src/components/VictoryModal';
+import { GameMenu } from '../src/components/GameMenu';
 import { GameController } from '../src/game/GameController';
 import { LANG_LABEL, setLanguage } from '../src/i18n';
 
@@ -22,6 +23,7 @@ const noop = () => {};
 /** Every HUD panel of a match that has been running for a while, as static HTML. */
 function renderHud(ctrl: GameController): Record<string, string> {
   const panels: Record<string, [FC<never>, object]> = {
+    GameMenu: [GameMenu, { ctrl, onSettings: noop, onCoins: noop }],
     TopBar: [TopBar, { ctrl, onOpenSettings: noop }],
     BriefingOverlay: [BriefingOverlay, { ctrl, onOpenSettings: noop }],
     SettingsModal: [SettingsModal, { ctrl, onClose: noop }],

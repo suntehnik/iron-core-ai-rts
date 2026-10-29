@@ -60,7 +60,7 @@ export const SettingsModal: React.FC<{ ctrl: GameController; onClose: () => void
 
   return (
     <div className="safe-pad fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="hud-panel w-full max-w-[620px] max-h-[92vh] overflow-y-auto overscroll-contain text-slate-100 phone:max-h-full phone:max-w-[680px]">
+      <div className="hud-panel settings-dialog w-full max-w-[620px] text-slate-100">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 phone:py-1.5">
           <div className="flex items-center gap-2 font-heading font-bold">
             <Cpu className="w-5 h-5 text-teal-300" /> {t('set.title')}
